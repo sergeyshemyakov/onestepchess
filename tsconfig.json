@@ -1,0 +1,12 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/core" },
+    { "path": "packages/rail-avm" },
+    { "path": "packages/rail-mock" },
+    { "path": "packages/server" },
+    { "path": "packages/mcp" },
+    { "path": "packages/agent-kit" },
+    { "path": "e2e" }
+  ]
+}

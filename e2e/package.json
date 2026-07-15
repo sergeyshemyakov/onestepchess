@@ -1,0 +1,18 @@
+{
+  "name": "@onestepchess/e2e",
+  "version": "0.1.0",
+  "description": "End-to-end and mainnet smoke tests for One Step Chess",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@onestepchess/agent-kit": "workspace:*",
+    "@onestepchess/rail-mock": "workspace:*",
+    "@onestepchess/server": "workspace:*",
+    "@playwright/test": "^1.0.0",
+    "vitest": "^4.0.0"
+  }
+}
