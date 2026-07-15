@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sideToMove } from "./fen.js";
-import { STARTING_FEN } from "./index.js";
+import { STARTING_FEN, sideToMove } from "./index.js";
 
 describe("sideToMove", () => {
   it("reads white to move from the starting position", () => {

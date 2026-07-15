@@ -22,5 +22,53 @@
         "organizeImports": "on"
       }
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["packages/core/src/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedGlobals": {
+              "level": "error",
+              "options": {
+                "deniedGlobals": {
+                  "Date": "Core receives time through explicit EpochMs parameters.",
+                  "Math": "Core receives randomness through an injected Rng.",
+                  "process": "Core cannot read process state or environment variables.",
+                  "setTimeout": "Core cannot schedule timers.",
+                  "setInterval": "Core cannot schedule timers.",
+                  "setImmediate": "Core cannot schedule timers.",
+                  "clearTimeout": "Core cannot schedule timers.",
+                  "clearInterval": "Core cannot schedule timers.",
+                  "clearImmediate": "Core cannot schedule timers."
+                }
+              }
+            },
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "fs": "Core has no I/O.",
+                  "node:fs": "Core has no I/O.",
+                  "net": "Core has no I/O.",
+                  "node:net": "Core has no I/O.",
+                  "http": "Core has no I/O.",
+                  "node:http": "Core has no I/O.",
+                  "https": "Core has no I/O.",
+                  "node:https": "Core has no I/O.",
+                  "dgram": "Core has no I/O.",
+                  "node:dgram": "Core has no I/O.",
+                  "dns": "Core has no I/O.",
+                  "node:dns": "Core has no I/O.",
+                  "timers": "Core has no timers.",
+                  "node:timers": "Core has no timers."
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }
