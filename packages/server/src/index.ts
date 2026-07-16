@@ -24,7 +24,10 @@ import { registerAuthRoutes } from "./http/routes/auth.js";
 import { registerClaimRoutes } from "./http/routes/claims.js";
 import { registerDiscoveryRoutes } from "./http/routes/discovery.js";
 import { createLogger } from "./logger.js";
-import { recoverSettlingIntents } from "./recovery.js";
+import {
+  recoverSettlingIntents,
+  recoverUnresolvedTerminalGames,
+} from "./recovery.js";
 
 export * from "./auth/challenge.js";
 export * from "./auth/genesis.js";
@@ -53,7 +56,7 @@ export * from "./recovery.js";
 
 const POOL_TICK_INTERVAL_MS = 60_000;
 
-export function main(): void {
+export async function main(): Promise<void> {
   let loaded: LoadedConfig;
   try {
     loaded = loadConfig();
@@ -158,7 +161,7 @@ export function main(): void {
     rng: Math.random,
     logger,
   });
-  registerClaimCommands({
+  const claimDeps = {
     coordinator,
     db,
     views,
@@ -169,21 +172,33 @@ export function main(): void {
     rail,
     now: Date.now,
     rng: Math.random,
-  });
-  void recoverSettlingIntents({
-    coordinator,
-    db,
-    views,
-    timers,
-    registry,
-    lifecycle,
-    config: () => config,
-    rail,
-    now: Date.now,
-    rng: Math.random,
-  });
+  } as const;
+  registerClaimCommands(claimDeps);
+  let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
+  const scheduleRecovery = (dueAt: number): void => {
+    if (recoveryTimer !== undefined) clearTimeout(recoveryTimer);
+    recoveryTimer = setTimeout(
+      () => {
+        recoveryTimer = undefined;
+        void runRecovery();
+      },
+      Math.max(0, dueAt - Date.now()),
+    );
+    recoveryTimer.unref?.();
+  };
+  const runRecovery = async (): Promise<void> => {
+    try {
+      const nextRecoveryAt = await recoverSettlingIntents(claimDeps);
+      if (nextRecoveryAt !== null) scheduleRecovery(nextRecoveryAt);
+    } catch (error) {
+      logger.error({ err: error }, "payment recovery failed; retrying");
+      scheduleRecovery(Date.now() + 1_000);
+    }
+  };
+  await runRecovery();
+  await recoverUnresolvedTerminalGames(claimDeps);
   rearmTimers(db, timers, now);
-  void coordinator.dispatch({ type: "PoolTick", payload: {} });
+  await coordinator.dispatch({ type: "PoolTick", payload: {} });
   const poolInterval = setInterval(() => {
     void coordinator.dispatch({ type: "PoolTick", payload: {} });
   }, POOL_TICK_INTERVAL_MS);
@@ -261,6 +276,7 @@ export function main(): void {
 
   const shutdown = () => {
     clearInterval(poolInterval);
+    if (recoveryTimer !== undefined) clearTimeout(recoveryTimer);
     timers.disarmAll();
     server.close(() => process.exit(0));
   };
@@ -270,5 +286,11 @@ export function main(): void {
 
 const entry = process.argv[1];
 if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {
-  main();
+  void main().catch((error) => {
+    createLogger({ destination: process.stderr }).fatal(
+      { err: error },
+      "server boot failed",
+    );
+    process.exitCode = 1;
+  });
 }

@@ -7,7 +7,7 @@ import {
   rollingWindowCheck,
   selectGame,
 } from "@onestepchess/core";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, max, sql } from "drizzle-orm";
 import type { ServerConfig } from "../config.js";
 import type { Db } from "../db/open.js";
 import { schema } from "../db/open.js";
@@ -42,7 +42,11 @@ export type MoveReceipt = {
   readonly fenAfterYourMove: string;
 };
 
-export function receiptFor(claim: ClaimRecord): MoveReceipt {
+export function receiptFor(
+  claim: ClaimRecord,
+  txid: string | null,
+  explorerBaseUrl: string,
+): MoveReceipt {
   if (
     claim.moveUci === null ||
     claim.moveSan === null ||
@@ -50,20 +54,19 @@ export function receiptFor(claim: ClaimRecord): MoveReceipt {
   ) {
     throw new Error(`moved claim ${claim.id} lacks a durable receipt`);
   }
-  const txid = claim.demo
-    ? null
-    : claim.moveUci.startsWith("tx:")
-      ? claim.moveUci.slice(3)
-      : null;
+  if (!claim.demo && txid === null) {
+    throw new Error(`paid claim ${claim.id} lacks a settlement txid`);
+  }
   return {
     status: "moved",
     move: {
-      uci: claim.demo ? claim.moveUci : claim.moveUci.replace(/^tx:[^:]+:/, ""),
+      uci: claim.moveUci,
       san: claim.moveSan,
     },
     debitMicroUsdc: claim.demo ? 0 : claim.stakeMicrousdc,
-    txid,
-    explorerUrl: txid === null ? null : null,
+    txid: claim.demo ? null : txid,
+    explorerUrl:
+      claim.demo || txid === null ? null : `${explorerBaseUrl}/tx/${txid}`,
     fenAfterYourMove: claim.fenAfter,
   };
 }
@@ -75,7 +78,6 @@ function moveClaim(
     claim: ClaimRecord;
     move: Move;
     txid: string | null;
-    response: string | null;
   },
 ): MoveReceipt {
   const applied = deps.lifecycle.applyCommittedPly(ctx, {
@@ -123,20 +125,101 @@ function moveClaim(
         txid: args.txid,
       })
       .run();
+    deps.db
+      .insert(schema.ledgerBalances)
+      .values({
+        account: "treasury",
+        balanceMicrousdc: args.claim.stakeMicrousdc,
+      })
+      .onConflictDoUpdate({
+        target: schema.ledgerBalances.account,
+        set: {
+          balanceMicrousdc: sql`${schema.ledgerBalances.balanceMicrousdc} + ${args.claim.stakeMicrousdc}`,
+        },
+      })
+      .run();
   }
   ctx.appendEvent("claim_moved", args.claim.player, { claimId: args.claim.id });
   ctx.afterCommit(() => {
     deps.views.removeOpenClaim(args.claim.id);
     deps.timers.disarm("claimDeadline", args.claim.id);
   });
-  return {
-    status: "moved",
-    move: args.move,
-    debitMicroUsdc: args.txid === null ? 0 : args.claim.stakeMicrousdc,
-    txid: args.txid,
-    explorerUrl: args.txid === null ? null : null,
-    fenAfterYourMove: applied.fenAfter,
-  };
+  return receiptFor(
+    {
+      ...args.claim,
+      status: "moved",
+      moveUci: args.move.uci,
+      moveSan: args.move.san,
+      fenAfter: applied.fenAfter,
+    },
+    args.txid,
+    deps.config().EXPLORER_BASE_URL,
+  );
+}
+
+function expireClaimIfDue(
+  deps: ClaimDeps,
+  ctx: import("./queue.js").CommandContext,
+  claimId: string,
+): boolean {
+  const claim = deps.db
+    .select()
+    .from(schema.claims)
+    .where(eq(schema.claims.id, claimId))
+    .get();
+  if (claim === undefined) return false;
+  const intent = deps.db
+    .select({ id: schema.paymentIntents.id })
+    .from(schema.paymentIntents)
+    .where(
+      and(
+        eq(schema.paymentIntents.claimId, claim.id),
+        inArray(schema.paymentIntents.status, ["verified", "settling"]),
+      ),
+    )
+    .get();
+  if (!claimExpiryDue(claim, intent !== undefined, ctx.now)) return false;
+  deps.db
+    .update(schema.claims)
+    .set({ status: "expired" })
+    .where(eq(schema.claims.id, claim.id))
+    .run();
+  deps.db
+    .update(schema.players)
+    .set({
+      abandonCount:
+        (deps.db
+          .select({ abandonCount: schema.players.abandonCount })
+          .from(schema.players)
+          .where(eq(schema.players.address, claim.player))
+          .get()?.abandonCount ?? 0) + 1,
+    })
+    .where(eq(schema.players.address, claim.player))
+    .run();
+  const updated = deps.db
+    .select({ abandonCount: schema.players.abandonCount })
+    .from(schema.players)
+    .where(eq(schema.players.address, claim.player))
+    .get();
+  if (
+    updated !== undefined &&
+    updated.abandonCount >= deps.config().ABANDON_THRESHOLD
+  ) {
+    deps.db
+      .update(schema.players)
+      .set({
+        deprioritizedUntil:
+          ctx.now + deps.config().DEPRIORITIZE_HOURS * 3_600_000,
+      })
+      .where(eq(schema.players.address, claim.player))
+      .run();
+  }
+  ctx.appendEvent("claim_expired", claim.player, { claimId: claim.id });
+  ctx.afterCommit(() => {
+    deps.views.removeOpenClaim(claim.id);
+    deps.timers.disarm("claimDeadline", claim.id);
+  });
+  return true;
 }
 
 export function registerClaimCommands(deps: ClaimDeps): void {
@@ -158,19 +241,27 @@ export function registerClaimCommands(deps: ClaimDeps): void {
         .from(schema.paymentIntents)
         .where(eq(schema.paymentIntents.clientTxid, payload.clientTxid))
         .get();
-      if (existing !== undefined) return existing.status;
+      if (existing !== undefined) {
+        if (
+          existing.claimId !== payload.claimId ||
+          existing.player !== payload.player ||
+          existing.amount !== payload.amount ||
+          existing.moveUci !== payload.move.uci
+        )
+          return { status: "foreign" as const, created: false };
+        return { status: existing.status, created: false };
+      }
       const claim = deps.db
         .select()
         .from(schema.claims)
         .where(eq(schema.claims.id, payload.claimId))
         .get();
-      if (
-        claim === undefined ||
-        claim.player !== payload.player ||
-        claim.status !== "open" ||
-        claim.stakeMicrousdc !== payload.amount
-      )
-        throw new Error("payment intent no longer binds an open claim");
+      if (claim === undefined || claim.player !== payload.player)
+        return { status: "foreign" as const, created: false };
+      if (claim.status !== "open" || claim.deadline <= ctx.now)
+        return { status: "expired" as const, created: false };
+      if (claim.stakeMicrousdc !== payload.amount)
+        return { status: "foreign" as const, created: false };
       const inFlight = deps.db
         .select({ id: schema.paymentIntents.id })
         .from(schema.paymentIntents)
@@ -181,7 +272,8 @@ export function registerClaimCommands(deps: ClaimDeps): void {
           ),
         )
         .get();
-      if (inFlight !== undefined) return "in_flight";
+      if (inFlight !== undefined)
+        return { status: "in_flight" as const, created: false };
       deps.db
         .insert(schema.paymentIntents)
         .values({
@@ -197,7 +289,7 @@ export function registerClaimCommands(deps: ClaimDeps): void {
           updatedAt: ctx.now,
         })
         .run();
-      return "verified";
+      return { status: "verified" as const, created: true };
     },
   );
   deps.coordinator.register(
@@ -232,6 +324,12 @@ export function registerClaimCommands(deps: ClaimDeps): void {
           ),
         )
         .run();
+      const intent = deps.db
+        .select({ claimId: schema.paymentIntents.claimId })
+        .from(schema.paymentIntents)
+        .where(eq(schema.paymentIntents.clientTxid, payload.clientTxid))
+        .get();
+      if (intent !== undefined) expireClaimIfDue(deps, ctx, intent.claimId);
     },
   );
   deps.coordinator.register(
@@ -292,16 +390,17 @@ export function registerClaimCommands(deps: ClaimDeps): void {
         .select({
           gameId: schema.stakeEntries.gameId,
           side: schema.stakeEntries.side,
-          lastPly: schema.stakeEntries.ply,
+          lastPly: max(schema.stakeEntries.ply),
         })
         .from(schema.stakeEntries)
         .where(eq(schema.stakeEntries.player, payload.player))
+        .groupBy(schema.stakeEntries.gameId, schema.stakeEntries.side)
         .all();
       const demoParticipation = deps.db
         .select({
           gameId: schema.claims.gameId,
           side: schema.claims.side,
-          lastPly: schema.claims.movedPly,
+          lastPly: max(schema.claims.movedPly),
         })
         .from(schema.claims)
         .where(
@@ -311,13 +410,29 @@ export function registerClaimCommands(deps: ClaimDeps): void {
             eq(schema.claims.demo, true),
           ),
         )
+        .groupBy(schema.claims.gameId, schema.claims.side)
         .all()
         .flatMap((row) =>
           row.lastPly === null
             ? []
             : [{ gameId: row.gameId, side: row.side, lastPly: row.lastPly }],
         );
-      const participation = [...stakedParticipation, ...demoParticipation];
+      const participationByGame = new Map<
+        string,
+        { gameId: string; side: "white" | "black"; lastPly: number }
+      >();
+      for (const row of [...stakedParticipation, ...demoParticipation]) {
+        if (row.lastPly === null) continue;
+        const prior = participationByGame.get(row.gameId);
+        if (prior === undefined || row.lastPly > prior.lastPly) {
+          participationByGame.set(row.gameId, {
+            gameId: row.gameId,
+            side: row.side,
+            lastPly: row.lastPly,
+          });
+        }
+      }
+      const participation = [...participationByGame.values()];
       const game = selectGame({
         games,
         requesterKind: payload.kind,
@@ -378,7 +493,6 @@ export function registerClaimCommands(deps: ClaimDeps): void {
         claim,
         move: payload.move,
         txid: null,
-        response: null,
       });
     },
   );
@@ -420,72 +534,13 @@ export function registerClaimCommands(deps: ClaimDeps): void {
         claim,
         move: payload.move,
         txid: payload.txid,
-        response: payload.response,
       });
     },
   );
   deps.coordinator.register(
     "ExpireClaim",
-    (ctx, payload: { claimId: string }) => {
-      const claim = deps.db
-        .select()
-        .from(schema.claims)
-        .where(eq(schema.claims.id, payload.claimId))
-        .get();
-      if (claim === undefined) return false;
-      const intent = deps.db
-        .select()
-        .from(schema.paymentIntents)
-        .where(
-          and(
-            eq(schema.paymentIntents.claimId, claim.id),
-            inArray(schema.paymentIntents.status, ["verified", "settling"]),
-          ),
-        )
-        .get();
-      if (!claimExpiryDue(claim, intent !== undefined, ctx.now)) return false;
-      deps.db
-        .update(schema.claims)
-        .set({ status: "expired" })
-        .where(eq(schema.claims.id, claim.id))
-        .run();
-      deps.db
-        .update(schema.players)
-        .set({
-          abandonCount:
-            (deps.db
-              .select()
-              .from(schema.players)
-              .where(eq(schema.players.address, claim.player))
-              .get()?.abandonCount ?? 0) + 1,
-        })
-        .where(eq(schema.players.address, claim.player))
-        .run();
-      const updated = deps.db
-        .select()
-        .from(schema.players)
-        .where(eq(schema.players.address, claim.player))
-        .get();
-      if (
-        updated !== undefined &&
-        updated.abandonCount >= deps.config().ABANDON_THRESHOLD
-      ) {
-        deps.db
-          .update(schema.players)
-          .set({
-            deprioritizedUntil:
-              ctx.now + deps.config().DEPRIORITIZE_HOURS * 3_600_000,
-          })
-          .where(eq(schema.players.address, claim.player))
-          .run();
-      }
-      ctx.appendEvent("claim_expired", claim.player, { claimId: claim.id });
-      ctx.afterCommit(() => {
-        deps.views.removeOpenClaim(claim.id);
-        deps.timers.disarm("claimDeadline", claim.id);
-      });
-      return true;
-    },
+    (ctx, payload: { claimId: string }) =>
+      expireClaimIfDue(deps, ctx, payload.claimId),
   );
 }
 

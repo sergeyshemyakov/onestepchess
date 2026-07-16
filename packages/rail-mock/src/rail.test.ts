@@ -147,6 +147,24 @@ describe("rail-mock clean path", () => {
     }
   });
 
+  it("verify rejects a well-formed header bound to a different resource", async () => {
+    const rail = createMockRail();
+    const expected = payment(rail, "bound");
+    const otherChallenge = rail.buildPaymentChallenge({
+      amountMicroUsdc: 1_000,
+      resource: "https://osc.example/api/v1/claims/other/move",
+    });
+    const wrongResource = buildMockHeader({
+      challenge: otherChallenge,
+      from: "PLAYER_A",
+      nonce: "bound",
+    });
+
+    await expect(
+      rail.verify(wrongResource, expected.challenge.required),
+    ).resolves.toEqual({ ok: false, reason: "invalid_payment" });
+  });
+
   it("mock PAYMENT-REQUIRED header matches the pinned golden fixture", () => {
     const rail = createMockRail({ treasuryAddress: "TREASURY_FIXTURE" });
     const challenge = rail.buildPaymentChallenge({

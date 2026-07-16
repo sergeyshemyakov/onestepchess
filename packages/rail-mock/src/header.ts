@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer";
 import type {
   DecodeResult,
   PaymentChallenge,
+  PaymentRequired,
   PaymentRequirements,
 } from "@onestepchess/core";
 import { RailError } from "@onestepchess/core";
@@ -109,6 +110,33 @@ export function decodeMockPayment(header: string): DecodeResult {
     };
   } catch {
     return { ok: false, reason: "malformed" };
+  }
+}
+
+export function matchesMockPaymentRequirement(
+  header: string,
+  required: PaymentRequired,
+): boolean {
+  try {
+    const signature = parseMockSignature(decodeBase64Json(header));
+    if (signature === null) return false;
+    const accepted = required.accepts[0];
+    return (
+      signature.resource.url === required.resource.url &&
+      signature.accepted.scheme === accepted.scheme &&
+      signature.accepted.network === accepted.network &&
+      signature.accepted.asset === accepted.asset &&
+      signature.accepted.amount === accepted.amount &&
+      signature.accepted.payTo === accepted.payTo &&
+      signature.accepted.maxTimeoutSeconds === accepted.maxTimeoutSeconds &&
+      JSON.stringify(signature.accepted.extra) ===
+        JSON.stringify(accepted.extra) &&
+      signature.payload.amountMicroUsdc === Number(accepted.amount) &&
+      signature.payload.asset === accepted.asset &&
+      signature.payload.payTo === accepted.payTo
+    );
+  } catch {
+    return false;
   }
 }
 

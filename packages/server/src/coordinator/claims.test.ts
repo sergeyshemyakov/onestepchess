@@ -188,4 +188,41 @@ describe("claim issuance (F3/F5)", () => {
     ).toEqual({ status: "expired" });
     expect((await claim(stack, "bob")).created).toBe(true);
   });
+
+  it("uses the latest participation ply when enforcing cooldown", async () => {
+    const stack = setup({ GAME_POOL_TARGET: 1, COOLDOWN_PLIES: 6 });
+    await player(stack, "alice");
+    const game = [...stack.views.games.values()][0];
+    if (game === undefined) throw new Error("game unavailable");
+    stack.database.sqlite
+      .prepare(
+        `INSERT INTO claims(id, game_id, player, side, demo, stake_microusdc, status, created_at, deadline, moved_ply)
+         VALUES (?, ?, 'alice', 'white', false, 1000, 'moved', ?, ?, ?)`,
+      )
+      .run("clm_old", game.id, Date.now() - 2, Date.now() - 1, 1);
+    stack.database.sqlite
+      .prepare(
+        `INSERT INTO claims(id, game_id, player, side, demo, stake_microusdc, status, created_at, deadline, moved_ply)
+         VALUES (?, ?, 'alice', 'white', false, 1000, 'moved', ?, ?, ?)`,
+      )
+      .run("clm_latest", game.id, Date.now() - 1, Date.now(), 7);
+    stack.database.sqlite
+      .prepare(
+        `INSERT INTO stake_entries(id, game_id, claim_id, player, side, kind, amount, pay_txid, ply, created_at)
+         VALUES (?, ?, ?, 'alice', 'white', 'human', 1000, ?, ?, ?)`,
+      )
+      .run("se_old", game.id, "clm_old", "tx_old", 1, Date.now() - 2);
+    stack.database.sqlite
+      .prepare(
+        `INSERT INTO stake_entries(id, game_id, claim_id, player, side, kind, amount, pay_txid, ply, created_at)
+         VALUES (?, ?, ?, 'alice', 'white', 'human', 1000, ?, ?, ?)`,
+      )
+      .run("se_latest", game.id, "clm_latest", "tx_latest", 7, Date.now() - 1);
+    stack.database.sqlite
+      .prepare("UPDATE games SET ply = 8 WHERE id = ?")
+      .run(game.id);
+    game.ply = 8;
+
+    expect((await claim(stack, "alice")).claim).toBeNull();
+  });
 });

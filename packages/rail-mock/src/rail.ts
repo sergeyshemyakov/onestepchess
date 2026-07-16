@@ -32,6 +32,7 @@ import {
   encodeBase64Json,
   MOCK_NETWORK,
   MOCK_SCHEME,
+  matchesMockPaymentRequirement,
 } from "./header.js";
 
 const DEFAULT_TREASURY = "MOCK_TREASURY";
@@ -325,9 +326,12 @@ export function createMockRail(options: MockRailOptions = {}): MockRail {
     },
 
     async verify(
-      _header: string,
-      _required: PaymentRequired,
+      header: string,
+      required: PaymentRequired,
     ): Promise<VerifyResult> {
+      if (!matchesMockPaymentRequirement(header, required)) {
+        return { ok: false, reason: "invalid_payment" };
+      }
       const scripted = control.verifyQueue.shift();
       if (scripted === undefined) {
         await delay(control.verifyLatencyMs);
