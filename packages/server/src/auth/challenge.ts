@@ -77,6 +77,9 @@ export function createChallenge(
     chain_id: "283",
     type: "ed25519",
   });
+  if (siwa === undefined) {
+    throw new Error("failed to canonify the SIWA payload");
+  }
   const arc60DataB64 = Buffer.from(siwa, "utf8").toString("base64");
 
   // Invalid by construction: expired window plus zero standalone fee — a

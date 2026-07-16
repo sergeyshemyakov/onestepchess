@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { openDatabase, type OpenedDatabase } from "../db/open.js";
+import { type OpenedDatabase, openDatabase } from "../db/open.js";
 import { createLogger } from "../logger.js";
 import { Coordinator } from "./queue.js";
 
@@ -64,9 +64,11 @@ describe("coordinator command queue", () => {
       .all()
       .map(
         (row) =>
-          (JSON.parse((row as { payload_json: string }).payload_json) as {
-            value: number;
-          }).value,
+          (
+            JSON.parse((row as { payload_json: string }).payload_json) as {
+              value: number;
+            }
+          ).value,
       );
     expect(values).toEqual(Array.from({ length: 200 }, (_, i) => i + 1));
   });

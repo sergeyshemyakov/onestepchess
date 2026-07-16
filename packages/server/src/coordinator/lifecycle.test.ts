@@ -2,7 +2,7 @@ import type { Move } from "@onestepchess/core";
 import { createRng } from "@onestepchess/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type ServerConfig, serverConfigSchema } from "../config.js";
-import { openDatabase, type OpenedDatabase } from "../db/open.js";
+import { type OpenedDatabase, openDatabase } from "../db/open.js";
 import { createLogger } from "../logger.js";
 import { ChessAdapterRegistry } from "./chess-registry.js";
 import { type LifecycleApi, registerLifecycle } from "./lifecycle.js";
@@ -185,8 +185,11 @@ describe("pool top-up (F6)", () => {
 
     const newGame = liveGameIds(stack).find((id) => id !== gameId) as string;
     expect(
-      (JSON.parse(gameRow(stack, newGame).rules_json) as { ENDSPIEL_PLY: number })
-        .ENDSPIEL_PLY,
+      (
+        JSON.parse(gameRow(stack, newGame).rules_json) as {
+          ENDSPIEL_PLY: number;
+        }
+      ).ENDSPIEL_PLY,
     ).toBe(10);
   });
 

@@ -231,7 +231,14 @@ export function registerLifecycle(deps: LifecycleDeps): LifecycleApi {
       }
     });
 
-    return { move: args.move, fenAfter: next.fen, ply, status, result, termination };
+    return {
+      move: args.move,
+      fenAfter: next.fen,
+      ply,
+      status,
+      result,
+      termination,
+    };
   };
 
   const onGameStall = (ctx: CommandContext, gameId: string): void => {

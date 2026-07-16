@@ -166,9 +166,7 @@ function readConfigFile(path: string): unknown {
 }
 
 export function loadConfig(
-  options: {
-    readonly env?: Readonly<Record<string, string | undefined>>;
-  } = {},
+  options: { readonly env?: Readonly<Record<string, string | undefined>> } = {},
 ): LoadedConfig {
   const rawEnv = options.env ?? process.env;
   const envResult = envSchema.safeParse(rawEnv);

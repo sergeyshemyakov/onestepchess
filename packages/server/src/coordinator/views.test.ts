@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { openDatabase, type OpenedDatabase } from "../db/open.js";
+import { type OpenedDatabase, openDatabase } from "../db/open.js";
 import { CoordinatorViews } from "./views.js";
 
 const opened: OpenedDatabase[] = [];
@@ -35,7 +35,15 @@ function seedFixture(): OpenedDatabase {
     `INSERT INTO claims (id, game_id, player, side, demo, stake_microusdc, status, created_at, deadline)
      VALUES (?, ?, ?, 'white', ?, 1000, ?, ?, ?)`,
   );
-  insertClaim.run("clm_open", "gm_active", "addr-a", 0, "open", NOW - 1000, NOW + 60_000);
+  insertClaim.run(
+    "clm_open",
+    "gm_active",
+    "addr-a",
+    0,
+    "open",
+    NOW - 1000,
+    NOW + 60_000,
+  );
   insertClaim.run(
     "clm_recent_moved",
     "gm_endspiel",

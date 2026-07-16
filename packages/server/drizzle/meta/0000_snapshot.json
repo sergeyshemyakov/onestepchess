@@ -215,26 +215,19 @@
       "indexes": {
         "claims_open_game": {
           "name": "claims_open_game",
-          "columns": [
-            "game_id"
-          ],
+          "columns": ["game_id"],
           "isUnique": true,
           "where": "status = 'open'"
         },
         "claims_open_player": {
           "name": "claims_open_player",
-          "columns": [
-            "player"
-          ],
+          "columns": ["player"],
           "isUnique": true,
           "where": "status = 'open'"
         },
         "claims_player_created": {
           "name": "claims_player_created",
-          "columns": [
-            "player",
-            "created_at"
-          ],
+          "columns": ["player", "created_at"],
           "isUnique": false
         }
       },
@@ -243,12 +236,8 @@
           "name": "claims_game_id_games_id_fk",
           "tableFrom": "claims",
           "tableTo": "games",
-          "columnsFrom": [
-            "game_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["game_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -256,12 +245,8 @@
           "name": "claims_player_players_address_fk",
           "tableFrom": "claims",
           "tableTo": "players",
-          "columnsFrom": [
-            "player"
-          ],
-          "columnsTo": [
-            "address"
-          ],
+          "columnsFrom": ["player"],
+          "columnsTo": ["address"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -528,9 +513,7 @@
       "indexes": {
         "games_name_unique": {
           "name": "games_name_unique",
-          "columns": [
-            "name"
-          ],
+          "columns": ["name"],
           "isUnique": true
         }
       },
@@ -653,12 +636,8 @@
           "name": "nickname_changes_player_players_address_fk",
           "tableFrom": "nickname_changes",
           "tableTo": "players",
-          "columnsFrom": [
-            "player"
-          ],
-          "columnsTo": [
-            "address"
-          ],
+          "columnsFrom": ["player"],
+          "columnsTo": ["address"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -765,16 +744,12 @@
       "indexes": {
         "payment_intents_client_txid_unique": {
           "name": "payment_intents_client_txid_unique",
-          "columns": [
-            "client_txid"
-          ],
+          "columns": ["client_txid"],
           "isUnique": true
         },
         "payment_intents_in_flight": {
           "name": "payment_intents_in_flight",
-          "columns": [
-            "claim_id"
-          ],
+          "columns": ["claim_id"],
           "isUnique": true,
           "where": "status IN ('verified', 'settling')"
         }
@@ -784,12 +759,8 @@
           "name": "payment_intents_claim_id_claims_id_fk",
           "tableFrom": "payment_intents",
           "tableTo": "claims",
-          "columnsFrom": [
-            "claim_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["claim_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -958,10 +929,7 @@
       "indexes": {
         "payout_jobs_game_recipient": {
           "name": "payout_jobs_game_recipient",
-          "columns": [
-            "game_id",
-            "recipient"
-          ],
+          "columns": ["game_id", "recipient"],
           "isUnique": true
         }
       },
@@ -970,12 +938,8 @@
           "name": "payout_jobs_game_id_games_id_fk",
           "tableFrom": "payout_jobs",
           "tableTo": "games",
-          "columnsFrom": [
-            "game_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["game_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -983,12 +947,8 @@
           "name": "payout_jobs_batch_id_payout_batches_id_fk",
           "tableFrom": "payout_jobs",
           "tableTo": "payout_batches",
-          "columnsFrom": [
-            "batch_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["batch_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -1093,9 +1053,7 @@
       "indexes": {
         "players_nickname_nocase": {
           "name": "players_nickname_nocase",
-          "columns": [
-            "\"nickname\" COLLATE NOCASE"
-          ],
+          "columns": ["\"nickname\" COLLATE NOCASE"],
           "isUnique": true
         }
       },
@@ -1212,23 +1170,17 @@
       "indexes": {
         "stake_entries_claim_id_unique": {
           "name": "stake_entries_claim_id_unique",
-          "columns": [
-            "claim_id"
-          ],
+          "columns": ["claim_id"],
           "isUnique": true
         },
         "stake_entries_game": {
           "name": "stake_entries_game",
-          "columns": [
-            "game_id"
-          ],
+          "columns": ["game_id"],
           "isUnique": false
         },
         "stake_entries_player": {
           "name": "stake_entries_player",
-          "columns": [
-            "player"
-          ],
+          "columns": ["player"],
           "isUnique": false
         }
       },
@@ -1237,12 +1189,8 @@
           "name": "stake_entries_game_id_games_id_fk",
           "tableFrom": "stake_entries",
           "tableTo": "games",
-          "columnsFrom": [
-            "game_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["game_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -1250,12 +1198,8 @@
           "name": "stake_entries_claim_id_claims_id_fk",
           "tableFrom": "stake_entries",
           "tableTo": "claims",
-          "columnsFrom": [
-            "claim_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["claim_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -1263,12 +1207,8 @@
           "name": "stake_entries_player_players_address_fk",
           "tableFrom": "stake_entries",
           "tableTo": "players",
-          "columnsFrom": [
-            "player"
-          ],
-          "columnsTo": [
-            "address"
-          ],
+          "columnsFrom": ["player"],
+          "columnsTo": ["address"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }

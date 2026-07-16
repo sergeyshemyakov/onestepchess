@@ -2,6 +2,10 @@ import { pathToFileURL } from "node:url";
 import { serve } from "@hono/node-server";
 import { createMockRail } from "@onestepchess/rail-mock";
 import {
+  createTurnstileVerifier,
+  type TurnstileVerifier,
+} from "./auth/turnstile.js";
+import {
   applyConfigOverrides,
   ConfigError,
   type LoadedConfig,
@@ -15,8 +19,15 @@ import { rearmTimers, TimerService } from "./coordinator/timers.js";
 import { CoordinatorViews } from "./coordinator/views.js";
 import { openDatabase, schema } from "./db/open.js";
 import { createApp } from "./http/app.js";
+import { registerAuthRoutes } from "./http/routes/auth.js";
 import { createLogger } from "./logger.js";
 
+export * from "./auth/challenge.js";
+export * from "./auth/genesis.js";
+export * from "./auth/jwt.js";
+export * from "./auth/turnstile.js";
+export * from "./auth/verify-arc60.js";
+export * from "./auth/verify-txn.js";
 export * from "./config.js";
 export * from "./coordinator/chess-registry.js";
 export * from "./coordinator/lifecycle.js";
@@ -25,6 +36,9 @@ export * from "./coordinator/timers.js";
 export * from "./coordinator/views.js";
 export * from "./db/open.js";
 export * from "./http/app.js";
+export * from "./http/middleware/client-ip.js";
+export * from "./http/middleware/ratelimit.js";
+export * from "./http/routes/auth.js";
 export * from "./ids.js";
 export * from "./logger.js";
 export * from "./names.js";
@@ -157,6 +171,29 @@ export function main(): void {
     logger,
     publicBaseUrl: loaded.env.PUBLIC_BASE_URL,
     mode,
+  });
+
+  let turnstile: TurnstileVerifier;
+  if (loaded.env.TURNSTILE_SECRET !== undefined) {
+    turnstile = createTurnstileVerifier({
+      secret: loaded.env.TURNSTILE_SECRET,
+    });
+  } else {
+    // Reachable only on the mock profile (avm exits above): local dev has no
+    // Turnstile keys, and CI drives the fixture verifier through tests.
+    logger.warn("TURNSTILE_SECRET unset — dev verifier accepts any token");
+    turnstile = async () => "pass";
+  }
+  registerAuthRoutes(app, {
+    db,
+    rail,
+    config: () => config,
+    publicBaseUrl: loaded.env.PUBLIC_BASE_URL,
+    jwtSecret: loaded.env.JWT_SECRET,
+    trustProxyHops: loaded.env.TRUST_PROXY_HOPS,
+    turnstile,
+    now: Date.now,
+    rng: Math.random,
   });
 
   const server = serve({ fetch: app.fetch, port: loaded.env.PORT }, (info) => {

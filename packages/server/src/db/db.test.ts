@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { openDatabase, type OpenedDatabase } from "./open.js";
+import { type OpenedDatabase, openDatabase } from "./open.js";
 
 const opened: OpenedDatabase[] = [];
 
@@ -86,9 +86,9 @@ describe("drizzle schema and migrations", () => {
 
     const second = open(path);
     expect(
-      second.sqlite
-        .prepare("SELECT count(*) AS n FROM players")
-        .get() as { n: number },
+      second.sqlite.prepare("SELECT count(*) AS n FROM players").get() as {
+        n: number;
+      },
     ).toEqual({ n: 0 });
   });
 
@@ -98,9 +98,9 @@ describe("drizzle schema and migrations", () => {
     insertPlayer(database, "addr-b");
     insertGame(database, "gm_1");
     insertClaim(database, "clm_1", "gm_1", "addr-a");
-    expect(() =>
-      insertClaim(database, "clm_2", "gm_1", "addr-b"),
-    ).toThrowError(/UNIQUE/);
+    expect(() => insertClaim(database, "clm_2", "gm_1", "addr-b")).toThrowError(
+      /UNIQUE/,
+    );
     // A non-open claim on the same game is fine.
     insertClaim(database, "clm_3", "gm_1", "addr-b", "moved");
   });
@@ -111,9 +111,9 @@ describe("drizzle schema and migrations", () => {
     insertGame(database, "gm_1");
     insertGame(database, "gm_2");
     insertClaim(database, "clm_1", "gm_1", "addr-a");
-    expect(() =>
-      insertClaim(database, "clm_2", "gm_2", "addr-a"),
-    ).toThrowError(/UNIQUE/);
+    expect(() => insertClaim(database, "clm_2", "gm_2", "addr-a")).toThrowError(
+      /UNIQUE/,
+    );
     insertClaim(database, "clm_3", "gm_2", "addr-a", "expired");
   });
 

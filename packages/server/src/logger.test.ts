@@ -23,7 +23,10 @@ describe("pino logger redaction", () => {
       destination: capture,
     });
 
-    logger.info({ JWT_SECRET: jwtSecret, nested: { token: adminToken } }, "boot");
+    logger.info(
+      { JWT_SECRET: jwtSecret, nested: { token: adminToken } },
+      "boot",
+    );
     logger.error(`failed with ${mnemonic}`);
     logger.info("plain line survives");
 

@@ -12,9 +12,7 @@ export type LoggerOptions = {
 export type { Logger };
 
 export function createLogger(options: LoggerOptions = {}): Logger {
-  const secrets = (options.secrets ?? []).filter(
-    (secret) => secret.length > 0,
-  );
+  const secrets = (options.secrets ?? []).filter((secret) => secret.length > 0);
   const destination = options.destination ?? process.stdout;
   const scrubbing = {
     write(chunk: string): void {

@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
-import { drizzle } from "drizzle-orm/better-sqlite3";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
+import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import * as schema from "./schema.js";
 
@@ -18,7 +18,9 @@ const migrationsFolder = fileURLToPath(
   new URL("../../drizzle", import.meta.url),
 );
 
-export function openDatabase(options: { readonly path: string }): OpenedDatabase {
+export function openDatabase(options: {
+  readonly path: string;
+}): OpenedDatabase {
   const sqlite = new Database(options.path);
   sqlite.pragma("journal_mode = WAL");
   sqlite.pragma("foreign_keys = ON");

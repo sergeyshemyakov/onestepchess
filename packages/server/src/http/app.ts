@@ -63,9 +63,18 @@ export class AppError extends Error {
   }
 }
 
+export type SessionInfo = {
+  readonly address: string;
+  readonly kind: "human" | "agent" | "guest";
+  readonly jti: string;
+  readonly exp: number;
+};
+
 export type AppEnv = {
   Variables: {
     requestId: string;
+    /** Set by sessionAuth middleware on authenticated routes only. */
+    session: SessionInfo;
   };
 };
 

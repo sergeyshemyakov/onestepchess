@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { openDatabase, type OpenedDatabase } from "../db/open.js";
+import { type OpenedDatabase, openDatabase } from "../db/open.js";
 import { createLogger } from "../logger.js";
 import { Coordinator } from "./queue.js";
 import { rearmTimers, TimerService } from "./timers.js";
@@ -72,7 +72,7 @@ function registerExpiry(
     const claim = database.sqlite
       .prepare("SELECT status, deadline FROM claims WHERE id = ?")
       .get(refId) as { status: string; deadline: number } | undefined;
-    if (!claim || claim.status !== "open" || ctx.now < claim.deadline) {
+    if (claim?.status !== "open" || ctx.now < claim.deadline) {
       return null;
     }
     database.sqlite
@@ -102,7 +102,9 @@ describe("timer service", () => {
       .get() as { n: number };
     expect(events.n).toBe(1);
     expect(
-      database.sqlite.prepare("SELECT status FROM claims WHERE id = 'clm_1'").get(),
+      database.sqlite
+        .prepare("SELECT status FROM claims WHERE id = 'clm_1'")
+        .get(),
     ).toEqual({ status: "expired" });
   });
 
@@ -115,11 +117,15 @@ describe("timer service", () => {
     timers.arm("claimDeadline", "clm_1", 20_000);
     await vi.advanceTimersByTimeAsync(10_000);
     expect(
-      database.sqlite.prepare("SELECT status FROM claims WHERE id = 'clm_1'").get(),
+      database.sqlite
+        .prepare("SELECT status FROM claims WHERE id = 'clm_1'")
+        .get(),
     ).toEqual({ status: "open" });
     await vi.advanceTimersByTimeAsync(10_000);
     expect(
-      database.sqlite.prepare("SELECT status FROM claims WHERE id = 'clm_1'").get(),
+      database.sqlite
+        .prepare("SELECT status FROM claims WHERE id = 'clm_1'")
+        .get(),
     ).toEqual({ status: "expired" });
   });
 
@@ -151,7 +157,9 @@ describe("timer service", () => {
     await vi.advanceTimersByTimeAsync(30_000);
     await coordinator.onIdle();
     expect(
-      database.sqlite.prepare("SELECT status FROM claims WHERE id = 'clm_1'").get(),
+      database.sqlite
+        .prepare("SELECT status FROM claims WHERE id = 'clm_1'")
+        .get(),
     ).toEqual({ status: "expired" });
   });
 

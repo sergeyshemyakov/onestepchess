@@ -103,8 +103,8 @@ export class Coordinator {
     const priority = PRIORITY[claimClass ?? "internal"];
     const result = await this.queue.add(
       async () => {
-      // The await point lets same-tick dispatches register before this
-      // command's execution-time deprioritization check runs.
+        // The await point lets same-tick dispatches register before this
+        // command's execution-time deprioritization check runs.
         await Promise.resolve();
         return this.execute(command);
       },
@@ -138,7 +138,12 @@ export class Coordinator {
       views: this.viewsRef,
       appendEvent: (type, player, payload) => {
         insertEvent
-          .values({ ts: now, player, type, payloadJson: JSON.stringify(payload) })
+          .values({
+            ts: now,
+            player,
+            type,
+            payloadJson: JSON.stringify(payload),
+          })
           .run();
       },
       afterCommit: (hook) => {

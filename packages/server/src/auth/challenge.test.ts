@@ -1,10 +1,10 @@
 import { createHash, randomBytes } from "node:crypto";
+import * as ed from "@noble/ed25519";
 import { createMockRail, type MockRail } from "@onestepchess/rail-mock";
 import algosdk from "algosdk";
-import * as ed from "@noble/ed25519";
 import { afterEach, describe, expect, it } from "vitest";
 import { serverConfigSchema } from "../config.js";
-import { openDatabase, type OpenedDatabase } from "../db/open.js";
+import { type OpenedDatabase, openDatabase } from "../db/open.js";
 import {
   type AuthDeps,
   consumeChallenge,
@@ -98,7 +98,9 @@ describe("auth challenge contract (§6.3)", () => {
       scope: 1,
       encoding: "base64",
     });
-    expect(challenge.expiresAt).toBe(new Date(1_000_000 + 300_000).toISOString());
+    expect(challenge.expiresAt).toBe(
+      new Date(1_000_000 + 300_000).toISOString(),
+    );
 
     const siwa = JSON.parse(
       Buffer.from(challenge.arc60Payload.data, "base64").toString("utf8"),
@@ -133,7 +135,11 @@ describe("auth challenge contract (§6.3)", () => {
 
     // A proof over the replaced challenge no longer verifies.
     const domainData = arc60AuthData("osc.example");
-    const staleSig = signArc60(identity.seed, first.arc60Payload.data, domainData);
+    const staleSig = signArc60(
+      identity.seed,
+      first.arc60Payload.data,
+      domainData,
+    );
     const stale = await verifyChallengeProof(stack.deps, identity.address, {
       method: "arc60",
       signatureB64: Buffer.from(staleSig).toString("base64"),
@@ -141,7 +147,11 @@ describe("auth challenge contract (§6.3)", () => {
     });
     expect(stale).toEqual({ ok: false, code: "INVALID_SIGNATURE" });
 
-    const freshSig = signArc60(identity.seed, second.arc60Payload.data, domainData);
+    const freshSig = signArc60(
+      identity.seed,
+      second.arc60Payload.data,
+      domainData,
+    );
     const fresh = await verifyChallengeProof(stack.deps, identity.address, {
       method: "arc60",
       signatureB64: Buffer.from(freshSig).toString("base64"),
@@ -156,7 +166,11 @@ describe("auth challenge contract (§6.3)", () => {
     const challenge = createChallenge(stack.deps, identity.address);
     stack.setNow(1_000_000 + 300_001);
     const domainData = arc60AuthData("osc.example");
-    const sig = signArc60(identity.seed, challenge.arc60Payload.data, domainData);
+    const sig = signArc60(
+      identity.seed,
+      challenge.arc60Payload.data,
+      domainData,
+    );
     const outcome = await verifyChallengeProof(stack.deps, identity.address, {
       method: "arc60",
       signatureB64: Buffer.from(sig).toString("base64"),
@@ -375,18 +389,18 @@ describe("nonce lifecycle and rail preconditions (F2)", () => {
     };
 
     // Recoverable registration errors re-verify without a new challenge.
-    expect(await verifyChallengeProof(stack.deps, identity.address, proof)).toEqual(
-      { ok: true },
-    );
-    expect(await verifyChallengeProof(stack.deps, identity.address, proof)).toEqual(
-      { ok: true },
-    );
+    expect(
+      await verifyChallengeProof(stack.deps, identity.address, proof),
+    ).toEqual({ ok: true });
+    expect(
+      await verifyChallengeProof(stack.deps, identity.address, proof),
+    ).toEqual({ ok: true });
 
     // Success consumes the nonce; a replay then fails.
     consumeChallenge(stack.deps.db, identity.address);
-    expect(await verifyChallengeProof(stack.deps, identity.address, proof)).toEqual(
-      { ok: false, code: "NONCE_EXPIRED" },
-    );
+    expect(
+      await verifyChallengeProof(stack.deps, identity.address, proof),
+    ).toEqual({ ok: false, code: "NONCE_EXPIRED" });
   });
 
   it("a rekeyed account fails REKEYED_UNSUPPORTED before key verification", async () => {
@@ -419,13 +433,13 @@ describe("nonce lifecycle and rail preconditions (F2)", () => {
     };
 
     stack.rail.control.failQueries(["account"]);
-    expect(await verifyChallengeProof(stack.deps, identity.address, proof)).toEqual(
-      { ok: false, code: "DEPENDENCY_UNAVAILABLE" },
-    );
+    expect(
+      await verifyChallengeProof(stack.deps, identity.address, proof),
+    ).toEqual({ ok: false, code: "DEPENDENCY_UNAVAILABLE" });
 
     stack.rail.control.restoreQueries();
-    expect(await verifyChallengeProof(stack.deps, identity.address, proof)).toEqual(
-      { ok: true },
-    );
+    expect(
+      await verifyChallengeProof(stack.deps, identity.address, proof),
+    ).toEqual({ ok: true });
   });
 });
