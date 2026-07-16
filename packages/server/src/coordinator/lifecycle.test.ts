@@ -7,6 +7,7 @@ import { createLogger } from "../logger.js";
 import { ChessAdapterRegistry } from "./chess-registry.js";
 import { type LifecycleApi, registerLifecycle } from "./lifecycle.js";
 import { Coordinator } from "./queue.js";
+import { registerResolution } from "./resolution.js";
 import { TimerService } from "./timers.js";
 import { CoordinatorViews } from "./views.js";
 
@@ -57,6 +58,11 @@ function setup(configOverrides: Record<string, unknown> = {}): Stack {
   coordinator.register("CommitPly", (ctx, payload) =>
     lifecycle.applyCommittedPly(ctx, payload as { gameId: string; move: Move }),
   );
+  registerResolution({
+    coordinator,
+    db: database.db,
+    logger: createLogger({ level: "silent" }),
+  });
   return {
     database,
     coordinator,

@@ -129,9 +129,8 @@ export function registerLifecycle(deps: LifecycleDeps): LifecycleApi {
     return { created: created.length };
   });
 
-  // Resolution (F7) lands with the S6 slice; the post-commit enqueue point
-  // is pinned here so terminal transitions already flow through it.
-  coordinator.register("GameFinished", () => null);
+  // The GameFinished handler (resolution, F7) is registered by
+  // registerResolution (S6); terminal transitions here dispatch it.
 
   const applyCommittedPly = (
     ctx: CommandContext,

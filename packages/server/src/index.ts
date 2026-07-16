@@ -16,6 +16,7 @@ import { ChessAdapterRegistry } from "./coordinator/chess-registry.js";
 import { registerClaimCommands } from "./coordinator/claims.js";
 import { registerLifecycle } from "./coordinator/lifecycle.js";
 import { Coordinator } from "./coordinator/queue.js";
+import { registerResolution } from "./coordinator/resolution.js";
 import { rearmTimers, TimerService } from "./coordinator/timers.js";
 import { CoordinatorViews } from "./coordinator/views.js";
 import { openDatabase, schema } from "./db/open.js";
@@ -24,6 +25,10 @@ import { registerAuthRoutes } from "./http/routes/auth.js";
 import { registerClaimRoutes } from "./http/routes/claims.js";
 import { registerDiscoveryRoutes } from "./http/routes/discovery.js";
 import { createLogger } from "./logger.js";
+import {
+  registerPayoutCommands,
+  runPayoutExecutor,
+} from "./payouts/executor.js";
 import {
   recoverSettlingIntents,
   recoverUnresolvedTerminalGames,
@@ -40,6 +45,7 @@ export * from "./coordinator/chess-registry.js";
 export * from "./coordinator/claims.js";
 export * from "./coordinator/lifecycle.js";
 export * from "./coordinator/queue.js";
+export * from "./coordinator/resolution.js";
 export * from "./coordinator/timers.js";
 export * from "./coordinator/views.js";
 export * from "./db/open.js";
@@ -52,9 +58,11 @@ export * from "./http/routes/discovery.js";
 export * from "./ids.js";
 export * from "./logger.js";
 export * from "./names.js";
+export * from "./payouts/executor.js";
 export * from "./recovery.js";
 
 const POOL_TICK_INTERVAL_MS = 60_000;
+const PAYOUT_TICK_INTERVAL_MS = 2_000;
 
 export async function main(): Promise<void> {
   let loaded: LoadedConfig;
@@ -174,6 +182,16 @@ export async function main(): Promise<void> {
     rng: Math.random,
   } as const;
   registerClaimCommands(claimDeps);
+  registerResolution({ coordinator, db, logger });
+  const payoutDeps = {
+    coordinator,
+    db,
+    rail,
+    config: () => config,
+    now: Date.now,
+    logger,
+  } as const;
+  registerPayoutCommands(payoutDeps);
   let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
   const scheduleRecovery = (dueAt: number): void => {
     if (recoveryTimer !== undefined) clearTimeout(recoveryTimer);
@@ -195,14 +213,28 @@ export async function main(): Promise<void> {
       scheduleRecovery(Date.now() + 1_000);
     }
   };
+  const runPayouts = async (): Promise<void> => {
+    try {
+      await runPayoutExecutor(payoutDeps);
+    } catch (error) {
+      logger.error({ err: error }, "payout executor pass failed");
+    }
+  };
   await runRecovery();
   await recoverUnresolvedTerminalGames(claimDeps);
+  // Resume payout batches and pay out any freshly-recovered resolutions
+  // (F1 step 6) before serving.
+  await runPayouts();
   rearmTimers(db, timers, now);
   await coordinator.dispatch({ type: "PoolTick", payload: {} });
   const poolInterval = setInterval(() => {
     void coordinator.dispatch({ type: "PoolTick", payload: {} });
   }, POOL_TICK_INTERVAL_MS);
   poolInterval.unref();
+  const payoutInterval = setInterval(() => {
+    void runPayouts();
+  }, PAYOUT_TICK_INTERVAL_MS);
+  payoutInterval.unref();
 
   const mode = (): "running" | "paused" => {
     const row = db
@@ -276,6 +308,7 @@ export async function main(): Promise<void> {
 
   const shutdown = () => {
     clearInterval(poolInterval);
+    clearInterval(payoutInterval);
     if (recoveryTimer !== undefined) clearTimeout(recoveryTimer);
     timers.disarmAll();
     server.close(() => process.exit(0));
