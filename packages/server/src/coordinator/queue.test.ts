@@ -111,12 +111,19 @@ describe("coordinator command queue", () => {
     ).toEqual({ n: 0 });
   });
 
-  it("rejects asynchronous command handlers", async () => {
+  it("rejects an async command handler before it can execute", () => {
     const { coordinator } = setup();
-    coordinator.register("Async", async () => 1);
-    await expect(
-      coordinator.dispatch({ type: "Async", payload: {} }),
-    ).rejects.toThrowError(/synchronous/);
+    let executed = false;
+    const handler = async (): Promise<number> => {
+      executed = true;
+      await Promise.resolve();
+      return 1;
+    };
+
+    expect(() =>
+      coordinator.register("Async", handler as unknown as () => number),
+    ).toThrowError(/synchronous/);
+    expect(executed).toBe(false);
   });
 
   it("executes a queued human claim command before a queued agent claim command", async () => {

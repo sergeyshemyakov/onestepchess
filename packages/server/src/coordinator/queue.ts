@@ -1,3 +1,4 @@
+import { types } from "node:util";
 import type Database from "better-sqlite3";
 import PQueue from "p-queue";
 import type { Db } from "../db/open.js";
@@ -47,6 +48,17 @@ export type CommandHandler<P = unknown, R = unknown> = (
   payload: P,
 ) => R;
 
+type SynchronousHandler<P, H extends CommandHandler<P>> =
+  Extract<ReturnType<H>, PromiseLike<unknown>> extends never ? H : never;
+
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return (
+    value !== null &&
+    (typeof value === "object" || typeof value === "function") &&
+    typeof (value as { then?: unknown }).then === "function"
+  );
+}
+
 export type CoordinatorOptions = {
   readonly sqlite: Database.Database;
   readonly db: Db;
@@ -74,9 +86,15 @@ export class Coordinator {
     this.viewsRef = options.views ?? null;
   }
 
-  register<P, R>(type: string, handler: CommandHandler<P, R>): void {
+  register<P, H extends CommandHandler<P>>(
+    type: string,
+    handler: SynchronousHandler<P, H>,
+  ): void {
     if (this.handlers.has(type)) {
       throw new Error(`command handler already registered: ${type}`);
+    }
+    if (types.isAsyncFunction(handler)) {
+      throw new Error(`command handlers must be synchronous: ${type}`);
     }
     this.handlers.set(type, handler as CommandHandler);
   }
@@ -155,11 +173,7 @@ export class Coordinator {
     let result: R | undefined;
     const transaction = this.sqlite.transaction(() => {
       const value = handler(ctx, command.payload);
-      if (
-        value !== null &&
-        typeof value === "object" &&
-        "then" in (value as object)
-      ) {
+      if (isPromiseLike(value)) {
         throw new Error(
           `command handlers must be synchronous: ${command.type}`,
         );
