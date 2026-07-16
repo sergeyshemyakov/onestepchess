@@ -9,6 +9,8 @@
     "node": ">=22 <23"
   },
   "scripts": {
+    "dev": "pnpm -r --parallel run dev",
+    "dev:playtest": "OSC_CONFIG_PATH=\"$PWD/osc.playtest.config.json\" pnpm -r --parallel run dev",
     "lint": "biome ci .",
     "typecheck": "tsc -b && tsc --noEmit -p packages/web",
     "test": "vitest run",

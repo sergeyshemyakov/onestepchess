@@ -8,6 +8,7 @@ import { ChessAdapterRegistry } from "./chess-registry.js";
 import { registerClaimCommands } from "./claims.js";
 import { registerLifecycle } from "./lifecycle.js";
 import { Coordinator } from "./queue.js";
+import { registerResolution } from "./resolution.js";
 import { TimerService } from "./timers.js";
 import { CoordinatorViews } from "./views.js";
 
@@ -57,6 +58,11 @@ function setup(overrides: Record<string, unknown> = {}) {
     rail: createMockRail(),
     now: Date.now,
     rng: createRng(9),
+  });
+  registerResolution({
+    coordinator,
+    db: database.db,
+    logger: createLogger({ level: "silent" }),
   });
   return {
     database,

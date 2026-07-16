@@ -15,6 +15,7 @@ import {
 } from "../../coordinator/claims.js";
 import { registerLifecycle } from "../../coordinator/lifecycle.js";
 import { Coordinator } from "../../coordinator/queue.js";
+import { registerResolution } from "../../coordinator/resolution.js";
 import { TimerService } from "../../coordinator/timers.js";
 import { CoordinatorViews } from "../../coordinator/views.js";
 import { type OpenedDatabase, openDatabase, schema } from "../../db/open.js";
@@ -82,6 +83,11 @@ function setup(overrides: Record<string, unknown> = {}) {
     mode: () => "running" as const,
   };
   registerClaimCommands(deps);
+  registerResolution({
+    coordinator,
+    db: database.db,
+    logger: createLogger({ level: "silent" }),
+  });
   const app = createApp({
     logger: createLogger({ level: "silent" }),
     publicBaseUrl: BASE_URL,
