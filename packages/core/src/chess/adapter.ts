@@ -1,4 +1,4 @@
-import { Chess } from "chess.js";
+import { Chess, validateFen } from "chess.js";
 import type { CoreConfig } from "../config.js";
 import {
   CoreError,
@@ -67,23 +67,51 @@ function domainMoves(chess: Chess): readonly Move[] {
     .sort((left, right) => left.uci.localeCompare(right.uci));
 }
 
-export function sideToMove(fen: string): Side {
-  try {
-    return new Chess(fen).turn() === "w" ? "white" : "black";
-  } catch {
+const FEN_FACT_CACHE_SIZE = 4_096;
+const fenFactCache = new Map<
+  string,
+  { readonly side: Side; readonly pieces: number }
+>();
+
+function fenFacts(fen: string): {
+  readonly side: Side;
+  readonly pieces: number;
+} {
+  const cached = fenFactCache.get(fen);
+  if (cached !== undefined) {
+    fenFactCache.delete(fen);
+    fenFactCache.set(fen, cached);
+    return cached;
+  }
+  const turn = fen.split(" ")[1];
+  if ((turn !== "w" && turn !== "b") || !validateFen(fen).ok) {
     throw new CoreError("CONTRACT", "invalid FEN");
   }
+  const board = fen.split(" ")[0] ?? "";
+  let pieces = 0;
+  for (const char of board) {
+    if ((char >= "a" && char <= "z") || (char >= "A" && char <= "Z")) {
+      pieces += 1;
+    }
+  }
+  const facts = { side: turn === "w" ? "white" : "black", pieces } as const;
+  fenFactCache.set(fen, facts);
+  while (fenFactCache.size > FEN_FACT_CACHE_SIZE) {
+    const oldest = fenFactCache.keys().next().value;
+    if (oldest === undefined) break;
+    fenFactCache.delete(oldest);
+  }
+  return facts;
+}
+
+export function sideToMove(fen: string): Side {
+  // Eligibility revisits each live FEN for many actors, so bounded memoization
+  // keeps validation out of the matchmaking hot path.
+  return fenFacts(fen).side;
 }
 
 export function pieceCount(fen: string): number {
-  try {
-    return new Chess(fen)
-      .board()
-      .flat()
-      .filter((piece) => piece !== null).length;
-  } catch {
-    throw new CoreError("CONTRACT", "invalid FEN");
-  }
+  return fenFacts(fen).pieces;
 }
 
 export function createChess(
@@ -96,21 +124,30 @@ export function createChess(
   }
 
   const cache = new Map<string, Chess>();
+  const moveCache = new Map<string, readonly Move[]>();
   const keyFor = (history: readonly Uci[]) => history.join("\u0000");
 
-  const remember = (key: string, chess: Chess): void => {
+  const rememberIn = <T>(
+    store: Map<string, T>,
+    key: string,
+    value: T,
+  ): void => {
     if (cacheSize === 0) {
       return;
     }
-    cache.delete(key);
-    cache.set(key, chess);
-    while (cache.size > cacheSize) {
-      const oldest = cache.keys().next().value;
+    store.delete(key);
+    store.set(key, value);
+    while (store.size > cacheSize) {
+      const oldest = store.keys().next().value;
       if (oldest === undefined) {
         break;
       }
-      cache.delete(oldest);
+      store.delete(oldest);
     }
+  };
+
+  const remember = (key: string, chess: Chess): void => {
+    rememberIn(cache, key, chess);
   };
 
   const replay = (history: readonly Uci[]): Chess => {
@@ -134,6 +171,19 @@ export function createChess(
     return chess;
   };
 
+  const movesFor = (state: ChessState): readonly Move[] => {
+    const key = keyFor(state.history);
+    const cached = moveCache.get(key);
+    if (cached !== undefined) {
+      moveCache.delete(key);
+      moveCache.set(key, cached);
+      return cached;
+    }
+    const moves = domainMoves(obtain(state));
+    rememberIn(moveCache, key, moves);
+    return moves;
+  };
+
   const fromHistory = (history: readonly Uci[]): ChessState => {
     const chess = replay(history);
     const state = { fen: chess.fen(), history: [...history] };
@@ -147,7 +197,7 @@ export function createChess(
     },
     fromHistory,
     legalMoves(state) {
-      return domainMoves(obtain(state));
+      return movesFor(state);
     },
     apply(state, move) {
       const oldKey = keyFor(state.history);
@@ -161,14 +211,16 @@ export function createChess(
     },
     terminal(state) {
       const chess = obtain(state);
-      if (chess.isCheckmate()) {
-        return {
-          over: true,
-          result: opposite(sideToMove(chess.fen())),
-          termination: "checkmate",
-        };
-      }
-      if (chess.isStalemate()) {
+      // One cached legal-move generation decides both mate kinds instead of
+      // chess.js regenerating moves inside isCheckmate and isStalemate.
+      if (movesFor(state).length === 0) {
+        if (chess.isCheck()) {
+          return {
+            over: true,
+            result: opposite(sideToMove(state.fen)),
+            termination: "checkmate",
+          };
+        }
         return { over: true, result: "draw", termination: "stalemate" };
       }
       if (chess.isInsufficientMaterial()) {
@@ -203,7 +255,7 @@ export function createChess(
         }));
     },
     normalizeMove(state, input) {
-      return normalizeLegalMove(domainMoves(obtain(state)), input);
+      return normalizeLegalMove(movesFor(state), input);
     },
     pieceCount,
   };

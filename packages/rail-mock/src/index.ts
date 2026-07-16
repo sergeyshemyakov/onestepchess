@@ -1,8 +1,18 @@
-export interface MockSettlement {
-  readonly id: string;
-  readonly amountMicroUsdc: bigint;
-}
-
-export function totalSettled(settlements: readonly MockSettlement[]): bigint {
-  return settlements.reduce((sum, s) => sum + s.amountMicroUsdc, 0n);
-}
+export type {
+  AccountInfo,
+  Balances,
+  MockControl,
+  NoteResult,
+  QueryCode,
+  Scripted,
+  ScriptedSettle,
+  ScriptedSubmit,
+} from "./control.js";
+export { buildMockHeader, MOCK_NETWORK, MOCK_SCHEME } from "./header.js";
+export {
+  createMockRail,
+  createMockRailState,
+  type MockRail,
+  type MockRailOptions,
+  type MockRailState,
+} from "./rail.js";

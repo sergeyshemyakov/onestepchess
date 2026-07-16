@@ -25,7 +25,7 @@
   },
   "overrides": [
     {
-      "includes": ["packages/core/src/**"],
+      "includes": ["packages/core/src/**", "packages/rail-mock/src/**"],
       "linter": {
         "rules": {
           "style": {
@@ -33,9 +33,9 @@
               "level": "error",
               "options": {
                 "deniedGlobals": {
-                  "Date": "Core receives time through explicit EpochMs parameters.",
-                  "Math": "Core receives randomness through an injected Rng.",
-                  "process": "Core cannot read process state or environment variables.",
+                  "Date": "Pure packages receive time through explicit parameters.",
+                  "Math": "Pure packages receive randomness through an injected source.",
+                  "process": "Pure packages cannot read process state or environment variables.",
                   "setTimeout": "Core cannot schedule timers.",
                   "setInterval": "Core cannot schedule timers.",
                   "setImmediate": "Core cannot schedule timers.",

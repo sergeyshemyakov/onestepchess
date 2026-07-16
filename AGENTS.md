@@ -51,13 +51,10 @@ runs the same four and all must pass locally first.
 
 ## Branch & PR conventions
 
-- One board card = one branch = one PR: `task/<id>-<slug>`.
 - Open PRs as draft until local lint/typecheck/test all pass.
 - PR description links the card (`Fixes #<id>`), lists acceptance criteria
   as a checklist, and includes test evidence.
 - Never push to `main` directly; squash-merge on approval.
-- Keep PRs small — a few hundred lines at most. Split oversized cards rather
-  than growing the PR.
 
 ## Testing policy
 
