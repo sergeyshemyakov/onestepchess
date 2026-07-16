@@ -13,6 +13,7 @@ import {
   secretValues,
 } from "./config.js";
 import { ChessAdapterRegistry } from "./coordinator/chess-registry.js";
+import { registerClaimCommands } from "./coordinator/claims.js";
 import { registerLifecycle } from "./coordinator/lifecycle.js";
 import { Coordinator } from "./coordinator/queue.js";
 import { rearmTimers, TimerService } from "./coordinator/timers.js";
@@ -20,7 +21,10 @@ import { CoordinatorViews } from "./coordinator/views.js";
 import { openDatabase, schema } from "./db/open.js";
 import { createApp } from "./http/app.js";
 import { registerAuthRoutes } from "./http/routes/auth.js";
+import { registerClaimRoutes } from "./http/routes/claims.js";
+import { registerDiscoveryRoutes } from "./http/routes/discovery.js";
 import { createLogger } from "./logger.js";
+import { recoverSettlingIntents } from "./recovery.js";
 
 export * from "./auth/challenge.js";
 export * from "./auth/genesis.js";
@@ -30,6 +34,7 @@ export * from "./auth/verify-arc60.js";
 export * from "./auth/verify-txn.js";
 export * from "./config.js";
 export * from "./coordinator/chess-registry.js";
+export * from "./coordinator/claims.js";
 export * from "./coordinator/lifecycle.js";
 export * from "./coordinator/queue.js";
 export * from "./coordinator/timers.js";
@@ -39,9 +44,12 @@ export * from "./http/app.js";
 export * from "./http/middleware/client-ip.js";
 export * from "./http/middleware/ratelimit.js";
 export * from "./http/routes/auth.js";
+export * from "./http/routes/claims.js";
+export * from "./http/routes/discovery.js";
 export * from "./ids.js";
 export * from "./logger.js";
 export * from "./names.js";
+export * from "./recovery.js";
 
 const POOL_TICK_INTERVAL_MS = 60_000;
 
@@ -140,7 +148,7 @@ export function main(): void {
   const registry = new ChessAdapterRegistry(8, {
     historyCacheSize: 2 * config.GAME_POOL_TARGET,
   });
-  registerLifecycle({
+  const lifecycle = registerLifecycle({
     coordinator,
     db,
     views,
@@ -149,6 +157,30 @@ export function main(): void {
     config: () => config,
     rng: Math.random,
     logger,
+  });
+  registerClaimCommands({
+    coordinator,
+    db,
+    views,
+    timers,
+    registry,
+    lifecycle,
+    config: () => config,
+    rail,
+    now: Date.now,
+    rng: Math.random,
+  });
+  void recoverSettlingIntents({
+    coordinator,
+    db,
+    views,
+    timers,
+    registry,
+    lifecycle,
+    config: () => config,
+    rail,
+    now: Date.now,
+    rng: Math.random,
   });
   rearmTimers(db, timers, now);
   void coordinator.dispatch({ type: "PoolTick", payload: {} });
@@ -194,6 +226,33 @@ export function main(): void {
     turnstile,
     now: Date.now,
     rng: Math.random,
+  });
+  registerClaimRoutes(app, {
+    coordinator,
+    db,
+    views,
+    timers,
+    registry,
+    lifecycle,
+    config: () => config,
+    rail,
+    now: Date.now,
+    rng: Math.random,
+    jwtSecret: loaded.env.JWT_SECRET,
+    trustProxyHops: loaded.env.TRUST_PROXY_HOPS,
+    publicBaseUrl: loaded.env.PUBLIC_BASE_URL,
+    mode,
+  });
+  registerDiscoveryRoutes(app, {
+    db,
+    config: () => config,
+    jwtSecret: loaded.env.JWT_SECRET,
+    now: Date.now,
+    views,
+    mode,
+    rail,
+    publicBaseUrl: loaded.env.PUBLIC_BASE_URL,
+    staticDir: new URL("../../web/dist", import.meta.url).pathname,
   });
 
   const server = serve({ fetch: app.fetch, port: loaded.env.PORT }, (info) => {

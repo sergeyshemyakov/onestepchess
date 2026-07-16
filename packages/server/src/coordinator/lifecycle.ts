@@ -323,6 +323,13 @@ export function registerLifecycle(deps: LifecycleDeps): LifecycleApi {
     Record<TimerKind, (ctx: CommandContext, refId: string) => void>
   > = {
     gameStall: onGameStall,
+    claimDeadline: (_ctx, claimId) => {
+      void coordinator.dispatch({
+        type: "ExpireClaim",
+        payload: { claimId },
+        refIds: [claimId],
+      });
+    },
   };
 
   coordinator.register(

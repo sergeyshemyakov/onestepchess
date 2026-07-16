@@ -31,6 +31,7 @@ export const ERROR_STATUS = {
   CLAIM_EXPIRED: 410,
   ILLEGAL_MOVE: 400,
   AMBIGUOUS_MOVE: 400,
+  PAYMENT_REQUIRED: 402,
   PAYMENT_INVALID: 402,
   INSUFFICIENT_FUNDS: 402,
   NOT_OPTED_IN: 402,
@@ -51,6 +52,7 @@ export type AppErrorOptions = {
   readonly suggestion?: string;
   readonly legalMoves?: readonly Move[];
   readonly retryAfterSeconds?: number;
+  readonly headers?: Readonly<Record<string, string>>;
 };
 
 export class AppError extends Error {
@@ -99,7 +101,11 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
 
   app.onError((error, c) => {
     if (error instanceof AppError) {
-      const { hint, suggestion, legalMoves, retryAfterSeconds } = error.options;
+      const { hint, suggestion, legalMoves, retryAfterSeconds, headers } =
+        error.options;
+      for (const [name, value] of Object.entries(headers ?? {})) {
+        c.header(name, value);
+      }
       if (retryAfterSeconds !== undefined) {
         c.header("Retry-After", String(Math.ceil(retryAfterSeconds)));
       }
