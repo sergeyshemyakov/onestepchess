@@ -115,6 +115,7 @@ export async function main(): Promise<void> {
         usdcAsset: config.USDC_ASA,
         treasuryAddress: rail.treasuryAddress,
         pauseCausesJson: "[]",
+        banner: loaded.env.SYSTEM_BANNER ?? null,
         updatedAt: now,
       })
       .run();
@@ -141,6 +142,15 @@ export async function main(): Promise<void> {
     );
     process.exitCode = 1;
     return;
+  }
+  if (
+    loaded.env.SYSTEM_BANNER !== undefined &&
+    identity !== undefined &&
+    identity.banner !== loaded.env.SYSTEM_BANNER
+  ) {
+    db.update(schema.systemState)
+      .set({ banner: loaded.env.SYSTEM_BANNER, updatedAt: now })
+      .run();
   }
 
   const views = new CoordinatorViews();

@@ -1,8 +1,8 @@
 // The lazy wallet subtree (§5.6): use-wallet + wallet SDKs + algosdk enter
 // the bundle only through this chunk, dynamically imported on first wallet
 // intent. Release 1 develops against use-wallet's Mnemonic provider
-// (release plan §9 decision 1); Pera/Defly/Lute compile behind the same
-// interface — manual certification is Release 2.
+// (release plan §9 decision 1). Branded wallets are deliberately absent from
+// this Release-1 list until their Release-2 certification is complete.
 
 import { NetworkId, WalletId, WalletManager } from "@txnlab/use-wallet-react";
 import type algosdk from "algosdk";
@@ -37,20 +37,12 @@ export type WalletModule = {
 
 export function createWalletModule(): WalletModule {
   const manager = new WalletManager({
-    wallets: [
-      { id: WalletId.MNEMONIC, options: { persistToStorage: true } },
-      WalletId.PERA,
-      WalletId.DEFLY,
-      { id: WalletId.LUTE, options: { siteName: "One Step Chess" } },
-    ],
+    wallets: [{ id: WalletId.MNEMONIC, options: { persistToStorage: true } }],
     defaultNetwork: NetworkId.LOCALNET,
   });
 
   const names: Record<string, string> = {
     [WalletId.MNEMONIC]: "dev wallet (mnemonic)",
-    [WalletId.PERA]: "pera",
-    [WalletId.DEFLY]: "defly",
-    [WalletId.LUTE]: "lute",
   };
 
   return {

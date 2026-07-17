@@ -63,13 +63,18 @@ describe("server config composition", () => {
 
   it("parses the env contract with mock defaults", () => {
     const loaded = loadConfig({
-      env: { PORT: "4123", DB_PATH: "/tmp/osc-test.sqlite" },
+      env: {
+        PORT: "4123",
+        DB_PATH: "/tmp/osc-test.sqlite",
+        SYSTEM_BANNER: "internal playtest — no real USDC",
+      },
     });
     expect(loaded.env.RAIL).toBe("mock");
     expect(loaded.env.PORT).toBe(4123);
     expect(loaded.env.DB_PATH).toBe("/tmp/osc-test.sqlite");
     expect(loaded.env.PUBLIC_BASE_URL).toBe("http://localhost:4123");
     expect(loaded.env.JWT_SECRET.length).toBeGreaterThanOrEqual(32);
+    expect(loaded.env.SYSTEM_BANNER).toBe("internal playtest — no real USDC");
   });
 
   it("requires JWT_SECRET and TREASURY_MNEMONIC on the avm rail", () => {
