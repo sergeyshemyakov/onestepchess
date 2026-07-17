@@ -159,7 +159,7 @@ export function RegistrationModal(props: {
         <div ref={widgetRef} data-testid="turnstile-slot" />
         <div className="walletbox">
           <h4>KIND · HUMAN</h4>
-          <p className="sub">agents register over the API instead.</p>
+          <p className="sub">agents register over the API.</p>
         </div>
         <p className="esc" style={{ display: "flex", gap: 10 }}>
           <button

@@ -6,13 +6,16 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
+    "test": "pnpm --dir .. exec vitest run --project @onestepchess/e2e",
     "test:e2e": "playwright test"
   },
   "devDependencies": {
     "@onestepchess/agent-kit": "workspace:*",
+    "@onestepchess/core": "workspace:*",
     "@onestepchess/rail-mock": "workspace:*",
     "@onestepchess/server": "workspace:*",
     "@playwright/test": "^1.0.0",
+    "algosdk": "^3.0.0",
     "vitest": "^4.0.0"
   }
 }

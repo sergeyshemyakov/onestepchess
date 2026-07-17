@@ -1,11 +1,61 @@
 // The lazy wallet subtree (§5.6): use-wallet + wallet SDKs + algosdk enter
 // the bundle only through this chunk, dynamically imported on first wallet
 // intent. Release 1 develops against use-wallet's Mnemonic provider
-// (release plan §9 decision 1); Pera/Defly/Lute compile behind the same
-// interface — manual certification is Release 2.
+// (release plan §9 decision 1). Branded wallets are deliberately absent from
+// this Release-1 list until their Release-2 certification is complete.
 
 import { NetworkId, WalletId, WalletManager } from "@txnlab/use-wallet-react";
-import type algosdk from "algosdk";
+import algosdk from "algosdk";
+
+const MNEMONIC_STORAGE_KEY = "@txnlab/use-wallet:v4_mnemonic";
+
+function normalizeMnemonic(value: string): string {
+  return value.trim().replace(/\s+/g, " ");
+}
+
+function isValidMnemonic(value: string): boolean {
+  try {
+    algosdk.mnemonicToSecretKey(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function removeInvalidPersistedMnemonic(): void {
+  try {
+    const persisted = localStorage.getItem(MNEMONIC_STORAGE_KEY);
+    if (persisted !== null && !isValidMnemonic(persisted)) {
+      localStorage.removeItem(MNEMONIC_STORAGE_KEY);
+    }
+  } catch {
+    // Storage may be unavailable in locked-down browser contexts. The wallet
+    // provider will still surface its normal connection error in that case.
+  }
+}
+
+export async function promptForValidMnemonic(
+  promptForInput: (message: string) => string | null = window.prompt.bind(
+    window,
+  ),
+): Promise<string> {
+  let invalid = false;
+  while (true) {
+    const entered = promptForInput(
+      invalid
+        ? "That mnemonic is invalid. Enter a valid 25-word mnemonic passphrase:"
+        : "Enter 25-word mnemonic passphrase:",
+    );
+    if (entered === null) {
+      const cancelled = new Error("mnemonic entry cancelled");
+      cancelled.name = "AbortError";
+      throw cancelled;
+    }
+    const mnemonic = normalizeMnemonic(entered);
+    if (isValidMnemonic(mnemonic)) return mnemonic;
+    invalid = true;
+  }
+}
 
 export type WalletChoice = {
   readonly id: string;
@@ -36,21 +86,24 @@ export type WalletModule = {
 };
 
 export function createWalletModule(): WalletModule {
+  // use-wallet persists the prompt result before deriving the account. Clean
+  // up invalid values left by earlier builds so the prompt can open again.
+  removeInvalidPersistedMnemonic();
   const manager = new WalletManager({
     wallets: [
-      { id: WalletId.MNEMONIC, options: { persistToStorage: true } },
-      WalletId.PERA,
-      WalletId.DEFLY,
-      { id: WalletId.LUTE, options: { siteName: "One Step Chess" } },
+      {
+        id: WalletId.MNEMONIC,
+        options: {
+          persistToStorage: true,
+          promptForMnemonic: promptForValidMnemonic,
+        },
+      },
     ],
     defaultNetwork: NetworkId.LOCALNET,
   });
 
   const names: Record<string, string> = {
     [WalletId.MNEMONIC]: "dev wallet (mnemonic)",
-    [WalletId.PERA]: "pera",
-    [WalletId.DEFLY]: "defly",
-    [WalletId.LUTE]: "lute",
   };
 
   return {

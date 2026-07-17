@@ -102,6 +102,7 @@ const envSchema = z.object({
   ADMIN_TOKEN: z.string().min(1).optional(),
   TREASURY_MNEMONIC: z.string().min(1).optional(),
   TURNSTILE_SECRET: z.string().min(1).optional(),
+  SYSTEM_BANNER: z.string().min(1).optional(),
   ALERT_WEBHOOK_URL: z.url().optional(),
   BACKUP_DIR: z.string().min(1).optional(),
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).default(0),

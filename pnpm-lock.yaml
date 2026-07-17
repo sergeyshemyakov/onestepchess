@@ -23,6 +23,9 @@ importers:
       '@onestepchess/agent-kit':
         specifier: workspace:*
         version: link:../packages/agent-kit
+      '@onestepchess/core':
+        specifier: workspace:*
+        version: link:../packages/core
       '@onestepchess/rail-mock':
         specifier: workspace:*
         version: link:../packages/rail-mock
@@ -32,6 +35,9 @@ importers:
       '@playwright/test':
         specifier: ^1.0.0
         version: 1.61.1
+      algosdk:
+        specifier: ^3.0.0
+        version: 3.6.0
       vitest:
         specifier: ^4.0.0
         version: 4.1.10(@types/node@26.1.1)(happy-dom@20.10.6)(vite@8.1.4(@types/node@26.1.1)(esbuild@0.28.1)(tsx@4.23.0)(yaml@2.9.0))
