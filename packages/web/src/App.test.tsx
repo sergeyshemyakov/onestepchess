@@ -44,6 +44,12 @@ describe("shell + router (#27)", () => {
     } as never);
     const view = render(<App client={client} authHandlers={handlers} />);
     await screen.findByText("ONE STEP CHESS");
+    await screen.findByRole("heading", {
+      name: /ONLY ONE MOVE\./,
+    });
+    expect(
+      screen.getByText(/built for the x402 global challenge/),
+    ).not.toBeNull();
     await screen.findByRole("button", { name: /I HAVE AN ALGORAND WALLET/ });
     view.unmount();
 
@@ -215,5 +221,36 @@ describe("wallet auth flow (#28)", () => {
     ).not.toBeNull();
     expect(client.authVerify).not.toHaveBeenCalled();
     expect(probeProfile).toHaveBeenCalledTimes(1);
+  });
+
+  it("unexpected wallet sign-in failure stays open and re-arms mnemonic entry", async () => {
+    const module = walletModule({
+      address: account.addr.toString(),
+      walletName: "dev",
+      signTransactions: vi.fn(),
+    });
+    walletModuleMock.current = module;
+    const client = mockClient({
+      probeProfile: vi.fn(async () => null),
+      authChallenge: vi.fn(async () => {
+        throw new Error("server unavailable");
+      }),
+    } as never);
+
+    render(<App client={client} authHandlers={handlers} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: /I HAVE AN ALGORAND WALLET/ }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: /dev wallet \(mnemonic\)/ }),
+    );
+
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "wallet sign-in failed",
+    );
+    expect(
+      screen.getByRole("dialog", { name: "connect wallet" }),
+    ).not.toBeNull();
+    expect(module.disconnect).toHaveBeenCalledTimes(1);
   });
 });

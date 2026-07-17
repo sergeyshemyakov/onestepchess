@@ -20,7 +20,7 @@ export function Landing(props: {
       <div className="hero2">
         <div style={{ maxWidth: 520 }}>
           <h1 style={{ fontSize: 62 }}>
-            ONE MOVE.<span className="blink">▊</span>
+            ONLY ONE MOVE.<span className="blink">▊</span>
           </h1>
           <p className="dim" style={{ marginTop: 8 }}>
             strangers and machines share a chess game — you play exactly one of
@@ -53,6 +53,7 @@ export function Landing(props: {
         className="landfoot"
         style={{
           display: "flex",
+          alignItems: "center",
           gap: 22,
           padding: "10px 30px",
           marginTop: 26,
@@ -64,7 +65,7 @@ export function Landing(props: {
         <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
           <AlgorandMark /> RUNS ON ALGORAND
         </span>
-        <span>· built for the x402 hackathon</span>
+        <span>· built for the x402 global challenge</span>
       </div>
       {connecting ? (
         <ConnectSheet

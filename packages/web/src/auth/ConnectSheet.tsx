@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { ApiClient } from "../api/client.js";
 import type { Meta, PlayerView } from "../api/schemas.js";
 import { loadWalletModule } from "../wallet/lazy.js";
-import type { WalletChoice } from "../wallet/provider.js";
+import type { WalletChoice, WalletModule } from "../wallet/provider.js";
 import { loginWithWallet, type PendingRegistration } from "./login.js";
 import { RegistrationModal } from "./RegistrationModal.jsx";
 
@@ -39,8 +39,9 @@ export function ConnectSheet(props: {
       if (busy) return;
       setBusy(true);
       setError(null);
+      let module: WalletModule | null = null;
       try {
-        const module = await loadWalletModule();
+        module = await loadWalletModule();
         const wallet = await module.connect(id);
         const outcome = await loginWithWallet({
           client: props.client,
@@ -61,9 +62,15 @@ export function ConnectSheet(props: {
             setError(outcome.message);
             return;
         }
-      } catch {
-        // connect itself rejected/failed — landing unchanged
-        props.onClose();
+      } catch (cause) {
+        if (cause instanceof Error && cause.name === "AbortError") {
+          props.onClose();
+          return;
+        }
+        await module?.disconnect().catch(() => undefined);
+        setError(
+          "wallet sign-in failed — check the mnemonic or connection, then try again",
+        );
       } finally {
         setBusy(false);
       }
