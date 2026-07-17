@@ -1,0 +1,307 @@
+import { useCallback, useEffect, useReducer, useRef } from "react";
+import type { ApiClient } from "../api/client.js";
+import type { Meta, Move } from "../api/schemas.js";
+import { readClaimDraft } from "../lib/storage.js";
+import { payMove } from "../wallet/x402.js";
+import { syncDraft } from "./draft.js";
+import {
+  initialPlayState,
+  type PlayEvent,
+  type PlayState,
+  playReducer,
+} from "./machine.js";
+import { rehydrate } from "./rehydrate.js";
+
+const SETTLE_POLL_MS = 2_000;
+
+/** Effects hook for the §5.5 reducer: API/wallet calls run here and come
+ * back as dispatched events; the reducer itself stays pure. */
+export function usePlayFlow(args: {
+  readonly client: ApiClient;
+  readonly meta: Meta | null;
+  readonly address: string | null;
+  readonly enabled: boolean;
+}) {
+  const [state, dispatch] = useReducer(playReducer, initialPlayState);
+  const { client, address, enabled } = args;
+  const previousState = useRef<PlayState>(initialPlayState);
+  const claimInFlight = useRef(false);
+  const submitInFlight = useRef(false);
+  const rehydrated = useRef(false);
+
+  // Draft persistence exactly at the specced points (§5.5).
+  useEffect(() => {
+    syncDraft(previousState.current, state);
+    previousState.current = state;
+  }, [state]);
+
+  // Rehydration: refresh path and app-switch return path in one place.
+  useEffect(() => {
+    if (!enabled || rehydrated.current) return;
+    rehydrated.current = true;
+    rehydrate(client, readClaimDraft())
+      .then((restored) => {
+        if (restored.phase !== "IDLE") {
+          dispatch({ type: "RESTORE", state: restored });
+        }
+      })
+      .catch(() => undefined);
+  }, [enabled, client]);
+
+  // CLAIMING → POST /claims (get-or-create).
+  useEffect(() => {
+    if (state.phase !== "CLAIMING" || claimInFlight.current) return;
+    claimInFlight.current = true;
+    client
+      .createClaim(state.demo ? { demo: true } : {})
+      .then((result) => {
+        switch (result.kind) {
+          case "claim":
+            dispatch({ type: "CLAIM_READY", claim: result.claim });
+            break;
+          case "none":
+            dispatch({
+              type: "NO_BOARDS",
+              retryAfterSeconds: result.retryAfterSeconds,
+            });
+            break;
+          case "quota":
+            dispatch({
+              type: "QUOTA_OUT",
+              retryAfterSeconds: result.retryAfterSeconds,
+            });
+            break;
+          case "paused":
+            dispatch({ type: "PAUSED" });
+            break;
+        }
+      })
+      .catch(() => dispatch({ type: "NO_BOARDS", retryAfterSeconds: 5 }))
+      .finally(() => {
+        claimInFlight.current = false;
+      });
+  }, [state.phase, state.demo, client]);
+
+  // Demo settle: plain POST, no header, no wallet, ever (F-W4).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: fires on the phase transition only — re-running on claim/move context would double-submit
+  useEffect(() => {
+    if (
+      state.phase !== "SETTLING" ||
+      !state.demo ||
+      state.settlePoll === true ||
+      submitInFlight.current ||
+      state.claim === undefined ||
+      state.chosenMove === undefined
+    ) {
+      return;
+    }
+    submitInFlight.current = true;
+    const { claim, chosenMove } = state;
+    client
+      .postMove(claim.claimId, chosenMove.uci)
+      .then((result) => {
+        switch (result.kind) {
+          case "receipt":
+            dispatch({ type: "RECEIPT", receipt: result.receipt });
+            break;
+          case "expired":
+            dispatch({ type: "CLAIM_EXPIRED" });
+            break;
+          case "paused":
+            dispatch({
+              type: "PAYMENT_FAILED",
+              envelope: {
+                error: "PAUSED",
+                hint: "settlement offline — your board is held",
+                docs: "",
+              },
+            });
+            break;
+          case "illegal":
+            refreshClaim();
+            break;
+          default:
+            dispatch({
+              type: "PAYMENT_FAILED",
+              envelope: {
+                error: "INTERNAL",
+                hint: "move failed — try again",
+                docs: "",
+              },
+            });
+        }
+      })
+      .catch(() =>
+        dispatch({
+          type: "PAYMENT_FAILED",
+          envelope: {
+            error: "INTERNAL",
+            hint: "connection failed — try again",
+            docs: "",
+          },
+        }),
+      )
+      .finally(() => {
+        submitInFlight.current = false;
+      });
+  }, [state.phase, state.demo, state.settlePoll]);
+
+  // Staked path: SIGNING runs the x402 module (§5.6).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: fires on entering SIGNING only — context deps would re-run payMove mid-flight
+  useEffect(() => {
+    if (
+      state.phase !== "SIGNING" ||
+      submitInFlight.current ||
+      state.claim === undefined ||
+      state.chosenMove === undefined ||
+      args.meta === null ||
+      address === null
+    ) {
+      return;
+    }
+    submitInFlight.current = true;
+    const { claim, chosenMove } = state;
+    payMove({
+      claimId: claim.claimId,
+      moveUci: chosenMove.uci,
+      address,
+      stakeMicroUsdc: claim.stakeMicroUsdc,
+      meta: args.meta,
+      client,
+      onPhase: (phase) => {
+        if (phase === "settling")
+          dispatch({ type: "HEADER_READY", header: "" });
+      },
+    })
+      .then((outcome) => {
+        dispatch({ type: "HEADER_READY", header: "" });
+        switch (outcome.kind) {
+          case "receipt":
+            dispatch({ type: "RECEIPT", receipt: outcome.receipt });
+            break;
+          case "pending":
+            dispatch({
+              type: "PAYMENT_PENDING",
+              retryAfterSeconds: outcome.retryAfterSeconds,
+            });
+            break;
+          case "in_flight":
+            dispatch({ type: "PAYMENT_IN_FLIGHT" });
+            break;
+          case "failed":
+            dispatch({ type: "PAYMENT_FAILED", envelope: outcome.envelope });
+            break;
+          case "unavailable":
+            dispatch({
+              type: "PAYMENT_UNAVAILABLE",
+              retryAfterSeconds: outcome.retryAfterSeconds,
+            });
+            break;
+          case "expired":
+            dispatch({ type: "CLAIM_EXPIRED" });
+            break;
+          case "unsupported":
+            dispatch({
+              type: "PAYMENT_FAILED",
+              envelope: {
+                error: "UNSUPPORTED",
+                hint: outcome.reason,
+                docs: "",
+              },
+            });
+            break;
+          case "illegal":
+            refreshClaim();
+            break;
+          case "paused":
+            dispatch({
+              type: "PAYMENT_FAILED",
+              envelope: {
+                error: "PAUSED",
+                hint: "settlement offline — your board is held",
+                docs: "",
+              },
+            });
+            break;
+        }
+      })
+      .catch(() =>
+        dispatch({
+          type: "PAYMENT_FAILED",
+          envelope: {
+            error: "INTERNAL",
+            hint: "connection failed — try again",
+            docs: "",
+          },
+        }),
+      )
+      .finally(() => {
+        submitInFlight.current = false;
+      });
+  }, [state.phase]);
+
+  // Ambiguous settle: poll claim status — never re-sign (§5.5).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the poll keys on phase + claim id; client is stable for the app lifetime
+  useEffect(() => {
+    if (state.phase !== "SETTLING" || state.settlePoll !== true) return;
+    const claimId = state.claim?.claimId;
+    if (claimId === undefined) return;
+    const poll = setInterval(() => {
+      client
+        .getClaimStatus(claimId)
+        .then((status) => {
+          if (status === null) return;
+          if (status.status === "moved") {
+            dispatch({ type: "RECEIPT", receipt: status.receipt });
+          } else if (status.status === "expired") {
+            dispatch({ type: "CLAIM_EXPIRED" });
+          } else if (status.paymentState === null) {
+            dispatch({
+              type: "PAYMENT_FAILED",
+              envelope: {
+                error: "PAYMENT_INVALID",
+                hint: "payment didn't land — nothing was charged; try again",
+                docs: "",
+              },
+            });
+          }
+        })
+        .catch(() => undefined);
+    }, SETTLE_POLL_MS);
+    return () => clearInterval(poll);
+  }, [state.phase, state.settlePoll, state.claim?.claimId]);
+
+  const refreshClaim = useCallback(() => {
+    client
+      .getCurrentClaim()
+      .then((claim) => {
+        if (claim !== null) dispatch({ type: "CLAIM_REFRESHED", claim });
+        else dispatch({ type: "CLAIM_EXPIRED" });
+      })
+      .catch(() => undefined);
+  }, [client]);
+
+  // Timer expiry is cosmetic — confirm against the server before EXPIRED.
+  const checkExpiry = useCallback(() => {
+    const claimId = state.claim?.claimId;
+    if (claimId === undefined) return;
+    client
+      .getClaimStatus(claimId)
+      .then((status) => {
+        if (status === null || status.status === "expired") {
+          dispatch({ type: "CLAIM_EXPIRED" });
+        } else if (status.status === "moved") {
+          dispatch({ type: "RECEIPT", receipt: status.receipt });
+        }
+        // open → the settle-grace rule is playing out; keep the surface.
+      })
+      .catch(() => undefined);
+  }, [client, state.claim?.claimId]);
+
+  const send = useCallback((event: PlayEvent) => dispatch(event), []);
+
+  return { state, send, checkExpiry } as const;
+}
+
+export type PlayFlow = ReturnType<typeof usePlayFlow>;
+export type { Move };
