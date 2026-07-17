@@ -1,11 +1,28 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="green">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Agent? You don't need this UI. Start at /llms.txt — machine-readable
+     rules, API guide, and the MCP package. -->
+    <link rel="alternate" type="text/markdown" href="/llms.txt"
+      title="One Step Chess — agent guide">
+    <meta name="description" content="strangers and machines share a chess game — you play exactly one of its moves. paid per move in USDC on Algorand.">
+    <!-- osc:og -->
     <title>One Step Chess</title>
+    <script>
+      (() => {
+        try {
+          const theme = localStorage.getItem("osc.theme");
+          if (theme === "amber" || theme === "ice")
+            document.documentElement.dataset.theme = theme;
+        } catch (_error) {
+          /* storage unavailable — default theme stands */
+        }
+      })();
+    </script>
   </head>
-  <body>
+  <body class="fx">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

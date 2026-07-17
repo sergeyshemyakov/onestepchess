@@ -1,0 +1,200 @@
+/* One phosphor ink (--ph) per theme; every other color is derived via
+ * color-mix, so retheming is one data-theme swap on <html> (web spec §8.1).
+ * No light mode — the tube is the brand. */
+:root {
+  --sq: 60px;
+  --line: color-mix(in oklab, var(--ph) 25%, transparent);
+  --faint: color-mix(in oklab, var(--ph) 12%, transparent);
+  --ph-dim: color-mix(in oklab, var(--ph) 62%, black);
+  --ph-dark: color-mix(in oklab, var(--ph) 38%, black);
+}
+:root[data-theme="green"] {
+  --ph: #41ff70;
+  --ph-hi: #c9ffd9;
+  --bg: #020806;
+  --sql: #0b2413;
+  --sqd: #051309;
+  --accent: #ffb347;
+}
+:root[data-theme="amber"] {
+  --ph: #ffb000;
+  --ph-hi: #ffe9b8;
+  --bg: #0a0500;
+  --sql: #2a1c05;
+  --sqd: #170e02;
+  --accent: #63e6ff;
+}
+:root[data-theme="ice"] {
+  --ph: #9fd7ff;
+  --ph-hi: #eef9ff;
+  --bg: #020609;
+  --sql: #0b1c2b;
+  --sqd: #050e17;
+  --accent: #ffb347;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+}
+html {
+  background: #000;
+}
+body {
+  font-family: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 14px;
+  line-height: 1.55;
+  background: var(--bg);
+  color: var(--ph);
+  min-height: 100vh;
+}
+::selection {
+  background: var(--ph);
+  color: var(--bg);
+}
+
+h1,
+h2,
+h3,
+.vt {
+  font-family: "VT323", "IBM Plex Mono", monospace;
+  font-weight: 400;
+}
+h1 {
+  font-size: 56px;
+  line-height: 1;
+  color: var(--ph-hi);
+}
+a {
+  color: var(--ph);
+}
+.dim {
+  color: var(--ph-dim);
+}
+.faintt {
+  color: var(--ph-dark);
+}
+.win {
+  color: var(--ph-hi);
+}
+.blink {
+  animation: blink 1.1s steps(1) infinite;
+}
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .blink {
+    animation: none;
+  }
+}
+
+/* CRT fiction: every canvas-class effect lives behind body.fx and drops
+ * below 768px (D13) — one class is the global kill switch. */
+.crt {
+  position: relative;
+  min-height: 100vh;
+  background: radial-gradient(
+    120% 100% at 50% 0%,
+    color-mix(in oklab, var(--ph) 5%, var(--bg)) 0%,
+    var(--bg) 70%
+  );
+  overflow: hidden;
+}
+body.fx .crt {
+  margin: 14px;
+  min-height: calc(100vh - 28px);
+  border-radius: 26px;
+  box-shadow:
+    inset 0 0 140px rgba(0, 0, 0, 0.66),
+    0 0 0 3px #0a0a0a,
+    0 0 0 12px #161616,
+    0 6px 60px rgba(0, 0, 0, 0.9);
+}
+.overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 50;
+  display: none;
+}
+body.fx .overlay.scan {
+  display: block;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.3) 0 1px,
+    transparent 1px 3px
+  );
+}
+body.fx .overlay.scan::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 14%;
+  top: 0;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    color-mix(in oklab, var(--ph) 7%, transparent),
+    transparent
+  );
+  animation: band 9s linear infinite;
+}
+@keyframes band {
+  0% {
+    transform: translateY(-20vh);
+  }
+  100% {
+    transform: translateY(120vh);
+  }
+}
+body.fx .overlay.vig {
+  display: block;
+  background: radial-gradient(
+    105% 90% at 50% 45%,
+    transparent 60%,
+    rgba(0, 0, 0, 0.5) 100%
+  );
+}
+body.fx h1,
+body.fx h2,
+body.fx .brand,
+body.fx .pc,
+body.fx .btn,
+body.fx .timer,
+body.fx .toast,
+body.fx .blink,
+body.fx .bigplay .bp-title {
+  text-shadow:
+    0 0 1px currentColor,
+    0 0 9px color-mix(in oklab, currentColor 55%, transparent);
+}
+/* The per-piece glow filter is the single most expensive paint on the page —
+ * body.fx off (or a narrow viewport) removes it wholesale. */
+body.fx svg.pc {
+  filter: drop-shadow(
+    0 0 3px color-mix(in oklab, currentColor 65%, transparent)
+  );
+}
+@media (max-width: 768px) {
+  body.fx svg.pc {
+    filter: none;
+  }
+  body.fx .overlay.scan {
+    display: none;
+  }
+  body.fx .crt {
+    margin: 0;
+    min-height: 100vh;
+    border-radius: 0;
+    box-shadow: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  body.fx .overlay.scan::after {
+    animation: none;
+  }
+}

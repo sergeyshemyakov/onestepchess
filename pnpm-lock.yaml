@@ -188,6 +188,12 @@ importers:
 
   packages/web:
     dependencies:
+      '@fontsource/ibm-plex-mono':
+        specifier: ^5.2.0
+        version: 5.2.7
+      '@fontsource/vt323':
+        specifier: ^5.2.0
+        version: 5.2.7
       '@txnlab/use-wallet-react':
         specifier: ^4.0.0
         version: 4.6.0(algosdk@3.6.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -778,6 +784,12 @@ packages:
     engines: {node: '>=18'}
     cpu: [x64]
     os: [win32]
+
+  '@fontsource/ibm-plex-mono@5.2.7':
+    resolution: {integrity: sha512-MKAb8qV+CaiMQn2B0dIi1OV3565NYzp3WN5b4oT6LTkk+F0jR6j0ZN+5BKJiIhffDC3rtBULsYZE65+0018z9w==}
+
+  '@fontsource/vt323@5.2.7':
+    resolution: {integrity: sha512-8JTMM23vMhQxin9Cn/ijty8cNwXW4INrln0VAJ2227Rz0CVfkzM3qr3l/CqudZJ6BXCnbCGUTdf2ym3cTNex8A==}
 
   '@hono/node-server@1.19.14':
     resolution: {integrity: sha512-GwtvgtXxnWsucXvbQXkRgqksiH2Qed37H9xHZocE5sA3N8O8O8/8FA3uclQXxXVzc9XBZuEOMK7+r02FmSpHtw==}
@@ -2713,6 +2725,10 @@ snapshots:
 
   '@esbuild/win32-x64@0.28.1':
     optional: true
+
+  '@fontsource/ibm-plex-mono@5.2.7': {}
+
+  '@fontsource/vt323@5.2.7': {}
 
   '@hono/node-server@1.19.14(hono@4.12.29)':
     dependencies:
