@@ -24,6 +24,10 @@ import { createApp } from "./http/app.js";
 import { registerAuthRoutes } from "./http/routes/auth.js";
 import { registerClaimRoutes } from "./http/routes/claims.js";
 import { registerDiscoveryRoutes } from "./http/routes/discovery.js";
+import {
+  registerHumanCommands,
+  registerHumanRoutes,
+} from "./http/routes/human.js";
 import { createLogger } from "./logger.js";
 import {
   registerPayoutCommands,
@@ -55,6 +59,7 @@ export * from "./http/middleware/ratelimit.js";
 export * from "./http/routes/auth.js";
 export * from "./http/routes/claims.js";
 export * from "./http/routes/discovery.js";
+export * from "./http/routes/human.js";
 export * from "./ids.js";
 export * from "./logger.js";
 export * from "./names.js";
@@ -179,6 +184,17 @@ export async function main(): Promise<void> {
     rng: Math.random,
     logger,
   });
+  let turnstile: TurnstileVerifier;
+  if (loaded.env.TURNSTILE_SECRET !== undefined) {
+    turnstile = createTurnstileVerifier({
+      secret: loaded.env.TURNSTILE_SECRET,
+    });
+  } else {
+    // Reachable only on the mock profile (avm exits above): local dev has no
+    // Turnstile keys, and CI drives the fixture verifier through tests.
+    logger.warn("TURNSTILE_SECRET unset — dev verifier accepts any token");
+    turnstile = async () => "pass";
+  }
   const claimDeps = {
     coordinator,
     db,
@@ -190,6 +206,7 @@ export async function main(): Promise<void> {
     rail,
     now: Date.now,
     rng: Math.random,
+    turnstile,
   } as const;
   registerClaimCommands(claimDeps);
   registerResolution({ coordinator, db, logger });
@@ -262,17 +279,6 @@ export async function main(): Promise<void> {
     mode,
   });
 
-  let turnstile: TurnstileVerifier;
-  if (loaded.env.TURNSTILE_SECRET !== undefined) {
-    turnstile = createTurnstileVerifier({
-      secret: loaded.env.TURNSTILE_SECRET,
-    });
-  } else {
-    // Reachable only on the mock profile (avm exits above): local dev has no
-    // Turnstile keys, and CI drives the fixture verifier through tests.
-    logger.warn("TURNSTILE_SECRET unset — dev verifier accepts any token");
-    turnstile = async () => "pass";
-  }
   registerAuthRoutes(app, {
     db,
     rail,
@@ -283,6 +289,7 @@ export async function main(): Promise<void> {
     turnstile,
     now: Date.now,
     rng: Math.random,
+    coordinator,
   });
   registerClaimRoutes(app, {
     coordinator,
@@ -299,7 +306,21 @@ export async function main(): Promise<void> {
     trustProxyHops: loaded.env.TRUST_PROXY_HOPS,
     publicBaseUrl: loaded.env.PUBLIC_BASE_URL,
     mode,
+    turnstile,
   });
+  const humanDeps = {
+    db,
+    coordinator,
+    rail,
+    config: () => config,
+    jwtSecret: loaded.env.JWT_SECRET,
+    publicBaseUrl: loaded.env.PUBLIC_BASE_URL,
+    trustProxyHops: loaded.env.TRUST_PROXY_HOPS,
+    now: Date.now,
+    rng: Math.random,
+  } as const;
+  registerHumanCommands(humanDeps);
+  registerHumanRoutes(app, humanDeps);
   registerDiscoveryRoutes(app, {
     db,
     config: () => config,

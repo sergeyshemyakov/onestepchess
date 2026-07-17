@@ -340,6 +340,7 @@ export function registerClaimCommands(deps: ClaimDeps): void {
         player: string;
         kind: "human" | "agent" | "guest";
         demo: boolean;
+        createGuest?: { turnstileVerifiedAt: number };
       },
     ) => {
       const existingId = deps.views.openClaimByPlayer.get(payload.player);
@@ -357,16 +358,26 @@ export function registerClaimCommands(deps: ClaimDeps): void {
         .from(schema.players)
         .where(eq(schema.players.address, payload.player))
         .get();
-      if (player === undefined || player.banned)
+      if (player === undefined && payload.createGuest === undefined)
         throw new Error("player unavailable");
+      if (player?.banned) throw new Error("player unavailable");
       const config = deps.config();
+      if (payload.kind === "guest") {
+        const consumed = deps.db
+          .select({ id: schema.claims.id })
+          .from(schema.claims)
+          .where(eq(schema.claims.player, payload.player))
+          .all().length;
+        if (consumed >= config.GUEST_CLAIM_ALLOWANCE)
+          return { claim: null, created: false, guestUsed: true };
+      }
       const timestamps =
         deps.views.quota.get(payload.player)?.[
           payload.demo ? "demo" : "staked"
         ] ?? [];
       const limit = payload.demo
         ? config.QUOTA_DEMO
-        : (player.quotaOverride ??
+        : (player?.quotaOverride ??
           (payload.kind === "agent" ? config.QUOTA_AGENT : config.QUOTA_HUMAN));
       const quota = rollingWindowCheck({
         eventTimestamps: timestamps,
@@ -463,6 +474,18 @@ export function registerClaimCommands(deps: ClaimDeps): void {
         createdAt: ctx.now,
         deadline: terms.deadline,
       };
+      if (payload.createGuest !== undefined) {
+        deps.db
+          .insert(schema.players)
+          .values({
+            address: payload.player,
+            kind: "guest",
+            nickname: null,
+            createdAt: ctx.now,
+            turnstileVerifiedAt: payload.createGuest.turnstileVerifiedAt,
+          })
+          .run();
+      }
       deps.db.insert(schema.claims).values(claim).run();
       ctx.appendEvent("claim_created", payload.player, { claimId: claim.id });
       ctx.afterCommit(() => {
@@ -471,6 +494,81 @@ export function registerClaimCommands(deps: ClaimDeps): void {
         deps.timers.arm("claimDeadline", claim.id, claim.deadline);
       });
       return { claim, created: true };
+    },
+  );
+
+  deps.coordinator.register(
+    "LinkGuest",
+    (ctx, payload: { guest: string; player: string }) => {
+      const guest = deps.db
+        .select()
+        .from(schema.players)
+        .where(eq(schema.players.address, payload.guest))
+        .get();
+      if (
+        guest === undefined ||
+        guest.kind !== "guest" ||
+        guest.linkedAddress !== null
+      )
+        return { linked: false as const, claims: 0 };
+
+      const existingSides = new Map<string, "white" | "black">();
+      for (const row of deps.db
+        .select({
+          gameId: schema.stakeEntries.gameId,
+          side: schema.stakeEntries.side,
+        })
+        .from(schema.stakeEntries)
+        .where(eq(schema.stakeEntries.player, payload.player))
+        .all()) {
+        existingSides.set(row.gameId, row.side);
+      }
+      for (const row of deps.db
+        .select({ gameId: schema.claims.gameId, side: schema.claims.side })
+        .from(schema.claims)
+        .where(
+          and(
+            eq(schema.claims.player, payload.player),
+            eq(schema.claims.status, "moved"),
+          ),
+        )
+        .all()) {
+        existingSides.set(row.gameId, row.side);
+      }
+
+      let walletHasOpen = deps.views.openClaimByPlayer.has(payload.player);
+      let transferred = 0;
+      const guestClaims = deps.db
+        .select()
+        .from(schema.claims)
+        .where(eq(schema.claims.player, payload.guest))
+        .all();
+      for (const claim of guestClaims) {
+        const priorSide = existingSides.get(claim.gameId);
+        if (priorSide !== undefined && priorSide !== claim.side) continue;
+        if (claim.status === "open" && walletHasOpen) continue;
+        if (claim.status === "expired") continue;
+        deps.db
+          .update(schema.claims)
+          .set({ player: payload.player })
+          .where(eq(schema.claims.id, claim.id))
+          .run();
+        existingSides.set(claim.gameId, claim.side);
+        transferred += 1;
+        if (claim.status === "open") {
+          walletHasOpen = true;
+          ctx.afterCommit(() => {
+            deps.views.removeOpenClaim(claim.id);
+            deps.views.setOpenClaim({ ...claim, player: payload.player });
+          });
+        }
+      }
+      deps.db
+        .update(schema.players)
+        .set({ linkedAddress: payload.player, linkedAt: ctx.now })
+        .where(eq(schema.players.address, payload.guest))
+        .run();
+      return { linked: true as const, claims: transferred };
     },
   );
 

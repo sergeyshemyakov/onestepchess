@@ -29,6 +29,8 @@ export const players = sqliteTable(
     losses: integer("losses").notNull().default(0),
     quotaOverride: integer("quota_override"),
     banned: integer("banned", { mode: "boolean" }).notNull().default(false),
+    linkedAddress: text("linked_address"),
+    linkedAt: integer("linked_at"),
   },
   (table) => [
     uniqueIndex("players_nickname_nocase").on(

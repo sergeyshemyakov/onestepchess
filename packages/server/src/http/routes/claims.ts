@@ -9,16 +9,28 @@ import type {
 } from "../../coordinator/claims.js";
 import { legalMove, receiptFor } from "../../coordinator/claims.js";
 import { schema } from "../../db/open.js";
+import { newId } from "../../ids.js";
 import { type AppEnv, AppError } from "../app.js";
 import { clientIp } from "../middleware/client-ip.js";
 import { createTokenBucket } from "../middleware/ratelimit.js";
-import { type AuthRouteDeps, sessionAuth } from "./auth.js";
+import {
+  type AuthRouteDeps,
+  guestOrSessionAuth,
+  optionalGuestOrSessionAuth,
+  setGuestCookie,
+} from "./auth.js";
 
-const claimBody = z.object({ demo: z.boolean().optional().default(false) });
-const moveBody = z.object({ move: z.string().min(1).max(32) });
+const claimBody = z
+  .object({
+    demo: z.boolean().optional().default(false),
+    turnstileToken: z.string().min(1).optional(),
+    ref: z.string().optional(),
+  })
+  .strict();
+const moveBody = z.object({ move: z.string().min(1).max(32) }).strict();
 
 export type ClaimRouteDeps = ClaimDeps &
-  Pick<AuthRouteDeps, "jwtSecret" | "trustProxyHops"> & {
+  Pick<AuthRouteDeps, "jwtSecret" | "trustProxyHops" | "turnstile"> & {
     readonly publicBaseUrl: string;
     readonly mode: () => "running" | "paused";
   };
@@ -154,13 +166,14 @@ export function registerClaimRoutes(
   app: Hono<AppEnv>,
   deps: ClaimRouteDeps,
 ): void {
-  const auth = sessionAuth(deps as unknown as AuthRouteDeps);
+  const authDeps = deps as unknown as AuthRouteDeps;
+  const auth = guestOrSessionAuth(authDeps);
+  const optionalAuth = optionalGuestOrSessionAuth(authDeps);
   const bucket = createTokenBucket({
     limitPerMinute: () => deps.config().RATE_LIMIT_CLAIMS_PER_IP_MIN,
     now: deps.now,
   });
-  app.use("/api/v1/claims/*", auth);
-  app.post("/api/v1/claims", auth, async (c) => {
+  app.post("/api/v1/claims", optionalAuth, async (c) => {
     pauseCheck(deps);
     const decision = bucket.take(clientIp(c, deps.trustProxyHops));
     if (!decision.ok)
@@ -169,7 +182,41 @@ export function registerClaimRoutes(
         retryAfterSeconds: decision.retryAfterSeconds,
       });
     const body = await parseBody(claimBody, c.req);
-    const session = c.get("session");
+    let session = c.get("session");
+    let createGuest: { turnstileVerifiedAt: number } | undefined;
+    if (session === undefined) {
+      if (!body.demo)
+        throw new AppError("UNAUTHENTICATED", { hint: "missing session" });
+      if (body.turnstileToken === undefined)
+        throw new AppError("TURNSTILE_REQUIRED", {
+          hint: "anonymous demo play requires Turnstile",
+        });
+      const verified = await deps.turnstile(
+        body.turnstileToken,
+        clientIp(c, deps.trustProxyHops),
+      );
+      if (verified === "unavailable")
+        throw new AppError("DEPENDENCY_UNAVAILABLE", {
+          hint: "captcha verification unavailable; retry shortly",
+          retryAfterSeconds: 5,
+        });
+      if (verified === "fail")
+        throw new AppError("TURNSTILE_FAILED", {
+          hint: "captcha verification failed",
+        });
+      const address = newId("guest_");
+      session = {
+        address,
+        kind: "guest",
+        jti: "guest",
+        exp: 0,
+      };
+      createGuest = { turnstileVerifiedAt: deps.now() };
+    }
+    if (session.kind === "guest" && !body.demo)
+      throw new AppError("INVALID_REQUEST", {
+        hint: "guest sessions may request demo claims only",
+      });
     if (body.demo && session.kind === "agent")
       throw new AppError("DEMO_HUMANS_ONLY", {
         hint: "demo claims are for humans",
@@ -190,22 +237,37 @@ export function registerClaimRoutes(
           ? "deprioritized"
           : "human";
     const result = await deps.coordinator.dispatch<
-      { player: string; kind: "human" | "agent" | "guest"; demo: boolean },
+      {
+        player: string;
+        kind: "human" | "agent" | "guest";
+        demo: boolean;
+        createGuest?: { turnstileVerifiedAt: number };
+      },
       {
         claim: ClaimRecord | null;
         created: boolean;
         quota?: boolean;
+        guestUsed?: boolean;
         retryAfterSeconds?: number;
       }
     >({
       type: "ClaimRequested",
-      payload: { player: session.address, kind: session.kind, demo: body.demo },
+      payload: {
+        player: session.address,
+        kind: session.kind,
+        demo: body.demo,
+        ...(createGuest === undefined ? {} : { createGuest }),
+      },
       claimClass,
     });
     if (result.kind === "deprioritized")
       return c.body(null, 204, { "Retry-After": "1" });
     const data = result.result;
     if (data.claim === null) {
+      if (data.guestUsed)
+        throw new AppError("GUEST_DEMO_USED", {
+          hint: "demo used — log in to keep playing",
+        });
       if (data.quota)
         throw new AppError("QUOTA_OUT", {
           hint: "claim quota exhausted",
@@ -215,6 +277,7 @@ export function registerClaimRoutes(
         "Retry-After": String(data.retryAfterSeconds ?? 1),
       });
     }
+    if (createGuest !== undefined) setGuestCookie(c, deps, session.address);
     return c.json(
       {
         claim: claimView(deps, data.claim, c.req.query("include") === "ascii"),
@@ -222,7 +285,7 @@ export function registerClaimRoutes(
       data.created ? 201 : 200,
     );
   });
-  app.get("/api/v1/claims/current", (c) => {
+  app.get("/api/v1/claims/current", auth, (c) => {
     const claim = deps.db
       .select()
       .from(schema.claims)
@@ -239,7 +302,7 @@ export function registerClaimRoutes(
       claim: claimView(deps, claim, c.req.query("include") === "ascii"),
     });
   });
-  app.get("/api/v1/claims/:id/status", (c) => {
+  app.get("/api/v1/claims/:id/status", auth, (c) => {
     const claim = claimed(deps, c.req.param("id"), c.get("session").address);
     if (claim.status === "expired") return c.json({ status: "expired" });
     if (claim.status === "moved")
@@ -261,7 +324,7 @@ export function registerClaimRoutes(
         intent?.status === "verified" ? "verifying" : (intent?.status ?? null),
     });
   });
-  app.post("/api/v1/claims/:id/move", async (c) => {
+  app.post("/api/v1/claims/:id/move", auth, async (c) => {
     pauseCheck(deps);
     const session = c.get("session");
     const claim = claimed(deps, c.req.param("id"), session.address);

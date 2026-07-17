@@ -15,6 +15,7 @@ import {
 import { signSession, verifySessionToken } from "../../auth/jwt.js";
 import type { TurnstileVerifier } from "../../auth/turnstile.js";
 import type { ServerConfig } from "../../config.js";
+import type { Coordinator } from "../../coordinator/queue.js";
 import type { Db } from "../../db/open.js";
 import { schema } from "../../db/open.js";
 import { generateName } from "../../names.js";
@@ -32,10 +33,12 @@ export type AuthRouteDeps = {
   readonly turnstile: TurnstileVerifier;
   readonly now: () => number;
   readonly rng: Rng;
+  readonly coordinator?: Coordinator;
 };
 
 const NICKNAME_PATTERN = /^[a-zA-Z0-9_-]{3,24}$/;
 const SESSION_COOKIE = "osc_session";
+const GUEST_COOKIE = "osc_guest";
 
 const challengeBodySchema = z.object({ address: z.string().min(1) });
 
@@ -117,63 +120,152 @@ function sessionTtlSeconds(config: ServerConfig): number {
 
 export function sessionAuth(deps: AuthRouteDeps): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
-    const cookieToken = getCookie(c, SESSION_COOKIE);
-    const header = c.req.header("authorization");
-    const bearerToken = header?.startsWith("Bearer ")
-      ? header.slice("Bearer ".length)
-      : undefined;
-    // Browsers use the cookie, agents the bearer token; each ignores the
-    // other (§6.1) — cookie wins when both are present.
-    const token = cookieToken ?? bearerToken;
-    if (token === undefined) {
-      throw new AppError("UNAUTHENTICATED", { hint: "missing session" });
-    }
-    const now = deps.now();
-    const claims = verifySessionToken(deps.jwtSecret, token, now);
-    if (claims === null) {
-      throw new AppError("UNAUTHENTICATED", { hint: "invalid session" });
-    }
-    const revoked = deps.db
-      .select({ jti: schema.revokedJti.jti })
-      .from(schema.revokedJti)
-      .where(eq(schema.revokedJti.jti, claims.jti))
-      .get();
-    if (revoked !== undefined) {
-      throw new AppError("UNAUTHENTICATED", { hint: "session revoked" });
-    }
-    const player = deps.db
-      .select({
-        kind: schema.players.kind,
-        banned: schema.players.banned,
-      })
-      .from(schema.players)
-      .where(eq(schema.players.address, claims.sub))
-      .get();
-    if (player === undefined) {
-      throw new AppError("UNAUTHENTICATED", { hint: "unknown player" });
-    }
-    if (player.banned) {
-      throw new AppError("BANNED", { hint: "account banned" });
-    }
-    c.set("session", {
-      address: claims.sub,
-      kind: player.kind,
-      jti: claims.jti,
-      exp: claims.exp,
-    });
+    authenticateWallet(deps, c);
+    await next();
+  };
+}
 
-    // Sliding renewal applies to the cookie only (§6.1).
-    if (cookieToken !== undefined) {
-      const ttlSeconds = sessionTtlSeconds(deps.config());
-      const remainingMs = claims.exp * 1_000 - now;
-      if (remainingMs < (ttlSeconds * 1_000) / 2) {
-        const renewed = signSession(deps.jwtSecret, {
-          ...claims,
-          iat: Math.floor(now / 1_000),
-          exp: Math.floor(now / 1_000) + ttlSeconds,
-        });
-        setSessionCookie(c, renewed, ttlSeconds, deps.publicBaseUrl);
-      }
+function authenticateWallet(
+  deps: AuthRouteDeps,
+  c: Parameters<MiddlewareHandler<AppEnv>>[0],
+): void {
+  const cookieToken = getCookie(c, SESSION_COOKIE);
+  const header = c.req.header("authorization");
+  const bearerToken = header?.startsWith("Bearer ")
+    ? header.slice("Bearer ".length)
+    : undefined;
+  // Browsers use the cookie, agents the bearer token; each ignores the
+  // other (§6.1) — cookie wins when both are present.
+  const token = cookieToken ?? bearerToken;
+  if (token === undefined) {
+    throw new AppError("UNAUTHENTICATED", { hint: "missing session" });
+  }
+  const now = deps.now();
+  const claims = verifySessionToken(deps.jwtSecret, token, now);
+  if (claims === null || claims.kind === "guest") {
+    throw new AppError("UNAUTHENTICATED", { hint: "invalid session" });
+  }
+  const revoked = deps.db
+    .select({ jti: schema.revokedJti.jti })
+    .from(schema.revokedJti)
+    .where(eq(schema.revokedJti.jti, claims.jti))
+    .get();
+  if (revoked !== undefined) {
+    throw new AppError("UNAUTHENTICATED", { hint: "session revoked" });
+  }
+  const player = deps.db
+    .select({
+      kind: schema.players.kind,
+      banned: schema.players.banned,
+    })
+    .from(schema.players)
+    .where(eq(schema.players.address, claims.sub))
+    .get();
+  if (
+    player === undefined ||
+    player.kind === "guest" ||
+    player.kind !== claims.kind
+  ) {
+    throw new AppError("UNAUTHENTICATED", { hint: "unknown player" });
+  }
+  if (player.banned) {
+    throw new AppError("BANNED", { hint: "account banned" });
+  }
+  c.set("session", {
+    address: claims.sub,
+    kind: player.kind,
+    jti: claims.jti,
+    exp: claims.exp,
+  });
+
+  // Sliding renewal applies to the cookie only (§6.1).
+  if (cookieToken !== undefined) {
+    const ttlSeconds = sessionTtlSeconds(deps.config());
+    const remainingMs = claims.exp * 1_000 - now;
+    if (remainingMs < (ttlSeconds * 1_000) / 2) {
+      const renewed = signSession(deps.jwtSecret, {
+        ...claims,
+        iat: Math.floor(now / 1_000),
+        exp: Math.floor(now / 1_000) + ttlSeconds,
+      });
+      setSessionCookie(c, renewed, ttlSeconds, deps.publicBaseUrl);
+    }
+  }
+}
+
+function guestIdentity(
+  deps: AuthRouteDeps,
+  c: Parameters<MiddlewareHandler<AppEnv>>[0],
+  allowLinked = false,
+): string | null {
+  const token = getCookie(c, GUEST_COOKIE);
+  if (token === undefined) return null;
+  const claims = verifySessionToken(deps.jwtSecret, token, deps.now());
+  if (claims === null || claims.kind !== "guest") return null;
+  const guest = deps.db
+    .select({
+      kind: schema.players.kind,
+      banned: schema.players.banned,
+      linkedAddress: schema.players.linkedAddress,
+    })
+    .from(schema.players)
+    .where(eq(schema.players.address, claims.sub))
+    .get();
+  if (
+    guest === undefined ||
+    guest.kind !== "guest" ||
+    guest.banned ||
+    (!allowLinked && guest.linkedAddress !== null)
+  )
+    return null;
+  return claims.sub;
+}
+
+export function guestOrSessionAuth(
+  deps: AuthRouteDeps,
+): MiddlewareHandler<AppEnv> {
+  return async (c, next) => {
+    const hasWalletToken =
+      getCookie(c, SESSION_COOKIE) !== undefined ||
+      c.req.header("authorization")?.startsWith("Bearer ") === true;
+    if (hasWalletToken) {
+      authenticateWallet(deps, c);
+      await next();
+      return;
+    }
+    const guest = guestIdentity(deps, c);
+    if (guest === null)
+      throw new AppError("UNAUTHENTICATED", { hint: "missing session" });
+    c.set("session", {
+      address: guest,
+      kind: "guest",
+      jti: "guest",
+      exp: 0,
+    });
+    await next();
+  };
+}
+
+export function optionalGuestOrSessionAuth(
+  deps: AuthRouteDeps,
+): MiddlewareHandler<AppEnv> {
+  return async (c, next) => {
+    const hasWalletToken =
+      getCookie(c, SESSION_COOKIE) !== undefined ||
+      c.req.header("authorization")?.startsWith("Bearer ") === true;
+    if (hasWalletToken) {
+      authenticateWallet(deps, c);
+      await next();
+      return;
+    }
+    const guest = guestIdentity(deps, c);
+    if (guest !== null) {
+      c.set("session", {
+        address: guest,
+        kind: "guest",
+        jti: "guest",
+        exp: 0,
+      });
     }
     await next();
   };
@@ -192,6 +284,29 @@ function setSessionCookie(
     // playtest origins. Production remains Secure because its canonical
     // PUBLIC_BASE_URL is HTTPS.
     secure: new URL(publicBaseUrl).protocol === "https:",
+    path: "/",
+    maxAge: ttlSeconds,
+  });
+}
+
+export function setGuestCookie(
+  c: Parameters<MiddlewareHandler<AppEnv>>[0],
+  deps: Pick<AuthRouteDeps, "jwtSecret" | "config" | "publicBaseUrl" | "now">,
+  guest: string,
+): void {
+  const ttlSeconds = deps.config().GUEST_TOKEN_TTL_DAYS * 86_400;
+  const nowSeconds = Math.floor(deps.now() / 1_000);
+  const jwt = signSession(deps.jwtSecret, {
+    sub: guest,
+    kind: "guest",
+    jti: randomBytes(16).toString("hex"),
+    iat: nowSeconds,
+    exp: nowSeconds + ttlSeconds,
+  });
+  setCookie(c, GUEST_COOKIE, jwt, {
+    httpOnly: true,
+    sameSite: "Lax",
+    secure: new URL(deps.publicBaseUrl).protocol === "https:",
     path: "/",
     maxAge: ttlSeconds,
   });
@@ -339,6 +454,23 @@ export function registerAuthRoutes(
       throw new Error("player row missing after registration");
     }
 
+    let linkedGuestClaims: number | undefined;
+    const guest = guestIdentity(deps, c);
+    if (guest !== null && deps.coordinator !== undefined) {
+      const linked = await deps.coordinator.dispatch<
+        { guest: string; player: string },
+        { linked: boolean; claims: number }
+      >({
+        type: "LinkGuest",
+        payload: { guest, player: player.address },
+        refIds: [guest, player.address],
+      });
+      if (linked.kind === "ok" && linked.result.linked) {
+        linkedGuestClaims = linked.result.claims;
+        deleteCookie(c, GUEST_COOKIE, { path: "/" });
+      }
+    }
+
     // Success is the only path that consumes the nonce (F2 step 4).
     consumeChallenge(deps.db, body.address);
 
@@ -360,6 +492,7 @@ export function registerAuthRoutes(
           createdAt: new Date(player.createdAt).toISOString(),
         },
         jwt,
+        ...(linkedGuestClaims === undefined ? {} : { linkedGuestClaims }),
       },
       200,
     );

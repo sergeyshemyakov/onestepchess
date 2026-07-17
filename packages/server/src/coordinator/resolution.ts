@@ -2,8 +2,9 @@ import {
   resolve as coreResolve,
   type GameResult,
   type ResolveEntry,
+  toPgn,
 } from "@onestepchess/core";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { bumpLedgerBalance } from "../db/ledger.js";
 import type { Db } from "../db/open.js";
 import { schema } from "../db/open.js";
@@ -185,6 +186,7 @@ export function registerResolution(deps: ResolutionDeps): void {
         bumpLedgerBalance(db, "protocol", amount);
       }
 
+      materializeReplayAndStats(db, game, stakeRows);
       emitGameResolved(db, ctx, game, stakeRows, payoutByEntry);
 
       // resolved_at is written last — the idempotency marker only appears once
@@ -197,6 +199,97 @@ export function registerResolution(deps: ResolutionDeps): void {
       return { resolved: true as const, jobs: jobByRecipient.size };
     },
   );
+}
+
+type StoredReplayPly = {
+  readonly ply: number;
+  readonly side: "white" | "black";
+  readonly move: { readonly uci: string; readonly san: string };
+  readonly fenAfter: string;
+  readonly authorAddress: string;
+  readonly stakeMicroUsdc: number;
+  readonly demo: boolean;
+};
+
+function materializeReplayAndStats(
+  db: Db,
+  game: typeof schema.games.$inferSelect,
+  stakeRows: readonly (typeof schema.stakeEntries.$inferSelect)[],
+): void {
+  const moved = db
+    .select()
+    .from(schema.claims)
+    .where(
+      and(eq(schema.claims.gameId, game.id), eq(schema.claims.status, "moved")),
+    )
+    .all();
+  const byPly = new Map(moved.map((claim) => [claim.movedPly, claim]));
+  const history = JSON.parse(game.historyJson) as string[];
+  const plies: StoredReplayPly[] = [];
+  let replayComplete = true;
+  for (const index of history.keys()) {
+    const ply = index + 1;
+    const claim = byPly.get(ply);
+    if (
+      claim === undefined ||
+      claim.moveUci === null ||
+      claim.moveSan === null ||
+      claim.fenAfter === null
+    ) {
+      replayComplete = false;
+      break;
+    }
+    plies.push({
+      ply,
+      side: claim.side,
+      move: { uci: claim.moveUci, san: claim.moveSan },
+      fenAfter: claim.fenAfter,
+      authorAddress: claim.player,
+      stakeMicroUsdc: claim.stakeMicrousdc,
+      demo: claim.demo,
+    });
+  }
+  if (replayComplete) {
+    db.update(schema.games)
+      .set({
+        replayJson: JSON.stringify({
+          plies,
+          pgn: toPgn({
+            history: history as import("@onestepchess/core").Uci[],
+            result: game.result as GameResult,
+            tags: { Event: game.name },
+          }),
+        }),
+      })
+      .where(eq(schema.games.id, game.id))
+      .run();
+  }
+
+  const increments = new Map<
+    string,
+    { wins: number; draws: number; losses: number }
+  >();
+  for (const entry of stakeRows) {
+    const counts = increments.get(entry.player) ?? {
+      wins: 0,
+      draws: 0,
+      losses: 0,
+    };
+    if (game.result === "draw" || game.result === "aborted") counts.draws += 1;
+    else if (game.result === entry.side) counts.wins += 1;
+    else counts.losses += 1;
+    increments.set(entry.player, counts);
+  }
+  for (const [player, counts] of increments) {
+    db.update(schema.players)
+      .set({
+        wins: sql`${schema.players.wins} + ${counts.wins}`,
+        draws: sql`${schema.players.draws} + ${counts.draws}`,
+        losses: sql`${schema.players.losses} + ${counts.losses}`,
+      })
+      .where(eq(schema.players.address, player))
+      .run();
+  }
 }
 
 function emitGameResolved(
