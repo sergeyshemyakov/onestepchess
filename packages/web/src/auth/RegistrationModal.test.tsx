@@ -59,6 +59,26 @@ async function submitOnce() {
 }
 
 describe("registration modal error-rendering matrix (F-W2)", () => {
+  it("renders brighter full-size registration actions with cancel aligned second", async () => {
+    renderModal(vi.fn());
+    const register = await screen.findByRole("button", { name: /▸ register/ });
+    const cancel = screen.getByRole("button", { name: "cancel" });
+    const actions = register.closest(".modal-actions");
+
+    expect(register.className).toContain("pri");
+    expect(register.className).not.toContain("mini");
+    expect(cancel.className).not.toContain("mini");
+    expect(actions?.className).toContain("pair");
+    expect(actions?.lastElementChild).toBe(cancel);
+  });
+
+  it("styles the agent registration note as a prompt", async () => {
+    renderModal(vi.fn());
+    expect(
+      await screen.findByText("> agents register over the API."),
+    ).not.toBeNull();
+  });
+
   it("prefills the nickname from suggest-nickname with a reroll control", async () => {
     renderModal(vi.fn());
     const input = await screen.findByLabelText("nickname");

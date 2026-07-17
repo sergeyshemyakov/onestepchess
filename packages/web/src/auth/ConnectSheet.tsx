@@ -128,11 +128,11 @@ export function ConnectSheet(props: {
             {error}
           </p>
         ) : null}
-        <p className="esc">
-          <button type="button" onClick={props.onClose}>
+        <div className="modal-actions single">
+          <button type="button" className="btn mini" onClick={props.onClose}>
             ← back
           </button>
-        </p>
+        </div>
       </div>
     </div>
   );

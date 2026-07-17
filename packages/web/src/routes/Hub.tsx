@@ -1,9 +1,8 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback } from "react";
 import type { ApiClient } from "../api/client.js";
 import type { Meta, PlayerView } from "../api/schemas.js";
 import { useSession } from "../auth/SessionContext.jsx";
 import { AppShell } from "../components/AppShell.jsx";
-import { ClaimBar } from "../components/ClaimBar.jsx";
 import { shortenAddress } from "../lib/address.js";
 import { formatMicroUsdc } from "../lib/format.js";
 import { PlayView } from "../play/PlayView.jsx";
@@ -25,7 +24,6 @@ export function Hub(props: {
     address: props.player.address,
     enabled: true,
   });
-  const [surfaceHidden, setSurfaceHidden] = useState(false);
   const { state } = flow;
 
   const claimOpen =
@@ -47,22 +45,12 @@ export function Hub(props: {
 
   const start = useCallback(
     (demo: boolean) => {
-      setSurfaceHidden(false);
       flow.send({ type: "PLAY", demo });
     },
     [flow],
   );
 
-  const surfaceVisible = state.phase !== "IDLE" && !surfaceHidden;
-  const claimBar = useMemo(() => {
-    if (!claimOpen || surfaceVisible || state.claim === undefined) return null;
-    return (
-      <ClaimBar
-        deadline={state.claim.deadline}
-        onReturn={() => setSurfaceHidden(false)}
-      />
-    );
-  }, [claimOpen, surfaceVisible, state.claim]);
+  const surfaceVisible = state.phase !== "IDLE";
 
   return (
     <AppShell
@@ -80,66 +68,48 @@ export function Hub(props: {
           </button>
         </>
       }
-      belowBar={claimBar}
     >
       <div className={surfaceVisible && claimOpen ? "focus-dim" : ""}>
-        <div className="hubplay">
-          <button
-            type="button"
-            className="bigplay"
-            disabled={cta.disabled}
-            onClick={() => (claimOpen ? setSurfaceHidden(false) : start(false))}
-          >
-            <span className="bp-title">▸ PLAY</span>
-            <span className="bp-sub">
-              {formatMicroUsdc(stake)} on one move in a live game — win pays{" "}
-              {formatMicroUsdc(payout)}
-            </span>
-          </button>
-          {cta.reason !== null ? (
-            <button
-              type="button"
-              className="ctareason btn mini"
-              onClick={() => setSurfaceHidden(false)}
-            >
-              {cta.reason}
-            </button>
-          ) : null}
-          <button
-            type="button"
-            className="bigplay demo"
-            disabled={cta.disabled}
-            onClick={() => (claimOpen ? setSurfaceHidden(false) : start(true))}
-          >
-            <span className="bp-title">▸ DEMO PLAY</span>
-            <span className="bp-sub">
-              $0 — same live games · no stats · no replay
-            </span>
-          </button>
-          {state.phase === "IDLE" ? (
-            <div className="empty" style={{ marginTop: 18, maxWidth: 420 }}>
-              <span className="vt">[ NO SIGNAL ]</span>
-              your first board is one <span className="win">PLAY</span> away.
-            </div>
-          ) : null}
-        </div>
-      </div>
-      {surfaceVisible ? (
-        <>
-          {claimOpen ? (
-            <p style={{ padding: "0 22px", textAlign: "right" }}>
+        {!claimOpen ? (
+          <div className="hubplay">
+            <div className="hub-actions">
               <button
                 type="button"
-                className="btn mini"
-                onClick={() => setSurfaceHidden(true)}
+                className="bigplay primary"
+                disabled={cta.disabled}
+                onClick={() => start(false)}
               >
-                ▾ hub
+                <span className="bp-title">▸ PLAY</span>
+                <span className="bp-sub">
+                  {formatMicroUsdc(stake)} on one move in a live game — win pays{" "}
+                  {formatMicroUsdc(payout)}
+                </span>
               </button>
-            </p>
-          ) : null}
-          <PlayView flow={flow} meta={props.meta} />
-        </>
-      ) : null}
+              <button
+                type="button"
+                className="bigplay demo"
+                disabled={cta.disabled}
+                onClick={() => start(true)}
+              >
+                <span className="bp-title">▸ DEMO PLAY</span>
+                <span className="bp-sub">
+                  $0 — same live games · no stats · no replay
+                </span>
+              </button>
+            </div>
+            {cta.reason !== null ? (
+              <p className="ctareason">{cta.reason}</p>
+            ) : null}
+            {state.phase === "IDLE" ? (
+              <div className="empty" style={{ marginTop: 18, maxWidth: 420 }}>
+                <span className="vt">[ NO SIGNAL ]</span>
+                your first board is one <span className="win">PLAY</span> away.
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+      {surfaceVisible ? <PlayView flow={flow} meta={props.meta} /> : null}
     </AppShell>
   );
 }

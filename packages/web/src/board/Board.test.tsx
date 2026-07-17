@@ -98,6 +98,47 @@ describe("promotion routing (§8.2)", () => {
   });
 });
 
+describe("check & en passant highlights (playtest round 1)", () => {
+  const EP_FEN = "rnbqkbnr/ppp1pppp/8/3pP3/8/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 3";
+
+  it("marks the checked king's square", () => {
+    const view = render(<Board fen={START} checkSquare="e1" />);
+    expect(
+      view.container
+        .querySelector('[data-square="e1"]')
+        ?.classList.contains("chk"),
+    ).toBe(true);
+    expect(view.container.querySelectorAll(".sq.chk")).toHaveLength(1);
+  });
+
+  it("marks the en passant victim pawn persistently", () => {
+    const view = render(<Board fen={EP_FEN} epVictims={["d5"]} />);
+    expect(
+      view.container
+        .querySelector('[data-square="d5"]')
+        ?.classList.contains("ep"),
+    ).toBe(true);
+  });
+
+  it("renders the en passant target as an accent capture ring despite the empty square", () => {
+    const view = render(
+      <Board
+        fen={EP_FEN}
+        interactive
+        selected="e5"
+        legalTargets={["d6", "e6"]}
+        epTargets={["d6"]}
+      />,
+    );
+    const epDot = view.container.querySelector('[data-square="d6"] .dot');
+    expect(epDot?.classList.contains("cap")).toBe(true);
+    expect(epDot?.classList.contains("ep")).toBe(true);
+    const quietDot = view.container.querySelector('[data-square="e6"] .dot');
+    expect(quietDot?.classList.contains("cap")).toBe(false);
+    expect(quietDot?.classList.contains("ep")).toBe(false);
+  });
+});
+
 describe("touch targets (D13)", () => {
   it("keeps squares ≥ 44px at the 420px breakpoint and the board ≥ 320px", () => {
     expect(boardPxForViewport(420) / 8).toBeGreaterThanOrEqual(44);

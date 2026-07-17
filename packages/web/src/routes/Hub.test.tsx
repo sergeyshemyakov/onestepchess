@@ -94,6 +94,56 @@ describe("demo path end-to-end against a scripted server (#31)", () => {
     expect(postMove.mock.calls[0]?.[2]).toBeUndefined();
     assertNoGameIdentity(view.container, IDENTITY_SEEDS);
   });
+
+  it("aligns the demo confirmation pair and centers the lone receipt action", async () => {
+    const client = mockClient({
+      createClaim: vi.fn(async () => ({
+        kind: "claim" as const,
+        claim: claimFixture({ demo: true, stakeMicroUsdc: 0 }),
+        created: true,
+      })),
+      postMove: vi.fn(async () => ({ kind: "receipt", receipt: demoReceipt })),
+    } as never);
+    await playDemoToConfirm(client);
+    const yes = screen.getByRole("button", { name: /Y — make it so/ });
+    const no = screen.getByRole("button", { name: /N — rethink/ });
+    const pair = yes.closest(".modal-actions");
+    expect(pair?.className).toContain("pair");
+    expect(pair?.lastElementChild).toBe(no);
+
+    fireEvent.click(yes);
+    await screen.findByTestId("receipt");
+    const close = screen.getByRole("button", { name: "close" });
+    expect(close.closest(".modal-actions")?.className).toContain("single");
+  });
+
+  // TODO(spec F-W4): asserts the interim from→to runner; rewrite when CONFIRM
+  // gets the whole-board loop shared with the F-W3 ongoing hero card.
+  it("shows a looping move animation beneath the final-move description", async () => {
+    await playDemoToConfirm();
+    const description = screen.getByText(/e2→e4/);
+    const animation = screen.getByTestId("confirm-move-animation");
+    expect(description.compareDocumentPosition(animation)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(animation.getAttribute("aria-label")).toBe(
+      "move animation e2 to e4",
+    );
+  });
+
+  it("tells the player they will be notified when the moved game ends", async () => {
+    const client = mockClient({
+      createClaim: vi.fn(async () => ({
+        kind: "claim" as const,
+        claim: claimFixture({ demo: true, stakeMicroUsdc: 0 }),
+        created: true,
+      })),
+      postMove: vi.fn(async () => ({ kind: "receipt", receipt: demoReceipt })),
+    } as never);
+    await playDemoToConfirm(client);
+    fireEvent.click(screen.getByRole("button", { name: /Y — make it so/ }));
+    await screen.findByText("> you will be notified when the game ends");
+  });
 });
 
 describe("I7 leak tests (#31)", () => {
@@ -119,6 +169,16 @@ describe("I7 leak tests (#31)", () => {
     assertNoGameIdentity(view.container, IDENTITY_SEEDS);
     expect(view.container.querySelector(".timer")).not.toBeNull();
     expect(screen.getByText("stake $0.01")).not.toBeNull();
+  });
+
+  it("puts the piece-and-target prompt inside the YOUR MOVE pane", async () => {
+    const { view } = renderHub();
+    fireEvent.click(await screen.findByRole("button", { name: /▸ PLAY/ }));
+    const prompt = await screen.findByText("> tap a piece, then a target");
+    const panel = prompt.closest(".panel");
+    expect(panel).not.toBeNull();
+    expect(panel?.querySelector("h3")?.textContent).toBe("YOUR MOVE");
+    expect(view.container.querySelector(".boardwrap + .console")).toBeNull();
   });
 
   it("CONFIRM and staked RECEIPT render no game identity", async () => {
@@ -357,6 +417,18 @@ describe("disabled-CTA reason matrix (#31)", () => {
     });
   });
 
+  it("hides both play CTAs and the board-reserved return control after a claim", async () => {
+    renderHub();
+    fireEvent.click(await screen.findByRole("button", { name: /▸ PLAY/ }));
+    await screen.findByText(/YOU PLAY WHITE/);
+    expect(screen.queryByRole("button", { name: /▸ PLAY/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /DEMO PLAY/ })).toBeNull();
+    expect(screen.queryByText(/board reserved — return/)).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /return to board/ }),
+    ).toBeNull();
+  });
+
   it("paused meta disables both CTAs — the banner owns the message", async () => {
     const client = mockClient({
       getMeta: vi.fn(async () => ({
@@ -379,7 +451,7 @@ describe("disabled-CTA reason matrix (#31)", () => {
   });
 });
 
-describe("claim bar and rehydration (#31)", () => {
+describe("claim rehydration (#31)", () => {
   it("reload in CONFIRM rehydrates board + chosen move + deadline via one /claims/current", async () => {
     const claim = claimFixture();
     writeClaimDraft({ claimId: claim.claimId, moveUci: "e2e4", savedAt: "t" });
@@ -391,22 +463,6 @@ describe("claim bar and rehydration (#31)", () => {
     expect(view.container.querySelector(".timer")).not.toBeNull();
     expect(getCurrentClaim).toHaveBeenCalledTimes(1);
     expect(client.getClaimStatus).not.toHaveBeenCalled();
-  });
-
-  it("the claim bar shows while a claim ticks and the surface is hidden — no identity", async () => {
-    const claim = claimFixture();
-    writeClaimDraft({ claimId: claim.claimId, savedAt: "t" });
-    const client = mockClient({
-      getCurrentClaim: vi.fn(async () => claim),
-    } as never);
-    const { view } = renderHub(client);
-    await screen.findByText(/YOU PLAY WHITE/);
-    fireEvent.click(screen.getByRole("button", { name: /▾ hub/ }));
-    await screen.findByText(/board reserved — you have a move to make/);
-    assertNoGameIdentity(view.container, IDENTITY_SEEDS);
-    // return ▸ reopens the surface
-    fireEvent.click(screen.getByRole("button", { name: /return to board ▸/ }));
-    await screen.findByText(/YOU PLAY WHITE/);
   });
 });
 
@@ -428,5 +484,39 @@ describe("responsive treatment (#31)", () => {
     const fxMobile = tokens.slice(tokens.indexOf("@media (max-width: 768px)"));
     expect(fxMobile).toContain("filter: none");
     expect(fxMobile).toMatch(/\.overlay\.scan \{\s*display: none/);
+  });
+
+  it("adds desktop side margins to the CRT page frame", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join, dirname } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const dir = dirname(fileURLToPath(import.meta.url));
+    const tokens = readFileSync(join(dir, "../styles/tokens.css"), "utf8");
+    const desktop = tokens.slice(tokens.indexOf("@media (min-width: 769px)"));
+    expect(desktop).toMatch(/\.crt \{[\s\S]*width: min\(1240px/);
+    expect(desktop).toContain("margin-inline: auto");
+  });
+
+  it("keeps PLAY and DEMO PLAY side-by-side, equal-sized, and highlights PLAY", async () => {
+    const { view } = renderHub();
+    const actions = view.container.querySelector(".hub-actions");
+    const buttons = actions?.querySelectorAll(".bigplay");
+    expect(actions).not.toBeNull();
+    expect(buttons?.length).toBe(2);
+    expect(buttons?.[0]?.className).toContain("primary");
+    expect(buttons?.[1]?.className).toContain("demo");
+
+    const { readFileSync } = await import("node:fs");
+    const { join, dirname } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const dir = dirname(fileURLToPath(import.meta.url));
+    const css = readFileSync(join(dir, "../styles/components.css"), "utf8");
+    expect(css).toMatch(
+      /\.hub-actions \{[\s\S]*grid-template-columns: repeat\(2/,
+    );
+    expect(css).toMatch(/\.hub-actions \.bigplay \{[\s\S]*height: 100%/);
+    expect(css).toMatch(
+      /\.bigplay\.primary \{[\s\S]*background: var\(--faint\)/,
+    );
   });
 });

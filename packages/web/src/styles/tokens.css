@@ -103,8 +103,18 @@ a {
   );
   overflow: hidden;
 }
+@media (min-width: 769px) {
+  .crt {
+    width: min(1240px, calc(100% - 120px));
+    margin-inline: auto;
+    border-inline: 1px solid var(--line);
+  }
+  body.fx .crt {
+    width: min(1240px, calc(100% - 120px));
+  }
+}
 body.fx .crt {
-  margin: 14px;
+  margin: 14px auto;
   min-height: calc(100vh - 28px);
   border-radius: 26px;
   box-shadow:

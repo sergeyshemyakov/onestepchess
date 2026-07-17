@@ -2,13 +2,21 @@ import { useEffect, useMemo, useState } from "react";
 import type { Meta, Move } from "../api/schemas.js";
 import { Board, type BoardFx } from "../board/Board.jsx";
 import {
+  enPassantCaptures,
   movesTo,
   needsPromotion,
   selectableSquares,
   targetsFor,
 } from "../board/moves.js";
 import { PromotionPicker } from "../board/PromotionPicker.jsx";
-import { parseUci, sideToMove } from "../lib/fen.js";
+import { PieceGlyph } from "../board/pieces.jsx";
+import { isCheck, kingSquare } from "../lib/check.js";
+import {
+  parseFenBoard,
+  parseUci,
+  sideToMove,
+  squareIndex,
+} from "../lib/fen.js";
 import {
   formatCountdown,
   formatMicroUsdc,
@@ -79,6 +87,22 @@ export function PlayView(props: {
         : selectableSquares(claim.legalMoves),
     [claim],
   );
+  const checkSquare = useMemo(
+    () =>
+      claim !== undefined && isCheck(claim.fen)
+        ? kingSquare(claim.fen, claim.yourSide)
+        : null,
+    [claim],
+  );
+  const ep = useMemo(
+    () =>
+      claim === undefined
+        ? null
+        : enPassantCaptures(claim.legalMoves, claim.fen),
+    [claim],
+  );
+  const epVictims = useMemo(() => [...(ep?.victims ?? [])], [ep]);
+  const epTargets = useMemo(() => [...(ep?.targets ?? [])], [ep]);
 
   if (state.phase === "IDLE") return null;
 
@@ -149,11 +173,15 @@ export function PlayView(props: {
                 }
               />
             </p>
-            <p className="esc">
-              <button type="button" onClick={() => send({ type: "ACK" })}>
+            <div className="modal-actions single">
+              <button
+                type="button"
+                className="btn mini"
+                onClick={() => send({ type: "ACK" })}
+              >
                 ← back
               </button>
-            </p>
+            </div>
           </div>
         </div>
       ) : null}
@@ -166,11 +194,15 @@ export function PlayView(props: {
             <p className="sub">
               next at {nextAtLabel(state.retryAfterSeconds ?? 3_600)}
             </p>
-            <p className="esc">
-              <button type="button" onClick={() => send({ type: "ACK" })}>
+            <div className="modal-actions single">
+              <button
+                type="button"
+                className="btn mini"
+                onClick={() => send({ type: "ACK" })}
+              >
                 ← back
               </button>
-            </p>
+            </div>
           </div>
         </div>
       ) : null}
@@ -182,11 +214,15 @@ export function PlayView(props: {
             <p className="sub">
               settlement offline — boards suspended, nothing at risk.
             </p>
-            <p className="esc">
-              <button type="button" onClick={() => send({ type: "ACK" })}>
+            <div className="modal-actions single">
+              <button
+                type="button"
+                className="btn mini"
+                onClick={() => send({ type: "ACK" })}
+              >
                 ← back
               </button>
-            </p>
+            </div>
           </div>
         </div>
       ) : null}
@@ -199,7 +235,7 @@ export function PlayView(props: {
             <p className="sub">
               the board went to another player. nothing was charged.
             </p>
-            <p className="esc">
+            <div className="modal-actions single">
               <button
                 type="button"
                 className="btn mini"
@@ -207,7 +243,7 @@ export function PlayView(props: {
               >
                 back ▸
               </button>
-            </p>
+            </div>
           </div>
         </div>
       ) : null}
@@ -237,18 +273,14 @@ export function PlayView(props: {
                       }
                     : null
                 }
+                checkSquare={checkSquare}
+                epVictims={epVictims}
+                epTargets={epTargets}
                 onSquareTap={onSquareTap}
                 coords
                 fx={fx}
               />
             </div>
-            {state.phase === "FOCUS" ? (
-              <p className="console">
-                {state.selected === null || state.selected === undefined
-                  ? "> tap a piece, then a target"
-                  : `> ${state.selected} :: pick a target`}
-              </p>
-            ) : null}
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
             <div className="panel">
@@ -256,6 +288,21 @@ export function PlayView(props: {
               <p className="sidebadge">
                 YOU PLAY {claim.yourSide === "white" ? "WHITE ▣" : "BLACK ▢"}
               </p>
+              {checkSquare !== null ? (
+                <p className="checkline" role="alert">
+                  ⚠ CHECK — your king is under attack
+                </p>
+              ) : null}
+              {state.phase === "FOCUS" ? (
+                <p className="console move-prompt">
+                  {state.selected === null || state.selected === undefined
+                    ? "> tap a piece, then a target"
+                    : `> ${state.selected} :: pick a target`}
+                  {epTargets.length > 0
+                    ? "\n> en passant available — the dashed pawn can be taken"
+                    : ""}
+                </p>
+              ) : null}
               <p style={{ marginTop: 6 }}>
                 <span className="chip">{stakeChip}</span>
               </p>
@@ -330,9 +377,14 @@ function ConfirmMorph(props: { readonly flow: PlayFlow; readonly meta: Meta }) {
           {state.phase === "RECEIPT" ? "MOVED" : "FINAL MOVE?"}
         </h3>
         {move !== undefined && uci !== null ? (
-          <p className="mv">
-            {uci.from}→{uci.to} <span className="dim">({move.san})</span>
-          </p>
+          <>
+            <p className="mv">
+              {uci.from}→{uci.to} <span className="dim">({move.san})</span>
+            </p>
+            {state.phase === "CONFIRM" && claim !== undefined ? (
+              <MoveLoop fen={claim.fen} move={move} />
+            ) : null}
+          </>
         ) : null}
 
         {state.phase === "CONFIRM" && claim !== undefined ? (
@@ -359,7 +411,7 @@ function ConfirmMorph(props: { readonly flow: PlayFlow; readonly meta: Meta }) {
                 <p className="sub">
                   nothing staked, not counted — the move is still final.
                 </p>
-                <p className="act">
+                <div className="modal-actions pair">
                   <button
                     type="button"
                     className="btn pri mini"
@@ -374,7 +426,7 @@ function ConfirmMorph(props: { readonly flow: PlayFlow; readonly meta: Meta }) {
                   >
                     N — rethink
                   </button>
-                </p>
+                </div>
               </div>
             ) : (
               <div className="walletbox">
@@ -456,7 +508,10 @@ function Receipt(props: { readonly flow: PlayFlow }) {
         )}
         {"\n"}&gt; the game plays on without you
       </div>
-      <p className="again">
+      <p className="console receipt-notice">
+        &gt; you will be notified when the game ends
+      </p>
+      <div className="modal-actions single">
         <button
           type="button"
           className="btn mini"
@@ -464,7 +519,32 @@ function Receipt(props: { readonly flow: PlayFlow }) {
         >
           close
         </button>
-      </p>
+      </div>
     </>
+  );
+}
+
+/* TODO(spec F-W4): interim placeholder — replace with the looping whole-board
+ * move animation shared with the F-W3 ongoing hero card, rendered on the full
+ * `fen` position, once that board loop is implemented. */
+function MoveLoop(props: { readonly fen: string; readonly move: Move }) {
+  const { from, to } = parseUci(props.move.uci);
+  const piece = parseFenBoard(props.fen)[squareIndex(from)] ?? null;
+
+  return (
+    <div
+      className="move-loop"
+      role="img"
+      aria-label={`move animation ${from} to ${to}`}
+      data-testid="confirm-move-animation"
+    >
+      <span className="move-square">{from}</span>
+      <span className="move-track" aria-hidden="true">
+        <span className="move-runner">
+          {piece === null ? "◆" : <PieceGlyph {...piece} />}
+        </span>
+      </span>
+      <span className="move-square">{to}</span>
+    </div>
   );
 }
