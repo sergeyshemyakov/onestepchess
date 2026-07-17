@@ -44,6 +44,9 @@ type SquareProps = {
   readonly target: boolean;
   readonly captureTarget: boolean;
   readonly hint: boolean;
+  readonly check: boolean;
+  readonly epVictim: boolean;
+  readonly epTarget: boolean;
   readonly interactive: boolean;
   readonly coords: boolean;
   readonly onTap: ((square: string) => void) | null;
@@ -57,6 +60,9 @@ function squareEqual(a: SquareProps, b: SquareProps): boolean {
     a.target === b.target &&
     a.captureTarget === b.captureTarget &&
     a.hint === b.hint &&
+    a.check === b.check &&
+    a.epVictim === b.epVictim &&
+    a.epTarget === b.epTarget &&
     a.interactive === b.interactive &&
     a.onTap === b.onTap
   );
@@ -71,6 +77,8 @@ const Square = memo(function Square(props: SquareProps) {
     dark ? "d" : "l",
     props.selected ? "sel" : "",
     props.hint ? "hint" : "",
+    props.check ? "chk" : "",
+    props.epVictim ? "ep" : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -80,7 +88,17 @@ const Square = memo(function Square(props: SquareProps) {
         <PieceGlyph type={props.piece.type} side={props.piece.side} />
       )}
       {props.target ? (
-        <span className={props.captureTarget ? "dot cap" : "dot"} />
+        <span
+          className={[
+            "dot",
+            // En passant lands on an empty square but is still a capture —
+            // without the ring it masquerades as a quiet move.
+            props.captureTarget || props.epTarget ? "cap" : "",
+            props.epTarget ? "ep" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+        />
       ) : null}
       {props.coords && props.index % 8 === 0 ? (
         <i className="coord r">{8 - Math.floor(props.index / 8)}</i>
@@ -115,6 +133,12 @@ export type BoardProps = {
   readonly legalTargets?: readonly string[];
   readonly selected?: string | null;
   readonly lastMove?: { readonly from: string; readonly to: string } | null;
+  /** King square of the side in check, if any (display-only). */
+  readonly checkSquare?: string | null;
+  /** Pawns capturable en passant — marked persistently. */
+  readonly epVictims?: readonly string[];
+  /** En passant landing squares — dots render as capture rings. */
+  readonly epTargets?: readonly string[];
   readonly onSquareTap?: (square: string) => void;
   readonly interactive?: boolean;
   readonly coords?: boolean;
@@ -200,6 +224,14 @@ export function Board(props: BoardProps) {
     () => new Set(props.legalTargets ?? []),
     [props.legalTargets],
   );
+  const epVictims = useMemo(
+    () => new Set(props.epVictims ?? []),
+    [props.epVictims],
+  );
+  const epTargets = useMemo(
+    () => new Set(props.epTargets ?? []),
+    [props.epTargets],
+  );
   const hostRef = useRef<HTMLDivElement>(null);
   const fxRef = useRef<HTMLDivElement>(null);
   const lastFxSeq = useRef(0);
@@ -249,6 +281,9 @@ export function Board(props: BoardProps) {
               lastMove !== null &&
               (lastMove.from === name || lastMove.to === name)
             }
+            check={props.checkSquare === name}
+            epVictim={epVictims.has(name)}
+            epTarget={targets.has(name) && epTargets.has(name)}
             interactive={interactive}
             coords={coords}
             onTap={onTap}

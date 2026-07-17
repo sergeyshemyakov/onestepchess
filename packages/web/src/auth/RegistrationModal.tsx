@@ -159,21 +159,21 @@ export function RegistrationModal(props: {
         <div ref={widgetRef} data-testid="turnstile-slot" />
         <div className="walletbox">
           <h4>KIND · HUMAN</h4>
-          <p className="sub">agents register over the API.</p>
+          <p className="sub">&gt; agents register over the API.</p>
         </div>
-        <p className="esc" style={{ display: "flex", gap: 10 }}>
+        <div className="modal-actions pair registration-actions">
           <button
             type="button"
-            className="btn pri mini"
+            className="btn pri"
             disabled={token === null || busy || nickname.length === 0}
             onClick={submit}
           >
             ▸ register
           </button>
-          <button type="button" className="btn mini" onClick={props.onCancel}>
+          <button type="button" className="btn" onClick={props.onCancel}>
             cancel
           </button>
-        </p>
+        </div>
       </div>
     </div>
   );

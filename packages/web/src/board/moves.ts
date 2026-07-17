@@ -1,5 +1,5 @@
 import type { Move } from "../api/schemas.js";
-import { parseUci } from "../lib/fen.js";
+import { parseFenBoard, parseUci, squareIndex } from "../lib/fen.js";
 
 // Interaction is restricted to the server's legalMoves — the browser never
 // decides legality (§8.2).
@@ -36,6 +36,32 @@ export function movesTo(
     const parsed = parseUci(move.uci);
     return parsed.from === from && parsed.to === to;
   });
+}
+
+export type EnPassantInfo = {
+  readonly targets: ReadonlySet<string>;
+  readonly victims: ReadonlySet<string>;
+};
+
+/** En passant captures hiding in legalMoves: only en passant moves a pawn
+ * diagonally onto an empty square. The victim pawn sits on the target file
+ * at the origin rank. */
+export function enPassantCaptures(
+  legalMoves: readonly Move[],
+  fen: string,
+): EnPassantInfo {
+  const board = parseFenBoard(fen);
+  const targets = new Set<string>();
+  const victims = new Set<string>();
+  for (const move of legalMoves) {
+    const { from, to } = parseUci(move.uci);
+    if (from[0] === to[0]) continue;
+    if (board[squareIndex(from)]?.type !== "p") continue;
+    if ((board[squareIndex(to)] ?? null) !== null) continue;
+    targets.add(to);
+    victims.add(`${to[0]}${from[1]}`);
+  }
+  return { targets, victims };
 }
 
 export function needsPromotion(moves: readonly Move[]): boolean {

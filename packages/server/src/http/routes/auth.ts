@@ -172,7 +172,7 @@ export function sessionAuth(deps: AuthRouteDeps): MiddlewareHandler<AppEnv> {
           iat: Math.floor(now / 1_000),
           exp: Math.floor(now / 1_000) + ttlSeconds,
         });
-        setSessionCookie(c, renewed, ttlSeconds);
+        setSessionCookie(c, renewed, ttlSeconds, deps.publicBaseUrl);
       }
     }
     await next();
@@ -183,11 +183,15 @@ function setSessionCookie(
   c: Parameters<MiddlewareHandler<AppEnv>>[0],
   jwt: string,
   ttlSeconds: number,
+  publicBaseUrl: string,
 ): void {
   setCookie(c, SESSION_COOKIE, jwt, {
     httpOnly: true,
     sameSite: "Lax",
-    secure: true,
+    // Safari rejects Secure cookies delivered by the documented HTTP
+    // playtest origins. Production remains Secure because its canonical
+    // PUBLIC_BASE_URL is HTTPS.
+    secure: new URL(publicBaseUrl).protocol === "https:",
     path: "/",
     maxAge: ttlSeconds,
   });
@@ -346,7 +350,7 @@ export function registerAuthRoutes(
       iat: Math.floor(now / 1_000),
       exp: Math.floor(now / 1_000) + ttlSeconds,
     });
-    setSessionCookie(c, jwt, ttlSeconds);
+    setSessionCookie(c, jwt, ttlSeconds, deps.publicBaseUrl);
     return c.json(
       {
         player: {

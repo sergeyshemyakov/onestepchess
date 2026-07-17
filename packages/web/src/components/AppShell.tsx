@@ -20,7 +20,7 @@ export function PhosphorToggle() {
   return (
     <button
       type="button"
-      className="btn mini"
+      className="btn mini theme-toggle"
       onClick={cycle}
       aria-label={`phosphor theme: ${theme}`}
     >

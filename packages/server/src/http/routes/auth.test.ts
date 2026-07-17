@@ -29,9 +29,13 @@ type Stack = {
   setNow: (now: number) => void;
   turnstileCalls: { token: string }[];
   setTurnstile: (result: TurnstileResult) => void;
+  publicBaseUrl: string;
 };
 
-function setup(configOverrides: Record<string, unknown> = {}): Stack {
+function setup(
+  configOverrides: Record<string, unknown> = {},
+  publicBaseUrl = PUBLIC_BASE_URL,
+): Stack {
   const database = openDatabase({ path: ":memory:" });
   opened.push(database);
   const rail = createMockRail();
@@ -41,14 +45,14 @@ function setup(configOverrides: Record<string, unknown> = {}): Stack {
   const turnstileCalls: { token: string }[] = [];
   const app = createApp({
     logger: createLogger({ level: "silent" }),
-    publicBaseUrl: PUBLIC_BASE_URL,
+    publicBaseUrl,
     mode: () => "running",
   });
   const deps = {
     db: database.db,
     rail,
     config: () => config,
-    publicBaseUrl: PUBLIC_BASE_URL,
+    publicBaseUrl,
     jwtSecret: JWT_SECRET,
     trustProxyHops: 1,
     turnstile: async (token: string) => {
@@ -73,6 +77,7 @@ function setup(configOverrides: Record<string, unknown> = {}): Stack {
     setTurnstile: (result) => {
       turnstileResult = result;
     },
+    publicBaseUrl,
   };
 }
 
@@ -118,7 +123,7 @@ async function makeProof(
     arc60Payload: { data: string };
   };
   const authData = new Uint8Array([
-    ...sha256("osc.example"),
+    ...sha256(new URL(stack.publicBaseUrl).host),
     ...new Uint8Array([0x05, 0, 0, 0, 0]),
   ]);
   const message = new Uint8Array([
@@ -426,6 +431,22 @@ describe("sessions (JWT cookie + bearer)", () => {
     expect(setCookie).toContain("HttpOnly");
     expect(setCookie).toContain("SameSite=Lax");
     expect(setCookie).toContain("Secure");
+  });
+
+  it("Safari playtest login keeps the session cookie on a configured HTTP origin", async () => {
+    const stack = setup({}, "http://localhost:3000");
+    const identity = nobleIdentity();
+    const proof = await makeProof(stack, identity);
+    const res = await postJson(stack, "/api/v1/auth/verify", {
+      address: identity.address,
+      kind: "agent",
+      ...proof,
+    });
+    const setCookie = res.headers.get("set-cookie") ?? "";
+
+    expect(setCookie).toContain("HttpOnly");
+    expect(setCookie).toContain("SameSite=Lax");
+    expect(setCookie).not.toContain("Secure");
   });
 
   it("a banned player's existing session fails on the very next request", async () => {

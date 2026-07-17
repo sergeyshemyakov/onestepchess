@@ -75,6 +75,17 @@ describe("shell + router (#27)", () => {
 });
 
 describe("theme toggle (#27)", () => {
+  it("keeps the green-amber-ice toggle at a constant width", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join, dirname } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const dir = dirname(fileURLToPath(import.meta.url));
+    const css = readFileSync(join(dir, "styles/components.css"), "utf8");
+    render(<PhosphorToggle />);
+    expect(screen.getByRole("button").className).toContain("theme-toggle");
+    expect(css).toMatch(/\.theme-toggle \{\s*width: 106px/);
+  });
+
   it("persists to osc.theme and applies data-theme on <html>", () => {
     render(<PhosphorToggle />);
     const button = screen.getByRole("button", { name: /phosphor theme/ });
