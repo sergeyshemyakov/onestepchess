@@ -128,6 +128,7 @@ async function createGateStack() {
     trustProxyHops: 1,
     publicBaseUrl: BASE_URL,
     mode: () => "running" as const,
+    turnstile: async () => "pass" as const,
   };
   registerClaimCommands(claimDeps);
   registerResolution({ coordinator, db: database.db, logger });
