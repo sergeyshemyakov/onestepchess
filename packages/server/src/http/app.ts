@@ -84,6 +84,8 @@ export type AppDeps = {
   readonly logger: Logger;
   readonly publicBaseUrl: string;
   readonly mode: () => "running" | "paused";
+  /** Optional observer for typed error responses (metrics counters). */
+  readonly onAppError?: (code: ErrorCode) => void;
 };
 
 export function createApp(deps: AppDeps): Hono<AppEnv> {
@@ -101,6 +103,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
 
   app.onError((error, c) => {
     if (error instanceof AppError) {
+      deps.onAppError?.(error.code);
       const { hint, suggestion, legalMoves, retryAfterSeconds, headers } =
         error.options;
       for (const [name, value] of Object.entries(headers ?? {})) {

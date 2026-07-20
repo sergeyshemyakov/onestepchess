@@ -83,6 +83,9 @@ export const serverConfigSchema = coreConfigSchema
       .regex(/^\d+$/, "must be a stringified ASA id")
       .default("31566704"),
     ALGOD_URL: z.url().default("http://localhost:4001"),
+    // Reviewed WalletConnect relay origin for the CSP connect-src (server spec
+    // §6.6); no wildcard is allowed, so this is an exact origin.
+    WALLETCONNECT_RELAY_URL: z.url().default("wss://relay.walletconnect.org"),
     INDEXER_URL: z.url().default("http://localhost:8980"),
     FACILITATOR_URL: z.url().default("http://localhost:4402"),
     EXPLORER_BASE_URL: z.url().default("https://explorer.perawallet.app"),

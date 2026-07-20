@@ -1,3 +1,4 @@
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { serve } from "@hono/node-server";
 import { createMockRail } from "@onestepchess/rail-mock";
@@ -5,6 +6,7 @@ import {
   createTurnstileVerifier,
   type TurnstileVerifier,
 } from "./auth/turnstile.js";
+import { nextBackupDelayMs, runBackup } from "./backup.js";
 import {
   applyConfigOverrides,
   ConfigError,
@@ -23,6 +25,8 @@ import { openDatabase, schema } from "./db/open.js";
 import { registerNudgeCommands } from "./events/nudges.js";
 import { EventStreamService } from "./events/service.js";
 import { createApp } from "./http/app.js";
+import { registerLlmsRoute } from "./http/llms-txt.js";
+import { registerOpenApiRoute } from "./http/openapi.js";
 import { registerAuthRoutes } from "./http/routes/auth.js";
 import { registerClaimRoutes } from "./http/routes/claims.js";
 import { registerDiscoveryRoutes } from "./http/routes/discovery.js";
@@ -31,7 +35,9 @@ import {
   registerHumanCommands,
   registerHumanRoutes,
 } from "./http/routes/human.js";
+import { jsonCompression, registerStaticRoutes } from "./http/static.js";
 import { createLogger } from "./logger.js";
+import { Metrics, registerMetricsRoute } from "./metrics.js";
 import {
   registerPayoutCommands,
   runPayoutExecutor,
@@ -47,6 +53,7 @@ export * from "./auth/jwt.js";
 export * from "./auth/turnstile.js";
 export * from "./auth/verify-arc60.js";
 export * from "./auth/verify-txn.js";
+export * from "./backup.js";
 export * from "./config.js";
 export * from "./coordinator/chess-registry.js";
 export * from "./coordinator/claims.js";
@@ -59,15 +66,19 @@ export * from "./db/open.js";
 export * from "./events/nudges.js";
 export * from "./events/service.js";
 export * from "./http/app.js";
+export * from "./http/llms-txt.js";
 export * from "./http/middleware/client-ip.js";
 export * from "./http/middleware/ratelimit.js";
+export * from "./http/openapi.js";
 export * from "./http/routes/auth.js";
 export * from "./http/routes/claims.js";
 export * from "./http/routes/discovery.js";
 export * from "./http/routes/events.js";
 export * from "./http/routes/human.js";
+export * from "./http/static.js";
 export * from "./ids.js";
 export * from "./logger.js";
+export * from "./metrics.js";
 export * from "./names.js";
 export * from "./payouts/executor.js";
 export * from "./recovery.js";
@@ -176,6 +187,7 @@ export async function main(): Promise<void> {
     now: Date.now,
     logger,
   });
+  const metrics = new Metrics({ now: Date.now });
   const unsubscribeEvents = coordinator.onEvent((event) => {
     events.publish(event);
   });
@@ -301,6 +313,28 @@ export async function main(): Promise<void> {
   }, EVENT_PRUNE_INTERVAL_MS);
   eventPruneInterval.unref();
 
+  // Nightly online snapshot at BACKUP_HOUR_UTC into a persistent-volume dir
+  // (server spec §4). Default: a `backups/` sibling of the DB file.
+  const backupDir =
+    loaded.env.BACKUP_DIR ?? join(dirname(loaded.env.DB_PATH), "backups");
+  let backupTimer: ReturnType<typeof setTimeout> | undefined;
+  const scheduleBackup = (): void => {
+    backupTimer = setTimeout(
+      () => {
+        void runBackup({
+          sqlite,
+          backupDir,
+          retentionDays: config.BACKUP_RETENTION_DAYS,
+          now: Date.now,
+          logger,
+        }).finally(scheduleBackup);
+      },
+      nextBackupDelayMs(Date.now(), config.BACKUP_HOUR_UTC),
+    );
+    backupTimer.unref?.();
+  };
+  scheduleBackup();
+
   const mode = (): "running" | "paused" => {
     const row = db
       .select({ pauseCausesJson: schema.systemState.pauseCausesJson })
@@ -315,6 +349,30 @@ export async function main(): Promise<void> {
     logger,
     publicBaseUrl: loaded.env.PUBLIC_BASE_URL,
     mode,
+    onAppError: (code) => {
+      if (code === "QUOTA_OUT") metrics.recordQuotaRejection();
+      else if (
+        code === "INVALID_SIGNATURE" ||
+        code === "NONCE_EXPIRED" ||
+        code === "UNAUTHENTICATED" ||
+        code === "REKEYED_UNSUPPORTED"
+      )
+        metrics.recordAuthFailure();
+    },
+  });
+
+  // Request-derived counters observed at the HTTP edge (server spec §6.3): a
+  // successful claim issuance and a settled move. Registered before the route
+  // handlers so the post-`next()` status read reflects the handler's result.
+  app.use("/api/v1/claims", async (c, next) => {
+    await next();
+    if (c.req.method === "POST" && c.res.status === 200)
+      metrics.recordClaimCreated();
+  });
+  app.use("/api/v1/claims/:id/move", async (c, next) => {
+    const startedAt = Date.now();
+    await next();
+    if (c.res.status === 200) metrics.recordMoveSettled(Date.now() - startedAt);
   });
 
   const authDeps = {
@@ -359,6 +417,8 @@ export async function main(): Promise<void> {
     rng: Math.random,
   } as const;
   registerHumanCommands(humanDeps);
+  // Replay JSON is the one API response served compressed (server spec §6.6).
+  app.use("/api/v1/games/:id/replay", jsonCompression());
   registerHumanRoutes(app, humanDeps);
   registerEventRoutes(app, { ...authDeps, events });
   registerDiscoveryRoutes(app, {
@@ -370,7 +430,22 @@ export async function main(): Promise<void> {
     mode,
     rail,
     publicBaseUrl: loaded.env.PUBLIC_BASE_URL,
+  });
+  registerLlmsRoute(app);
+  registerOpenApiRoute(app, { publicBaseUrl: loaded.env.PUBLIC_BASE_URL });
+  registerMetricsRoute(app, {
+    metrics,
+    views,
+    clientCount: () => events.clientCount,
+    mode,
+    adminToken: loaded.env.ADMIN_TOKEN,
+  });
+  // Static SPA fallback is registered last so its `*` route never shadows an
+  // API, discovery, or `/llms.txt` route (server spec §6.6).
+  registerStaticRoutes(app, {
     staticDir: new URL("../../web/dist", import.meta.url).pathname,
+    config: () => config,
+    publicBaseUrl: loaded.env.PUBLIC_BASE_URL,
   });
 
   const server = serve({ fetch: app.fetch, port: loaded.env.PORT }, (info) => {
@@ -383,6 +458,7 @@ export async function main(): Promise<void> {
     clearInterval(heartbeatInterval);
     clearInterval(nudgeInterval);
     clearInterval(eventPruneInterval);
+    if (backupTimer !== undefined) clearTimeout(backupTimer);
     if (recoveryTimer !== undefined) clearTimeout(recoveryTimer);
     timers.disarmAll();
     unsubscribeEvents();
