@@ -530,7 +530,7 @@ describe("guest demo sessions and link-on-login (F13)", () => {
       .all();
     expect(guestEvents.map((event) => event.type).sort()).toEqual([
       "claim_created",
-      "claim_moved",
+      "move_accepted",
     ]);
     for (const event of guestEvents) guestBodies.push(event.payloadJson);
 

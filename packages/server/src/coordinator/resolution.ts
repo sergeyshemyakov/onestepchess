@@ -110,6 +110,10 @@ export function registerResolution(deps: ResolutionDeps): void {
             }),
           })
           .run();
+        ctx.appendEvent("system_banner", null, {
+          mode: "paused",
+          banner: state?.banner ?? null,
+        });
         deps.logger.error(
           { gameId: game.id, paid, take, staked },
           "resolution conservation violation — pausing",

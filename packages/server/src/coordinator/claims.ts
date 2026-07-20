@@ -139,10 +139,19 @@ function moveClaim(
       })
       .run();
   }
-  ctx.appendEvent("claim_moved", args.claim.player, { claimId: args.claim.id });
+  ctx.appendEvent("move_accepted", args.claim.player, {
+    claimId: args.claim.id,
+    txid: args.txid,
+  });
   ctx.afterCommit(() => {
     deps.views.removeOpenClaim(args.claim.id);
+    deps.timers.disarm("claimReveal", args.claim.id);
     deps.timers.disarm("claimDeadline", args.claim.id);
+    deps.timers.arm(
+      "nudge",
+      args.claim.id,
+      ctx.now + deps.config().NEXT_GAME_NUDGE_SECONDS * 1_000,
+    );
   });
   return receiptFor(
     {
@@ -217,12 +226,56 @@ function expireClaimIfDue(
   ctx.appendEvent("claim_expired", claim.player, { claimId: claim.id });
   ctx.afterCommit(() => {
     deps.views.removeOpenClaim(claim.id);
+    deps.timers.disarm("claimReveal", claim.id);
     deps.timers.disarm("claimDeadline", claim.id);
   });
   return true;
 }
 
 export function registerClaimCommands(deps: ClaimDeps): void {
+  deps.coordinator.register(
+    "ClaimExpiring",
+    (ctx, payload: { claimId: string }) => {
+      const claim = deps.db
+        .select()
+        .from(schema.claims)
+        .where(eq(schema.claims.id, payload.claimId))
+        .get();
+      if (claim === undefined || claim.status !== "open") return false;
+      const dueAt = Math.max(
+        claim.createdAt,
+        claim.deadline - deps.config().TIMER_REVEAL_SECONDS * 1_000,
+      );
+      if (dueAt > ctx.now) {
+        ctx.afterCommit(() => {
+          deps.timers.arm("claimReveal", claim.id, dueAt);
+        });
+        return false;
+      }
+      const payloadJson = JSON.stringify({
+        claimId: claim.id,
+        deadline: new Date(claim.deadline).toISOString(),
+      });
+      const existing = deps.db
+        .select({ id: schema.events.id })
+        .from(schema.events)
+        .where(
+          and(
+            eq(schema.events.player, claim.player),
+            eq(schema.events.type, "claim_expiring"),
+            eq(schema.events.payloadJson, payloadJson),
+          ),
+        )
+        .get();
+      if (existing !== undefined) return false;
+      ctx.appendEvent("claim_expiring", claim.player, {
+        claimId: claim.id,
+        deadline: new Date(claim.deadline).toISOString(),
+      });
+      return true;
+    },
+  );
+
   deps.coordinator.register(
     "PaymentIntentOpened",
     (
@@ -491,6 +544,14 @@ export function registerClaimCommands(deps: ClaimDeps): void {
       ctx.afterCommit(() => {
         deps.views.setOpenClaim(claim);
         deps.views.countClaim(claim.player, claim.demo, claim.createdAt);
+        deps.timers.arm(
+          "claimReveal",
+          claim.id,
+          Math.max(
+            claim.createdAt,
+            claim.deadline - config.TIMER_REVEAL_SECONDS * 1_000,
+          ),
+        );
         deps.timers.arm("claimDeadline", claim.id, claim.deadline);
       });
       return { claim, created: true };

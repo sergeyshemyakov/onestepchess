@@ -151,7 +151,7 @@ describe("timer service", () => {
       },
     });
     registerExpiry(coordinator, database);
-    rearmTimers(database.db, timers, Date.now());
+    rearmTimers(database.db, timers, Date.now(), 120);
 
     expect(timers.armedCount()).toBeGreaterThan(0);
     await vi.advanceTimersByTimeAsync(30_000);
@@ -177,12 +177,20 @@ describe("timer service", () => {
          VALUES ('pj_1', 'gm_1', 'addr-a', 5, 'refund', 'pending', 50000, 0)`,
       )
       .run();
+    database.sqlite
+      .prepare(
+        `INSERT INTO claims (id, game_id, player, side, stake_microusdc, status, created_at, deadline, moved_at, nudge_due_at)
+         VALUES ('clm_2', 'gm_1', 'addr-a', 'white', 1000, 'moved', 0, 1000, 1000, 60000)`,
+      )
+      .run();
 
-    rearmTimers(database.db, timers, Date.now());
+    rearmTimers(database.db, timers, Date.now(), 120);
 
+    expect(timers.armed("claimReveal", "clm_1")).toBe(true);
     expect(timers.armed("claimDeadline", "clm_1")).toBe(true);
     expect(timers.armed("minNextClaim", "gm_1")).toBe(true);
     expect(timers.armed("gameStall", "gm_1")).toBe(true);
     expect(timers.armed("payoutAttempt", "pj_1")).toBe(true);
+    expect(timers.armed("nudge", "clm_2")).toBe(true);
   });
 });

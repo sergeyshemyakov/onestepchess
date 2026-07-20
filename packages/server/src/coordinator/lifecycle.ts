@@ -303,6 +303,7 @@ export function registerLifecycle(deps: LifecycleDeps): LifecycleApi {
     ctx.afterCommit(() => {
       if (openClaim !== undefined) {
         views.removeOpenClaim(openClaim.id);
+        timers.disarm("claimReveal", openClaim.id);
         timers.disarm("claimDeadline", openClaim.id);
       }
       views.games.delete(gameId);
@@ -322,10 +323,24 @@ export function registerLifecycle(deps: LifecycleDeps): LifecycleApi {
     Record<TimerKind, (ctx: CommandContext, refId: string) => void>
   > = {
     gameStall: onGameStall,
+    claimReveal: (_ctx, claimId) => {
+      void coordinator.dispatch({
+        type: "ClaimExpiring",
+        payload: { claimId },
+        refIds: [claimId],
+      });
+    },
     claimDeadline: (_ctx, claimId) => {
       void coordinator.dispatch({
         type: "ExpireClaim",
         payload: { claimId },
+        refIds: [claimId],
+      });
+    },
+    nudge: (_ctx, claimId) => {
+      void coordinator.dispatch({
+        type: "NudgeTick",
+        payload: {},
         refIds: [claimId],
       });
     },
