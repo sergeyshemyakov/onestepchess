@@ -20,10 +20,13 @@ import { registerResolution } from "./coordinator/resolution.js";
 import { rearmTimers, TimerService } from "./coordinator/timers.js";
 import { CoordinatorViews } from "./coordinator/views.js";
 import { openDatabase, schema } from "./db/open.js";
+import { registerNudgeCommands } from "./events/nudges.js";
+import { EventStreamService } from "./events/service.js";
 import { createApp } from "./http/app.js";
 import { registerAuthRoutes } from "./http/routes/auth.js";
 import { registerClaimRoutes } from "./http/routes/claims.js";
 import { registerDiscoveryRoutes } from "./http/routes/discovery.js";
+import { registerEventRoutes } from "./http/routes/events.js";
 import {
   registerHumanCommands,
   registerHumanRoutes,
@@ -53,12 +56,15 @@ export * from "./coordinator/resolution.js";
 export * from "./coordinator/timers.js";
 export * from "./coordinator/views.js";
 export * from "./db/open.js";
+export * from "./events/nudges.js";
+export * from "./events/service.js";
 export * from "./http/app.js";
 export * from "./http/middleware/client-ip.js";
 export * from "./http/middleware/ratelimit.js";
 export * from "./http/routes/auth.js";
 export * from "./http/routes/claims.js";
 export * from "./http/routes/discovery.js";
+export * from "./http/routes/events.js";
 export * from "./http/routes/human.js";
 export * from "./ids.js";
 export * from "./logger.js";
@@ -68,6 +74,8 @@ export * from "./recovery.js";
 
 const POOL_TICK_INTERVAL_MS = 60_000;
 const PAYOUT_TICK_INTERVAL_MS = 2_000;
+const NUDGE_TICK_INTERVAL_MS = 60_000;
+const EVENT_PRUNE_INTERVAL_MS = 86_400_000;
 
 export async function main(): Promise<void> {
   let loaded: LoadedConfig;
@@ -161,6 +169,23 @@ export async function main(): Promise<void> {
   const views = new CoordinatorViews();
   views.rebuild(db, now);
   const coordinator = new Coordinator({ sqlite, db, logger, views });
+  const events = new EventStreamService({
+    sqlite,
+    db,
+    config: () => config,
+    now: Date.now,
+    logger,
+  });
+  const unsubscribeEvents = coordinator.onEvent((event) => {
+    events.publish(event);
+  });
+  registerNudgeCommands({
+    coordinator,
+    db,
+    views,
+    config: () => config,
+    connectedPlayers: () => events.connectedPlayers(),
+  });
   const timers = new TimerService({
     now: Date.now,
     onFire: (kind, refId) => {
@@ -252,7 +277,8 @@ export async function main(): Promise<void> {
   // Resume payout batches and pay out any freshly-recovered resolutions
   // (F1 step 6) before serving.
   await runPayouts();
-  rearmTimers(db, timers, now);
+  events.prune(now);
+  rearmTimers(db, timers, now, config.TIMER_REVEAL_SECONDS);
   await coordinator.dispatch({ type: "PoolTick", payload: {} });
   const poolInterval = setInterval(() => {
     void coordinator.dispatch({ type: "PoolTick", payload: {} });
@@ -262,6 +288,18 @@ export async function main(): Promise<void> {
     void runPayouts();
   }, PAYOUT_TICK_INTERVAL_MS);
   payoutInterval.unref();
+  const heartbeatInterval = setInterval(() => {
+    events.heartbeat();
+  }, config.SSE_HEARTBEAT_SECONDS * 1_000);
+  heartbeatInterval.unref();
+  const nudgeInterval = setInterval(() => {
+    void coordinator.dispatch({ type: "NudgeTick", payload: {} });
+  }, NUDGE_TICK_INTERVAL_MS);
+  nudgeInterval.unref();
+  const eventPruneInterval = setInterval(() => {
+    events.prune();
+  }, EVENT_PRUNE_INTERVAL_MS);
+  eventPruneInterval.unref();
 
   const mode = (): "running" | "paused" => {
     const row = db
@@ -279,7 +317,7 @@ export async function main(): Promise<void> {
     mode,
   });
 
-  registerAuthRoutes(app, {
+  const authDeps = {
     db,
     rail,
     config: () => config,
@@ -290,7 +328,8 @@ export async function main(): Promise<void> {
     now: Date.now,
     rng: Math.random,
     coordinator,
-  });
+  } as const;
+  registerAuthRoutes(app, authDeps);
   registerClaimRoutes(app, {
     coordinator,
     db,
@@ -321,6 +360,7 @@ export async function main(): Promise<void> {
   } as const;
   registerHumanCommands(humanDeps);
   registerHumanRoutes(app, humanDeps);
+  registerEventRoutes(app, { ...authDeps, events });
   registerDiscoveryRoutes(app, {
     db,
     config: () => config,
@@ -340,8 +380,13 @@ export async function main(): Promise<void> {
   const shutdown = () => {
     clearInterval(poolInterval);
     clearInterval(payoutInterval);
+    clearInterval(heartbeatInterval);
+    clearInterval(nudgeInterval);
+    clearInterval(eventPruneInterval);
     if (recoveryTimer !== undefined) clearTimeout(recoveryTimer);
     timers.disarmAll();
+    unsubscribeEvents();
+    events.closeAll();
     server.close(() => process.exit(0));
   };
   process.on("SIGTERM", shutdown);

@@ -339,6 +339,13 @@ describe("resolution — conservation runtime assert (I4)", () => {
     const state = stack.db.select().from(schema.systemState).get();
     const causes = JSON.parse(state?.pauseCausesJson ?? "[]") as string[];
     expect(causes.some((c) => c.includes("gm_bad"))).toBe(true);
+    expect(
+      stack.db
+        .select()
+        .from(schema.events)
+        .where(eq(schema.events.type, "system_banner"))
+        .all(),
+    ).toHaveLength(1);
   });
 });
 

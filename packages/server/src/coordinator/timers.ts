@@ -1,13 +1,15 @@
 import { type GameRules, gameRulesSchema } from "@onestepchess/core";
-import { and, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import type { Db } from "../db/open.js";
 import { schema } from "../db/open.js";
 
 export type TimerKind =
+  | "claimReveal"
   | "claimDeadline"
   | "minNextClaim"
   | "gameStall"
-  | "payoutAttempt";
+  | "payoutAttempt"
+  | "nudge";
 
 export type TimerServiceOptions = {
   readonly now: () => number;
@@ -72,14 +74,48 @@ export function parseGameRules(rulesJson: string): GameRules {
 
 /** Boot re-arm (F1 step 7): every timer is derived from its DB deadline
  * column; no timer state survives only in memory. */
-export function rearmTimers(db: Db, timers: TimerService, now: number): void {
+export function rearmTimers(
+  db: Db,
+  timers: TimerService,
+  now: number,
+  timerRevealSeconds: number,
+): void {
   const openClaims = db
-    .select({ id: schema.claims.id, deadline: schema.claims.deadline })
+    .select({
+      id: schema.claims.id,
+      createdAt: schema.claims.createdAt,
+      deadline: schema.claims.deadline,
+    })
     .from(schema.claims)
     .where(eq(schema.claims.status, "open"))
     .all();
   for (const claim of openClaims) {
+    timers.arm(
+      "claimReveal",
+      claim.id,
+      Math.max(claim.createdAt, claim.deadline - timerRevealSeconds * 1_000),
+    );
     timers.arm("claimDeadline", claim.id, claim.deadline);
+  }
+
+  const pendingNudges = db
+    .select({
+      id: schema.claims.id,
+      nudgeDueAt: schema.claims.nudgeDueAt,
+    })
+    .from(schema.claims)
+    .where(
+      and(
+        eq(schema.claims.status, "moved"),
+        isNotNull(schema.claims.nudgeDueAt),
+        isNull(schema.claims.nudgeSentAt),
+      ),
+    )
+    .all();
+  for (const claim of pendingNudges) {
+    if (claim.nudgeDueAt !== null) {
+      timers.arm("nudge", claim.id, claim.nudgeDueAt);
+    }
   }
 
   const liveGames = db

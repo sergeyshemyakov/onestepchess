@@ -40,6 +40,14 @@ export type CommandContext = {
   afterCommit(hook: () => void): void;
 };
 
+export type DurableEvent = {
+  readonly id: number;
+  readonly ts: number;
+  readonly player: string | null;
+  readonly type: string;
+  readonly payloadJson: string;
+};
+
 /** Handlers are synchronous by contract: one command = one synchronous
  * better-sqlite3 transaction, no await points between validate and commit
  * (I8). Slow work runs outside the queue and re-enters as a command. */
@@ -76,6 +84,7 @@ export class Coordinator {
   private readonly logger: Logger;
   private readonly nowFn: () => number;
   private readonly viewsRef: CoordinatorViews | null;
+  private readonly eventListeners = new Set<(event: DurableEvent) => void>();
   private pendingPriorityClaims = 0;
 
   constructor(options: CoordinatorOptions) {
@@ -109,6 +118,13 @@ export class Coordinator {
 
   onIdle(): Promise<void> {
     return this.queue.onIdle();
+  }
+
+  onEvent(listener: (event: DurableEvent) => void): () => void {
+    this.eventListeners.add(listener);
+    return () => {
+      this.eventListeners.delete(listener);
+    };
   }
 
   async dispatch<P, R = unknown>(
@@ -150,19 +166,29 @@ export class Coordinator {
     const startedAt = performance.now();
     const now = this.nowFn();
     const afterCommitHooks: (() => void)[] = [];
+    const durableEvents: DurableEvent[] = [];
     const insertEvent = this.db.insert(schema.events);
     const ctx: CommandContext = {
       now,
       views: this.viewsRef,
       appendEvent: (type, player, payload) => {
-        insertEvent
+        const payloadJson = JSON.stringify(payload);
+        const inserted = insertEvent
           .values({
             ts: now,
             player,
             type,
-            payloadJson: JSON.stringify(payload),
+            payloadJson,
           })
-          .run();
+          .returning({ id: schema.events.id })
+          .get();
+        durableEvents.push({
+          id: inserted.id,
+          ts: now,
+          player,
+          type,
+          payloadJson,
+        });
       },
       afterCommit: (hook) => {
         afterCommitHooks.push(hook);
@@ -185,6 +211,11 @@ export class Coordinator {
 
     for (const hook of afterCommitHooks) {
       hook();
+    }
+    for (const event of durableEvents) {
+      for (const listener of this.eventListeners) {
+        listener(event);
+      }
     }
     this.logger.info(
       {
