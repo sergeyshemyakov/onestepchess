@@ -49,7 +49,10 @@ describe("domain simulator", () => {
     );
     const total = Object.values(histogram).reduce((a, b) => a + b, 0);
     expect(total).toBe(p1.gamesCompleted + p2.gamesCompleted);
-    expect(elapsedMs).toBeLessThan(60_000);
+    // 90s, not 60s: the sim is single-threaded CPU-bound and GitHub's shared
+    // runners are ~2.4x slower single-core than dev hardware (unchanged code
+    // measures ~25s local, ~61s CI). Do not tighten without re-measuring on CI.
+    expect(elapsedMs).toBeLessThan(90_000);
   });
 
   it("holds duplicate-delivery idempotency assertions", {
