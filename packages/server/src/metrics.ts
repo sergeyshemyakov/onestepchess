@@ -7,6 +7,41 @@ const DAY_MS = 86_400_000;
 
 type Mode = "running" | "paused";
 
+class RollingWindow<T> {
+  private readonly entries: T[] = [];
+  private head = 0;
+
+  constructor(private readonly timestamp: (value: T) => number) {}
+
+  add(value: T, cutoff: number): void {
+    this.prune(cutoff);
+    this.entries.push(value);
+  }
+
+  values(cutoff: number): readonly T[] {
+    this.prune(cutoff);
+    return this.entries.slice(this.head);
+  }
+
+  count(cutoff: number): number {
+    this.prune(cutoff);
+    return this.entries.length - this.head;
+  }
+
+  private prune(cutoff: number): void {
+    while (
+      this.head < this.entries.length &&
+      this.timestamp(this.entries[this.head] as T) <= cutoff
+    ) {
+      this.head += 1;
+    }
+    if (this.head >= 1_024 && this.head * 2 >= this.entries.length) {
+      this.entries.splice(0, this.head);
+      this.head = 0;
+    }
+  }
+}
+
 export type MetricsSnapshot = {
   readonly uptimeSeconds: number;
   readonly mode: Mode;
@@ -29,24 +64,22 @@ export type MetricsSnapshot = {
 };
 
 /** In-memory counters for `GET /api/v1/metrics` (server spec §6.3). Rolling-24h
- * figures are kept as append-only timestamp lists pruned on read; gauges are
- * read from the coordinator's views at snapshot time. Nothing here touches the
- * database — the endpoint must never scan tables.
- *
- * Wired now: claim/move/quota/auth counters (HTTP edge) and the live gauges.
- * The game-finished, facilitator, and payout counters are part of the starter
- * shape but fed by the Release 3 operations surface (a non-goal for this card),
- * so their record methods exist without a production caller yet. */
+ * windows prune on both writes and reads, so metrics remain bounded even when
+ * the endpoint is disabled or not scraped. Gauges come from coordinator views;
+ * the endpoint never scans database tables. */
 export class Metrics {
   private readonly now: () => number;
   private readonly startedAt: number;
-  private readonly claimsCreated: number[] = [];
-  private readonly movesSettled: number[] = [];
-  private readonly gamesFinished: number[] = [];
-  private readonly facilitatorErrors: number[] = [];
-  private readonly quotaRejections: number[] = [];
-  private readonly authFailures: number[] = [];
-  private readonly settleLatencies: Array<{ at: number; ms: number }> = [];
+  private readonly claimsCreated = new RollingWindow<number>((at) => at);
+  private readonly movesSettled = new RollingWindow<number>((at) => at);
+  private readonly gamesFinished = new RollingWindow<number>((at) => at);
+  private readonly facilitatorErrors = new RollingWindow<number>((at) => at);
+  private readonly quotaRejections = new RollingWindow<number>((at) => at);
+  private readonly authFailures = new RollingWindow<number>((at) => at);
+  private readonly settleLatencies = new RollingWindow<{
+    readonly at: number;
+    readonly ms: number;
+  }>((entry) => entry.at);
   private payoutsSubmitted = 0;
   private payoutsFailed = 0;
   private payoutsPending = 0;
@@ -60,43 +93,52 @@ export class Metrics {
   }
 
   recordClaimCreated(): void {
-    this.claimsCreated.push(this.now());
+    const now = this.now();
+    this.claimsCreated.add(now, now - DAY_MS);
   }
 
   recordMoveSettled(latencyMs: number): void {
     const at = this.now();
-    this.movesSettled.push(at);
-    this.settleLatencies.push({ at, ms: Math.max(0, latencyMs) });
+    const cutoff = at - DAY_MS;
+    this.movesSettled.add(at, cutoff);
+    this.settleLatencies.add({ at, ms: Math.max(0, latencyMs) }, cutoff);
   }
 
   recordGameFinished(): void {
-    this.gamesFinished.push(this.now());
+    const now = this.now();
+    this.gamesFinished.add(now, now - DAY_MS);
   }
 
   recordFacilitatorError(): void {
-    this.facilitatorErrors.push(this.now());
+    const now = this.now();
+    this.facilitatorErrors.add(now, now - DAY_MS);
   }
 
   recordQuotaRejection(): void {
-    this.quotaRejections.push(this.now());
+    const now = this.now();
+    this.quotaRejections.add(now, now - DAY_MS);
   }
 
   recordAuthFailure(): void {
-    this.authFailures.push(this.now());
+    const now = this.now();
+    this.authFailures.add(now, now - DAY_MS);
   }
 
-  recordPayoutSubmitted(): void {
-    this.payoutsSubmitted += 1;
-    this.payoutsPending += 1;
+  recordPayoutQueued(count = 1): void {
+    this.payoutsPending += count;
   }
 
-  recordPayoutConfirmed(): void {
-    this.payoutsPending = Math.max(0, this.payoutsPending - 1);
+  recordPayoutSubmitted(count = 1): void {
+    this.payoutsSubmitted += count;
   }
 
-  recordPayoutFailed(): void {
-    this.payoutsFailed += 1;
-    this.payoutsPending = Math.max(0, this.payoutsPending - 1);
+  recordPayoutConfirmed(count = 1): void {
+    this.payoutsPending = Math.max(0, this.payoutsPending - count);
+  }
+
+  recordPayoutFailed(count = 1): void {
+    this.payoutsFailed += count;
+    this.payoutsPending = Math.max(0, this.payoutsPending - count);
   }
 
   snapshot(gauges: {
@@ -108,19 +150,10 @@ export class Metrics {
   }): MetricsSnapshot {
     const now = this.now();
     const cutoff = now - DAY_MS;
-    const count = (list: number[]): number => {
-      while (list.length > 0 && (list[0] as number) <= cutoff) list.shift();
-      return list.length;
-    };
-    while (
-      this.settleLatencies.length > 0 &&
-      (this.settleLatencies[0] as { at: number }).at <= cutoff
-    )
-      this.settleLatencies.shift();
-
-    const claimsCreated24h = count(this.claimsCreated);
-    const movesSettled24h = count(this.movesSettled);
+    const claimsCreated24h = this.claimsCreated.count(cutoff);
+    const movesSettled24h = this.movesSettled.count(cutoff);
     const sorted = this.settleLatencies
+      .values(cutoff)
       .map((entry) => entry.ms)
       .sort((a, b) => a - b);
     const percentile = (p: number): number => {
@@ -137,7 +170,7 @@ export class Metrics {
       mode: gauges.mode,
       gamesActive: gauges.gamesActive,
       gamesEndspiel: gauges.gamesEndspiel,
-      gamesFinished24h: count(this.gamesFinished),
+      gamesFinished24h: this.gamesFinished.count(cutoff),
       claimsOpen: gauges.claimsOpen,
       claimsCreated24h,
       claimMoveConversionPct:
@@ -145,13 +178,13 @@ export class Metrics {
       movesSettled24h,
       settleLatencyP50Ms: percentile(50),
       settleLatencyP95Ms: percentile(95),
-      facilitatorErrors24h: count(this.facilitatorErrors),
+      facilitatorErrors24h: this.facilitatorErrors.count(cutoff),
       payoutsPending: this.payoutsPending,
       payoutsSubmitted: this.payoutsSubmitted,
       payoutsFailed: this.payoutsFailed,
       sseClients: gauges.sseClients,
-      quotaRejections24h: count(this.quotaRejections),
-      authFailures24h: count(this.authFailures),
+      quotaRejections24h: this.quotaRejections.count(cutoff),
+      authFailures24h: this.authFailures.count(cutoff),
     };
   }
 }

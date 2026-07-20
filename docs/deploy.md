@@ -102,8 +102,9 @@ pause gameplay.
 
 Discovery and hardening surfaces to verify after deploy:
 
-- `GET /llms.txt` — `text/markdown` agent guide (Release 3 MCP/agent-kit
-  packages are marked not-yet-published).
+- `GET /llms.txt` — `text/markdown` production agent guide for the final
+  MCP/agent-kit and raw-HTTP contracts; live network/economics remain derived
+  from `/api/v1/meta`.
 - `GET /api/v1/openapi.json` — generated public API contract; admin routes and
   `/api/v1/metrics` are excluded.
 - `GET /api/v1/meta` — `network.caip2 = mock:local`, `status.banner` set.

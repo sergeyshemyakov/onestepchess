@@ -1,13 +1,14 @@
 import type { PaymentRail, Rng } from "@onestepchess/core";
 import { and, eq, gt, inArray, ne, sql } from "drizzle-orm";
 import type { Hono } from "hono";
-import { z } from "zod";
+import type { z } from "zod";
 import type { ServerConfig } from "../../config.js";
 import type { Coordinator } from "../../coordinator/queue.js";
 import type { Db } from "../../db/open.js";
 import { schema } from "../../db/open.js";
 import { generateName } from "../../names.js";
 import { type AppEnv, AppError } from "../app.js";
+import { gamesQuerySchema, renameBodySchema } from "../contracts.js";
 import { type AuthRouteDeps, sessionAuth } from "./auth.js";
 
 const DAY_MS = 86_400_000;
@@ -25,14 +26,6 @@ export type HumanRouteDeps = {
   readonly now: () => number;
   readonly rng: Rng;
 };
-
-const renameBody = z.object({ nickname: z.string() }).strict();
-const gamesQuery = z
-  .object({
-    status: z.enum(["ongoing", "finished"]),
-    page: z.coerce.number().int().positive().default(1),
-  })
-  .strict();
 
 function nicknameTaken(db: Db, nickname: string, except: string): boolean {
   return (
@@ -228,7 +221,7 @@ export function registerHumanRoutes(
 
   app.patch("/api/v1/my/profile", auth, async (c) => {
     const raw = await c.req.json().catch(() => null);
-    const parsed = renameBody.safeParse(raw);
+    const parsed = renameBodySchema.safeParse(raw);
     if (!parsed.success)
       throw new AppError("INVALID_REQUEST", { hint: "nickname is required" });
     if (!NICKNAME_PATTERN.test(parsed.data.nickname))
@@ -264,7 +257,7 @@ export function registerHumanRoutes(
   });
 
   app.get("/api/v1/my/games", auth, (c) => {
-    const query = parseQuery(gamesQuery, {
+    const query = parseQuery(gamesQuerySchema, {
       status: c.req.query("status"),
       page: c.req.query("page") ?? 1,
     });

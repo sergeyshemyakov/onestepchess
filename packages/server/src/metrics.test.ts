@@ -103,6 +103,12 @@ describe("/api/v1/metrics (§6.3)", () => {
     ctx.metrics.recordClaimCreated();
     ctx.metrics.recordClaimCreated();
     ctx.metrics.recordMoveSettled(1_200);
+    ctx.metrics.recordGameFinished();
+    ctx.metrics.recordFacilitatorError();
+    ctx.metrics.recordPayoutQueued(2);
+    ctx.metrics.recordPayoutSubmitted(2);
+    ctx.metrics.recordPayoutConfirmed();
+    ctx.metrics.recordPayoutFailed();
 
     const after = await (
       await ctx.app.request("/api/v1/metrics", { headers: authed })
@@ -111,6 +117,11 @@ describe("/api/v1/metrics (§6.3)", () => {
     expect(after.movesSettled24h).toBe(1);
     expect(after.settleLatencyP95Ms).toBe(1_200);
     expect(after.claimMoveConversionPct).toBeCloseTo(50);
+    expect(after.gamesFinished24h).toBe(1);
+    expect(after.facilitatorErrors24h).toBe(1);
+    expect(after.payoutsPending).toBe(0);
+    expect(after.payoutsSubmitted).toBe(2);
+    expect(after.payoutsFailed).toBe(1);
 
     // Redaction: the response never echoes the admin token or other secrets.
     const raw = await (
@@ -133,5 +144,18 @@ describe("/api/v1/metrics (§6.3)", () => {
       sseClients: 0,
     });
     expect(snap.claimsCreated24h).toBe(0);
+
+    // Pruning also happens on writes, so a disabled/unread endpoint does not
+    // retain process-lifetime history.
+    ctx.metrics.recordClaimCreated();
+    expect(
+      ctx.metrics.snapshot({
+        mode: "running",
+        gamesActive: 0,
+        gamesEndspiel: 0,
+        claimsOpen: 0,
+        sseClients: 0,
+      }).claimsCreated24h,
+    ).toBe(1);
   });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createLogger } from "../logger.js";
 import { createApp } from "./app.js";
+import { publicApiSchemas } from "./contracts.js";
 import { registerOpenApiRoute } from "./openapi.js";
 
 const publicBaseUrl = "https://osc.example";
@@ -79,5 +80,49 @@ describe("/api/v1/openapi.json (F12)", () => {
     const move = doc.paths["/api/v1/claims/{id}/move"]?.post;
     expect(move?.requestBody).toBeDefined();
     expect(move?.responses).toBeDefined();
+  });
+
+  it("shares the live auth and claim zod contracts", () => {
+    expect(
+      publicApiSchemas.verifyBody.safeParse({
+        address: "ADDRESS",
+        kind: "agent",
+        method: "txn",
+        signedTxnB64: "signed",
+      }).success,
+    ).toBe(true);
+    expect(
+      publicApiSchemas.verifyBody.safeParse({
+        address: "ADDRESS",
+        kind: "agent",
+        signature: "obsolete-shape",
+      }).success,
+    ).toBe(false);
+    expect(
+      publicApiSchemas.challengeResponse.safeParse({
+        nonce: "nonce",
+        expiresAt: "2026-07-20T00:00:00.000Z",
+        arc60Payload: {
+          data: "data",
+          metadata: { scope: 1, encoding: "base64" },
+        },
+        fallbackTxnB64: "txn",
+      }).success,
+    ).toBe(true);
+    expect(
+      publicApiSchemas.claimResponse.safeParse({
+        claim: {
+          claimId: "clm_1",
+          yourSide: "white",
+          phase: "normal",
+          demo: false,
+          fen: "fen",
+          legalMoves: [{ uci: "e2e4", san: "e4" }],
+          stakeMicroUsdc: 1_000,
+          deadline: "2026-07-20T00:00:00.000Z",
+          board: "board",
+        },
+      }).success,
+    ).toBe(true);
   });
 });

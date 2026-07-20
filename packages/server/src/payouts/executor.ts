@@ -19,6 +19,12 @@ export type PayoutExecutorDeps = {
   readonly config: () => ServerConfig;
   readonly now: () => number;
   readonly logger: Logger;
+  readonly metrics?: {
+    recordFacilitatorError(): void;
+    recordPayoutSubmitted(count?: number): void;
+    recordPayoutConfirmed(count?: number): void;
+    recordPayoutFailed(count?: number): void;
+  };
 };
 
 const POLL_MS = 1_000;
@@ -78,7 +84,8 @@ export function registerPayoutCommands(deps: PayoutExecutorDeps): void {
           ),
         )
         .run();
-      db.update(schema.payoutJobs)
+      const submitted = db
+        .update(schema.payoutJobs)
         .set({ status: "submitted" })
         .where(
           and(
@@ -86,7 +93,10 @@ export function registerPayoutCommands(deps: PayoutExecutorDeps): void {
             eq(schema.payoutJobs.status, "prepared"),
           ),
         )
-        .run();
+        .run().changes;
+      if (submitted > 0) {
+        ctx.afterCommit(() => deps.metrics?.recordPayoutSubmitted(submitted));
+      }
     },
   );
 
@@ -139,6 +149,7 @@ export function registerPayoutCommands(deps: PayoutExecutorDeps): void {
             .run();
         }
       }
+      ctx.afterCommit(() => deps.metrics?.recordPayoutConfirmed());
     },
   );
 
@@ -159,6 +170,7 @@ export function registerPayoutCommands(deps: PayoutExecutorDeps): void {
           ),
         )
         .all();
+      let failed = 0;
       for (const job of jobs) {
         const attempts = job.attempts + 1;
         if (attempts >= max) {
@@ -166,6 +178,7 @@ export function registerPayoutCommands(deps: PayoutExecutorDeps): void {
             .set({ status: "failed", attempts, batchId: null, txid: null })
             .where(eq(schema.payoutJobs.id, job.id))
             .run();
+          failed += 1;
         } else {
           db.update(schema.payoutJobs)
             .set({
@@ -183,6 +196,9 @@ export function registerPayoutCommands(deps: PayoutExecutorDeps): void {
         .set({ status: "failed", updatedAt: ctx.now })
         .where(eq(schema.payoutBatches.id, payload.batchId))
         .run();
+      if (failed > 0) {
+        ctx.afterCommit(() => deps.metrics?.recordPayoutFailed(failed));
+      }
     },
   );
 }
@@ -236,6 +252,7 @@ export async function runPayoutExecutor(
         refIds: chunk.map((job) => job.id),
       });
     } catch (error) {
+      deps.metrics?.recordFacilitatorError();
       deps.logger.error({ err: error }, "payout preparation failed");
       schedule(now + POLL_MS);
     }
@@ -265,6 +282,7 @@ export async function runPayoutExecutor(
     try {
       result = await deps.rail.submitPrepared(submission);
     } catch (error) {
+      deps.metrics?.recordFacilitatorError();
       deps.logger.error({ err: error, batch: batch.id }, "payout submit threw");
       schedule(now + POLL_MS);
       continue;
@@ -276,6 +294,7 @@ export async function runPayoutExecutor(
         refIds: [batch.id],
       });
     } else if (result.reason === "rejected") {
+      deps.metrics?.recordFacilitatorError();
       await deps.coordinator.dispatch({
         type: "PayoutBatchDiscarded",
         payload: { batchId: batch.id },
@@ -283,6 +302,7 @@ export async function runPayoutExecutor(
       });
       schedule(now + POLL_MS);
     } else {
+      deps.metrics?.recordFacilitatorError();
       // Ambiguous: the exact bytes may already be on chain. Keep them and
       // resubmit later — an identical payload is idempotent at the txid level.
       schedule(now + POLL_MS);
@@ -326,6 +346,7 @@ export async function runPayoutExecutor(
           stillPending = true;
         }
       } catch (error) {
+        deps.metrics?.recordFacilitatorError();
         deps.logger.warn(
           { err: error, job: job.id },
           "payout status query unavailable",
@@ -337,6 +358,7 @@ export async function runPayoutExecutor(
           const note = await deps.rail.findPayoutByNote(job.id);
           if (note !== null) confirmed = { txid: note.txid };
         } catch {
+          deps.metrics?.recordFacilitatorError();
           // note query unavailable — fall through to the next tick
         }
       }

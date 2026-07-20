@@ -28,7 +28,14 @@ const BASE_URL = "https://osc.example";
 const JWT_SECRET = "claims-test-secret-that-is-long-enough";
 const databases: OpenedDatabase[] = [];
 
-function setup(overrides: Record<string, unknown> = {}) {
+function setup(
+  overrides: Record<string, unknown> = {},
+  metrics?: {
+    recordClaimCreated(): void;
+    recordMoveSettled(latencyMs: number): void;
+    recordFacilitatorError(): void;
+  },
+) {
   const database = openDatabase({ path: ":memory:" });
   databases.push(database);
   const config: ServerConfig = serverConfigSchema.parse({
@@ -81,6 +88,7 @@ function setup(overrides: Record<string, unknown> = {}) {
     trustProxyHops: 0,
     publicBaseUrl: BASE_URL,
     mode: () => "running" as const,
+    metrics,
   };
   registerClaimCommands(deps);
   registerResolution({
@@ -188,7 +196,12 @@ afterEach(() => {
 
 describe("staked claim moves (F4)", () => {
   it("returns a durable paid receipt, updates both ledger views, and replays byte-identically", async () => {
-    const stack = setup();
+    const metrics = {
+      recordClaimCreated: vi.fn(),
+      recordMoveSettled: vi.fn(),
+      recordFacilitatorError: vi.fn(),
+    };
+    const stack = setup({}, metrics);
     await addPlayer(stack, "alice");
     const claim = await openClaim(stack, "alice");
     const header = paymentHeader(stack.rail, claim, "alice", "replay");
@@ -207,6 +220,7 @@ describe("staked claim moves (F4)", () => {
     expect(firstResponseHeader).not.toBeNull();
     expect(await replay.json()).toEqual(firstBody);
     expect(replay.headers.get("PAYMENT-RESPONSE")).toBe(firstResponseHeader);
+    expect(metrics.recordMoveSettled).toHaveBeenCalledTimes(1);
     expect(
       stack.database.db.select().from(schema.stakeEntries).all(),
     ).toHaveLength(1);
@@ -434,6 +448,29 @@ describe("demo claim moves (F4 demo variant)", () => {
 });
 
 describe("claim request priority (F3/F5)", () => {
+  it("records only a newly-created claim, not get-or-create replays", async () => {
+    const metrics = {
+      recordClaimCreated: vi.fn(),
+      recordMoveSettled: vi.fn(),
+      recordFacilitatorError: vi.fn(),
+    };
+    const stack = setup({}, metrics);
+    await addPlayer(stack, "alice");
+    const request = () =>
+      stack.app.request("/api/v1/claims", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session(stack, "alice")}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ demo: false }),
+      });
+
+    expect((await request()).status).toBe(201);
+    expect((await request()).status).toBe(200);
+    expect(metrics.recordClaimCreated).toHaveBeenCalledTimes(1);
+  });
+
   it("routes an abandonment-deprioritized player through the soft-priority class", async () => {
     const stack = setup();
     await addPlayer(stack, "alice");

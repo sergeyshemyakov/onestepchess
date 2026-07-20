@@ -66,6 +66,7 @@ export * from "./db/open.js";
 export * from "./events/nudges.js";
 export * from "./events/service.js";
 export * from "./http/app.js";
+export * from "./http/contracts.js";
 export * from "./http/llms-txt.js";
 export * from "./http/middleware/client-ip.js";
 export * from "./http/middleware/ratelimit.js";
@@ -246,7 +247,7 @@ export async function main(): Promise<void> {
     turnstile,
   } as const;
   registerClaimCommands(claimDeps);
-  registerResolution({ coordinator, db, logger });
+  registerResolution({ coordinator, db, logger, metrics });
   const payoutDeps = {
     coordinator,
     db,
@@ -254,6 +255,7 @@ export async function main(): Promise<void> {
     config: () => config,
     now: Date.now,
     logger,
+    metrics,
   } as const;
   registerPayoutCommands(payoutDeps);
   let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -361,20 +363,6 @@ export async function main(): Promise<void> {
     },
   });
 
-  // Request-derived counters observed at the HTTP edge (server spec §6.3): a
-  // successful claim issuance and a settled move. Registered before the route
-  // handlers so the post-`next()` status read reflects the handler's result.
-  app.use("/api/v1/claims", async (c, next) => {
-    await next();
-    if (c.req.method === "POST" && c.res.status === 200)
-      metrics.recordClaimCreated();
-  });
-  app.use("/api/v1/claims/:id/move", async (c, next) => {
-    const startedAt = Date.now();
-    await next();
-    if (c.res.status === 200) metrics.recordMoveSettled(Date.now() - startedAt);
-  });
-
   const authDeps = {
     db,
     rail,
@@ -404,6 +392,7 @@ export async function main(): Promise<void> {
     publicBaseUrl: loaded.env.PUBLIC_BASE_URL,
     mode,
     turnstile,
+    metrics,
   });
   const humanDeps = {
     db,

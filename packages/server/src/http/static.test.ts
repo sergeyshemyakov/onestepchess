@@ -70,6 +70,26 @@ describe("static and discovery serving (§6.6)", () => {
     expect(gz.headers.get("content-encoding")).toBe("gzip");
     expect(await gz.text()).toBe("GZ-COMPRESSED-APP");
 
+    // Quality values are authoritative: an explicitly rejected encoding is
+    // never selected, and the highest acceptable quality wins.
+    const quality = await app.request("/assets/app-abcdef.js", {
+      headers: {
+        "Accept-Encoding": "br;q=0, gzip;q=0.8, identity;q=0.1",
+      },
+    });
+    expect(quality.headers.get("content-encoding")).toBe("gzip");
+    const identityOnly = await app.request("/assets/app-abcdef.js", {
+      headers: { "Accept-Encoding": "br;q=0, gzip;q=0" },
+    });
+    expect(identityOnly.headers.get("content-encoding")).toBeNull();
+    expect(identityOnly.headers.get("vary")).toContain("Accept-Encoding");
+    const unacceptable = await app.request("/assets/app-abcdef.js", {
+      headers: {
+        "Accept-Encoding": "br;q=0, gzip;q=0, identity;q=0",
+      },
+    });
+    expect(unacceptable.status).toBe(406);
+
     // Identity when nothing is accepted — no on-the-fly compression.
     const raw = await app.request("/assets/app-abcdef.js");
     expect(raw.headers.get("content-encoding")).toBeNull();
@@ -103,6 +123,11 @@ describe("static and discovery serving (§6.6)", () => {
       Buffer.from(await replay.arrayBuffer()),
     ).toString("utf8");
     expect(JSON.parse(decoded)).toEqual(payload);
+
+    const replayQuality = await replayApp.request("/api/v1/games/g1/replay", {
+      headers: { "Accept-Encoding": "br;q=0, gzip;q=1" },
+    });
+    expect(replayQuality.headers.get("content-encoding")).toBe("gzip");
   });
 
   it("security_headers_and_csp_follow_configured_origins", async () => {

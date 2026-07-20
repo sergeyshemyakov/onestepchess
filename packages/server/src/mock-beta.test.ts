@@ -1,15 +1,45 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { existsSync, mkdtempSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import Database from "better-sqlite3";
+import { drizzle } from "drizzle-orm/better-sqlite3";
+import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { afterEach, describe, expect, it } from "vitest";
-import { openDatabase } from "./db/open.js";
+import { runBackup } from "./backup.js";
+import { createLogger } from "./logger.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const tsxBin = join(here, "../node_modules/.bin/tsx");
 const entry = join(here, "index.ts");
 const children: ChildProcess[] = [];
+
+function seedRelease1Database(volume: string, dbPath: string): void {
+  const source = join(here, "../drizzle");
+  const migrations = join(volume, "release1-migrations");
+  mkdirSync(join(migrations, "meta"), { recursive: true });
+  writeFileSync(
+    join(migrations, "0000_init.sql"),
+    readFileSync(join(source, "0000_init.sql")),
+  );
+  const journal = JSON.parse(
+    readFileSync(join(source, "meta/_journal.json"), "utf8"),
+  ) as { version: string; dialect: string; entries: unknown[] };
+  writeFileSync(
+    join(migrations, "meta/_journal.json"),
+    JSON.stringify({ ...journal, entries: journal.entries.slice(0, 1) }),
+  );
+  const sqlite = new Database(dbPath);
+  migrate(drizzle(sqlite), { migrationsFolder: migrations });
+  sqlite.close();
+}
 
 function boot(env: Record<string, string>): ChildProcess {
   const child = spawn(tsxBin, [entry], {
@@ -59,11 +89,15 @@ describe("mock-beta deployment profile (R2-04)", () => {
     const dbPath = join(volume, "osc.sqlite");
     const backupDir = join(volume, "backups");
 
-    // A pre-existing Release-1 database on the persistent volume: opening it
-    // once runs the full migration chain, then we boot the server against it.
-    const seeded = openDatabase({ path: dbPath });
-    seeded.sqlite.close();
+    // Build an actual Release-1 database by applying only migration 0000.
+    seedRelease1Database(volume, dbPath);
     expect(existsSync(dbPath)).toBe(true);
+    const release1 = new Database(dbPath, { readonly: true });
+    const release1Columns = release1
+      .pragma("table_info(players)")
+      .map((column: { name: string }) => column.name);
+    release1.close();
+    expect(release1Columns).not.toContain("linked_address");
 
     const adminToken = "beta-admin-token-value";
     const banner = "mock beta — no real USDC";
@@ -90,6 +124,27 @@ describe("mock-beta deployment profile (R2-04)", () => {
     };
     expect(meta.network.caip2).toBe("mock:local");
     expect(meta.status.banner).toBe(banner);
+
+    // Boot applied the Release-2 migration to the persistent database.
+    const migrated = new Database(dbPath, { readonly: true });
+    const migratedColumns = migrated
+      .pragma("table_info(players)")
+      .map((column: { name: string }) => column.name);
+    expect(migratedColumns).toContain("linked_address");
+
+    // An online backup uses the configured persistent sibling while the game
+    // server remains healthy.
+    const backup = await runBackup({
+      sqlite: migrated,
+      backupDir,
+      retentionDays: 7,
+      now: () => Date.parse("2026-07-20T03:00:00Z"),
+      logger: createLogger({ level: "silent" }),
+    });
+    migrated.close();
+    expect(backup.ok).toBe(true);
+    expect(existsSync(join(backupDir, "osc-2026-07-20.sqlite"))).toBe(true);
+    expect((await fetch(`${base}/healthz`)).status).toBe(200);
 
     // Discovery surfaces are live.
     const llms = await fetch(`${base}/llms.txt`);

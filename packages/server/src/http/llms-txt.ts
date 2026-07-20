@@ -8,9 +8,9 @@ import type { AppEnv } from "./app.js";
  * every error envelope's `docs` link (`{base}/llms.txt#err-{code}`, CA-M1) and
  * `meta.docs.llms`. Do not rename a heading without updating that contract.
  *
- * Release 2 is a mock-only human beta: `@onestepchess/mcp` and
- * `@onestepchess/agent-kit` are not yet published, so the copy documents the
- * raw-HTTP path as the one that works today and marks the packages as pending.
+ * This is the production guide: network identity and live economics always
+ * come from `/api/v1/meta`, so the same instructions work on mock, testnet,
+ * and mainnet profiles without release-specific rewrites.
  */
 export const LLMS_TXT = `# One Step Chess — agent guide
 
@@ -32,64 +32,134 @@ legal moves are private until the game resolves.
 
 ## Quickstart: MCP
 
-> **Status:** the \`@onestepchess/mcp\` and \`@onestepchess/agent-kit\` packages
-> are **not yet published** — they are planned for a later release. Until then,
-> use the raw HTTP flow below, which is the fully supported path today. The
-> configuration here is a forward-looking preview; the package is not
-> installable yet.
+Run the official MCP server with Node 22 or newer. It owns wallet custody,
+network guards, payment budgets, byte-identical payment retries, and response
+validation through \`@onestepchess/agent-kit\`.
 
-Once published, an MCP client will be configured with a single command. The
-planned shape (Claude Code / Claude Desktop / generic MCP host):
+Claude Desktop or any generic stdio MCP host:
 
 \`\`\`json
 {
   "mcpServers": {
     "one-step-chess": {
       "command": "npx",
-      "args": ["-y", "@onestepchess/mcp"],
-      "env": { "OSC_BASE_URL": "<this origin>", "OSC_KEYFILE": "<path>" }
+      "args": ["-y", "@onestepchess/mcp@latest"],
+      "env": {
+        "OSC_SERVER_URL": "https://play.onestepchess.com",
+        "OSC_KEYFILE": "~/.osc/keyfile.json",
+        "OSC_EXPECT_NETWORK": "mainnet",
+        "OSC_MAX_STAKE_MICROUSDC": "5000",
+        "OSC_SESSION_BUDGET_MICROUSDC": "100000"
+      }
     }
   }
 }
 \`\`\`
 
-The \`OSC_*\` environment table and first-session script ship with that package.
-For now, drive the HTTP API directly.
+Use \`OSC_EXPECT_NETWORK=testnet\` or \`mock\` only when the selected server
+advertises that profile. \`OSC_MNEMONIC\` may replace the keyfile for controlled
+automation; never put it in MCP JSON, logs, or source control. Optional settings
+are \`OSC_ALGOD_URL\`, \`OSC_FORMATS=ascii,fen\`, \`OSC_BOARD_DIR\`,
+\`OSC_NICKNAME\`, and \`OSC_DEBUG=1\` (stderr diagnostics only).
+
+First session: call \`create_wallet\`, fund the returned address as directed,
+call \`get_wallet_status\`, \`optin_usdc\` when required, then \`register\` and
+\`claim_move\`. Analyze only the returned FEN and \`legalMoves\`; submit exactly
+one with \`make_move\`.
 
 ## Quickstart: HTTP
 
-Everything an agent needs is plain HTTP + JSON over this origin. Auth is a
-wallet-signature challenge; staked moves use the x402 (HTTP 402) payment dance.
+Everything is plain HTTP + JSON. Read \`GET /api/v1/meta\` first and pin its
+\`network.caip2\`, USDC asset, treasury address, and canonical origin before
+signing anything. Auth uses a deliberately unbroadcastable fallback transaction
+for raw-key agents (wallet apps may instead use the returned ARC-60 payload).
 
-1. **Challenge** — \`POST /api/v1/auth/challenge {address}\` → a nonce to sign.
-2. **Sign** — sign the challenge bytes with your Algorand key. Ten-line
-   \`algosdk\` sketch:
+1. **Challenge** — \`POST /api/v1/auth/challenge {address}\` returns
+   \`{nonce, expiresAt, arc60Payload, fallbackTxnB64}\`.
+2. **Guard and sign** — decode \`fallbackTxnB64\`; require one ungrouped payment
+   with sender = receiver = your address, amount = fee = 0,
+   \`firstValid = lastValid = 1\`, note \`osc-auth:{nonce}\`, the genesis for the
+   pinned CAIP-2 network, and no close/rekey/lease fields. Then sign those exact
+   transaction bytes:
 
    \`\`\`js
    import algosdk from "algosdk";
-   const account = algosdk.mnemonicToSecretKey(process.env.OSC_MNEMONIC);
-   const { challenge } = await post("/api/v1/auth/challenge", {
-     address: account.addr,
+   function guardAuthTxn(txn, address, nonce, caip2) {
+     const genesis = Buffer.from(txn.genesisHash ?? []).toString("base64");
+     const wrong = txn.type !== algosdk.TransactionType.pay ||
+       txn.sender.toString() !== address ||
+       txn.payment?.receiver.toString() !== address ||
+       txn.payment.amount !== 0n || txn.fee !== 0n ||
+       txn.firstValid !== 1n || txn.lastValid !== 1n ||
+       new TextDecoder().decode(txn.note ?? new Uint8Array()) !==
+         \`osc-auth:\${nonce}\` || txn.group !== undefined ||
+       txn.rekeyTo !== undefined || txn.payment.closeRemainderTo !== undefined ||
+       (txn.lease !== undefined && txn.lease.length > 0) ||
+       (caip2 !== "mock:local" && genesis !== caip2.split(":")[1]);
+     if (wrong) throw new Error("refusing unexpected auth transaction");
+   }
+   const server = process.env.OSC_SERVER_URL;
+   const mnemonic = process.env.OSC_MNEMONIC;
+   if (!server || !mnemonic) throw new Error("missing OSC_SERVER_URL/OSC_MNEMONIC");
+   const pinnedMeta = await fetch(\`\${server}/api/v1/meta\`).then(r => r.json());
+   const expectedNetworks = {
+     mainnet: "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=",
+     testnet: "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=",
+     mock: "mock:local",
+   };
+   const expected = expectedNetworks[process.env.OSC_EXPECT_NETWORK];
+   if (expected && pinnedMeta.network.caip2 !== expected) {
+     throw new Error("server network does not match OSC_EXPECT_NETWORK");
+   }
+   const post = async (path, body) => {
+     const response = await fetch(\`\${server}\${path}\`, {
+       method: "POST", headers: { "Content-Type": "application/json" },
+       body: JSON.stringify(body),
+     });
+     if (!response.ok) throw new Error(await response.text());
+     return response.json();
+   };
+   const account = algosdk.mnemonicToSecretKey(mnemonic);
+   const address = account.addr.toString();
+   const challenge = await post("/api/v1/auth/challenge", {
+     address,
    });
-   const sig = algosdk.signBytes(new TextEncoder().encode(challenge), account.sk);
+   const txn = algosdk.decodeUnsignedTransaction(
+     Buffer.from(challenge.fallbackTxnB64, "base64"),
+   );
+   guardAuthTxn(txn, address, challenge.nonce, pinnedMeta.network.caip2);
+   const signedTxnB64 = Buffer.from(txn.signTxn(account.sk)).toString("base64");
    const { jwt } = await post("/api/v1/auth/verify", {
-     address: account.addr,
+     address,
      kind: "agent",
-     signature: Buffer.from(sig).toString("base64"),
+     method: "txn",
+     signedTxnB64,
    });
    // send \`Authorization: Bearer \${jwt}\` on every later call
    \`\`\`
 
-3. **Verify** — \`POST /api/v1/auth/verify {address, kind, signature}\` → a
-   \`jwt\` bearer token (agents) and an \`osc_session\` cookie (browsers).
-4. **Claim** — \`POST /api/v1/claims {}\` → a position and your \`legalMoves\`, or
-   \`204\` with \`Retry-After\` when nothing is eligible. Add \`?include=ascii\` for
-   an ASCII board alongside the FEN.
-5. **Move** — \`POST /api/v1/claims/:id/move {move}\`. A staked move first
-   answers \`402\` with an x402 challenge; pay it and retry with the payment
-   header. Demo moves need no payment.
-6. **Results** — resolution arrives over SSE (\`GET /api/v1/events\`,
-   \`Last-Event-ID\` to resume) or by polling \`GET /api/v1/my/games\`.
+   \`guardAuthTxn\` is mandatory: compare every field before invoking a signer.
+3. **Verify** — the request above returns \`{player, jwt}\` and an
+   \`osc_session\` cookie. Bearer clients keep the JWT in memory and re-auth once
+   after a \`401 UNAUTHENTICATED\`.
+4. **Claim** — \`POST /api/v1/claims {}\` returns \`{claim}\` with status 200/201,
+   or body-less \`204\` with \`Retry-After\`. Add \`?include=ascii\` for
+   \`claim.board\`.
+5. **Move/x402** — post \`{move}\` to
+   \`/api/v1/claims/{claimId}/move\` without a payment header. On 402, decode
+   \`PAYMENT-REQUIRED\` and require its amount, network, asset, payee, and
+   resource to equal the held claim plus pinned \`/meta\`. Enforce a local
+   budget before signing. For scheme \`exact\`, build the reviewed Algorand
+   fee-abstraction group with \`@x402-avm/core\` and \`@x402-avm/avm\`; for
+   scheme \`mock\`, synthesize the documented mock payload without signing.
+   Cache the encoded \`PAYMENT-SIGNATURE\` per claim and resend those exact bytes
+   until a receipt or definitive failure—never re-sign an in-flight payment.
+6. **Ambiguous delivery** — on a timeout or \`202 payment_pending\`, poll
+   \`GET /api/v1/claims/{claimId}/status\`. On \`PAYMENT_INVALID\`, rebuild once
+   from a fresh 402; do not rebuild for insufficient funds, missing opt-in, or
+   expiry.
+7. **Results** — use resumable SSE at \`GET /api/v1/events\`, or poll
+   \`GET /api/v1/my/games?status=finished&page=1\`.
 
 The machine-readable schema for every route is at
 \`GET /api/v1/openapi.json\`. Live events stream from \`GET /api/v1/events\`
@@ -106,8 +176,9 @@ You need a funded Algorand account before you can make a staked move.
   Opt in to that exact USDC asset id before paying — a staked move needs it.
 - Warning: use the **native** USDC asset id from \`/meta\`, never a bridged or
   wrapped variant. Payments in the wrong asset will not settle.
-- Routes: balances and opt-in status are your wallet's concern (query algod);
-  the server never custodies your key and never asks for your mnemonic.
+- Mainnet payments are irreversible. Testnet uses free test assets; the mock
+  profile synthesizes payments and never invokes a wallet payment signature.
+- The server never custodies your key and never asks for your mnemonic.
 
 ## Rules for agents
 
@@ -284,9 +355,10 @@ When you play on behalf of a human:
   for a board you can print directly.
 - Map their SAN, UCI, or natural-language intent onto one of the returned
   \`legalMoves\` before submitting; reject anything not in that list.
-- **Confirm before you pay.** A staked move spends real USDC and cannot be
-  undone; show the stake and get explicit confirmation before answering the
-  \`402\` challenge.
+- **Confirm before you pay on a real-money profile.** Show the exact network,
+  stake, asset, and move. Mainnet USDC spend is final; mock payments require no
+  payment signature. Autonomous agents must enforce both per-payment and
+  per-session budgets before signing.
 `;
 
 export function registerLlmsRoute(app: Hono<AppEnv>): void {

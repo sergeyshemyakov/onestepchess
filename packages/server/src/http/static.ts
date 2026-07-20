@@ -71,23 +71,67 @@ export function securityHeaders(deps: {
   return headers;
 }
 
-/** Picks the best on-disk precompressed sibling for the request. `br` wins over
- * `gzip`; we never compress on the fly here (that is the web build's job). */
+type Encoding = "br" | "gzip" | "identity";
+
+function encodingQuality(header: string, encoding: Encoding): number {
+  if (header.trim() === "") return encoding === "identity" ? 1 : 0;
+  let exact: number | undefined;
+  let wildcard: number | undefined;
+  for (const item of header.toLowerCase().split(",")) {
+    const [rawName, ...params] = item.trim().split(";");
+    const name = rawName?.trim();
+    if (name === undefined || name === "") continue;
+    let quality = 1;
+    for (const param of params) {
+      const match = /^\s*q\s*=\s*(0(?:\.\d+)?|1(?:\.0+)?)\s*$/.exec(param);
+      if (match !== null) quality = Number(match[1]);
+      else if (/^\s*q\s*=/.test(param)) quality = 0;
+    }
+    if (name === encoding) exact = quality;
+    else if (name === "*") wildcard = quality;
+  }
+  if (exact !== undefined) return exact;
+  if (encoding === "identity") return wildcard === 0 ? 0 : 1;
+  return wildcard ?? 0;
+}
+
+function negotiateEncoding(
+  acceptEncoding: string,
+  available: ReadonlySet<Encoding>,
+): Encoding | null {
+  const preference: Record<Encoding, number> = { br: 3, gzip: 2, identity: 1 };
+  return (
+    (["br", "gzip", "identity"] as const)
+      .filter((encoding) => available.has(encoding))
+      .map((encoding) => ({
+        encoding,
+        quality: encodingQuality(acceptEncoding, encoding),
+      }))
+      .filter(({ quality }) => quality > 0)
+      .sort(
+        (a, b) =>
+          b.quality - a.quality ||
+          preference[b.encoding] - preference[a.encoding],
+      )[0]?.encoding ?? null
+  );
+}
+
+/** Picks the best acceptable on-disk representation. Quality values and
+ * explicit `q=0` exclusions are honored; no bytes are compressed here. */
 function precompressed(
   candidate: string,
   acceptEncoding: string,
-): { readonly path: string; readonly encoding: string } | null {
-  if (
-    /(^|[\s,])br($|[\s,;])/.test(acceptEncoding) &&
-    existsSync(`${candidate}.br`)
-  )
-    return { path: `${candidate}.br`, encoding: "br" };
-  if (
-    /(^|[\s,])gzip($|[\s,;])/.test(acceptEncoding) &&
-    existsSync(`${candidate}.gz`)
-  )
-    return { path: `${candidate}.gz`, encoding: "gzip" };
-  return null;
+):
+  | { readonly path: string; readonly encoding: "br" | "gzip" }
+  | Encoding
+  | null {
+  const available = new Set<Encoding>(["identity"]);
+  if (existsSync(`${candidate}.br`)) available.add("br");
+  if (existsSync(`${candidate}.gz`)) available.add("gzip");
+  const encoding = negotiateEncoding(acceptEncoding, available);
+  if (encoding === "br") return { path: `${candidate}.br`, encoding };
+  if (encoding === "gzip") return { path: `${candidate}.gz`, encoding };
+  return encoding;
 }
 
 /** SPA static serving with precompressed negotiation, hashed-asset immutable
@@ -124,17 +168,25 @@ export function registerStaticRoutes(
         candidate,
         c.req.header("accept-encoding") ?? "",
       );
-      if (negotiated !== null) {
+      const vary: Record<string, string> = {};
+      if (existsSync(`${candidate}.br`) || existsSync(`${candidate}.gz`)) {
+        vary.Vary = "Accept-Encoding";
+      }
+      if (negotiated === null) {
+        return c.body(null, 406, { ...headers, ...vary });
+      }
+      if (typeof negotiated !== "string") {
         return c.body(readFileSync(negotiated.path), 200, {
           ...headers,
+          ...vary,
           "Content-Type": contentType(candidate),
           "Cache-Control": cacheControl,
           "Content-Encoding": negotiated.encoding,
-          Vary: "Accept-Encoding",
         });
       }
       return c.body(readFileSync(candidate), 200, {
         ...headers,
+        ...vary,
         "Content-Type": contentType(candidate),
         "Cache-Control": cacheControl,
       });
@@ -157,12 +209,6 @@ function toHeaderRecord(headers: Headers): Record<string, string> {
   return record;
 }
 
-function pickEncoding(acceptEncoding: string): "br" | "gzip" | "identity" {
-  if (/(^|[\s,])br($|[\s,;])/.test(acceptEncoding)) return "br";
-  if (/(^|[\s,])gzip($|[\s,;])/.test(acceptEncoding)) return "gzip";
-  return "identity";
-}
-
 /** On-the-fly compression for the replay JSON response — the single API
  * response the spec compresses (server spec §6.6). Scoped by route in
  * `index.ts`; other JSON responses are never compressed here. */
@@ -176,7 +222,14 @@ export function jsonCompression(
     const type = res.headers.get("content-type") ?? "";
     if (!type.includes("application/json")) return;
     if (res.headers.get("content-encoding") !== null) return;
-    const encoding = pickEncoding(c.req.header("accept-encoding") ?? "");
+    const encoding = negotiateEncoding(
+      c.req.header("accept-encoding") ?? "",
+      new Set<Encoding>(["br", "gzip", "identity"]),
+    );
+    if (encoding === null) {
+      c.res = c.newResponse(null, 406);
+      return;
+    }
     if (encoding === "identity") return;
     const status = res.status as StatusCode;
     const body = Buffer.from(await res.arrayBuffer());

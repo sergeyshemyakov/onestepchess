@@ -62,11 +62,13 @@ describe("/llms.txt (agent spec §9)", () => {
       allAnchors.length,
     );
 
-    // Honest Release 2 copy: the MCP/agent-kit packages are not published yet.
+    // Production copy names the final packages and their pinned environment.
     expect(LLMS_TXT).toContain("@onestepchess/mcp");
     expect(LLMS_TXT).toContain("@onestepchess/agent-kit");
-    expect(LLMS_TXT).toMatch(/not yet published/i);
-    expect(LLMS_TXT).not.toMatch(/available now/i);
+    expect(LLMS_TXT).toContain("OSC_SERVER_URL");
+    expect(LLMS_TXT).toContain('method: "txn"');
+    expect(LLMS_TXT).toContain("fallbackTxnB64");
+    expect(LLMS_TXT).not.toMatch(/not yet published/i);
   });
 
   it("serves /llms.txt as text/markdown", async () => {
