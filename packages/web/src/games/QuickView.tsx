@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Link } from "react-router";
 import type { ApiClient } from "../api/client.js";
 import type {
@@ -7,6 +7,7 @@ import type {
   Meta,
 } from "../api/schemas.js";
 import { ShareSheet } from "../components/ShareSheet.jsx";
+import { useDialogFocusTrap } from "../components/useDialogFocusTrap.js";
 import { explorerTxUrl } from "../lib/explorer.js";
 import {
   formatLocalTime,
@@ -48,6 +49,8 @@ export function QuickView(props: {
   const staked = !item.demo;
   const [sharing, setSharing] = useState(false);
   const [copied, setCopied] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialogFocusTrap(dialogRef, props.onClose);
 
   const outcome = outcomeFor(item.result, item.yourSide);
 
@@ -55,6 +58,8 @@ export function QuickView(props: {
     return (
       <div className="modalback">
         <div
+          ref={dialogRef}
+          tabIndex={-1}
           className="modal quickview"
           role="dialog"
           aria-modal="true"
@@ -83,6 +88,8 @@ export function QuickView(props: {
   return (
     <div className="modalback">
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         className="modal quickview"
         role="dialog"
         aria-modal="true"

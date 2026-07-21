@@ -1,7 +1,15 @@
 import { type ReactNode, useCallback, useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router";
 import { AlgorandMark, KnightMark } from "../board/pieces.jsx";
-import { readTheme, type Theme, writeTheme } from "../lib/storage.js";
+import {
+  readClaimDraft,
+  readTheme,
+  type Theme,
+  writeTheme,
+} from "../lib/storage.js";
 import { useMeta } from "../meta/MetaContext.jsx";
+import { ClaimBar } from "./ClaimBar.jsx";
+import { useShellLive } from "./ShellLiveContext.js";
 
 const THEME_ORDER: readonly Theme[] = ["green", "amber", "ice"];
 
@@ -59,6 +67,16 @@ export function AppShell(props: {
   /** Public replay is intentionally independent of `/meta` (§6 F-W6). */
   readonly showSystemBanner?: boolean;
 }) {
+  const live = useShellLive();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const draft = live === null ? readClaimDraft() : null;
+  const deadline = live?.currentClaim?.deadline ?? draft?.deadline ?? null;
+  const showClaimBar =
+    deadline !== null &&
+    location.pathname !== "/" &&
+    live?.playSurfaceVisible !== true;
+
   return (
     <div className="crt">
       <div className="overlay scan" />
@@ -69,11 +87,29 @@ export function AppShell(props: {
           ONE STEP CHESS
         </span>
         <span className="spacer" />
+        {live !== null ? (
+          <nav className="appnav" aria-label="primary">
+            <Link className="chip click" to="/">
+              BOARDS
+            </Link>
+            <Link className="chip click" to="/archive">
+              ARCHIVE
+            </Link>
+          </nav>
+        ) : null}
+        {live?.connection === "reconnecting" ? (
+          <span className="chip reconnect" role="status">
+            reconnecting…
+          </span>
+        ) : null}
         {props.topRight}
         <PhosphorToggle />
         <AlgorandMark />
       </div>
       {props.belowBar}
+      {showClaimBar ? (
+        <ClaimBar deadline={deadline} onReturn={() => navigate("/")} />
+      ) : null}
       {props.showSystemBanner === false ? null : <SystemBanner />}
       {props.children}
     </div>

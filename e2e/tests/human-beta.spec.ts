@@ -9,7 +9,7 @@ async function chooseE4(page: Page) {
   await expect(page.getByText("FINAL MOVE?")).toBeVisible();
 }
 
-test("human_beta_guest_to_registered_mock_move", async ({ page }) => {
+test("release2_human_happy_path", async ({ page }) => {
   const account = algosdk.generateAccount();
   const mnemonic = algosdk.secretKeyToMnemonic(account.sk);
   page.on("dialog", (dialog) => dialog.accept(mnemonic));
@@ -39,5 +39,47 @@ test("human_beta_guest_to_registered_mock_move", async ({ page }) => {
   await chooseE4(page);
   await page.getByRole("button", { name: /sign & commit/ }).click();
   await expect(page.getByText(/stake .* debited/)).toBeVisible();
-  await expect(page.getByText(/txid mocktx_/)).toBeVisible();
+  await expect(page.getByRole("link", { name: /txid mocktx_/ })).toBeVisible();
+  await page.getByRole("button", { name: "close" }).click();
+  await page.getByRole("link", { name: "ARCHIVE" }).click();
+  await expect(page.getByRole("heading", { name: "ACTIVE" })).toBeVisible();
+  await page.getByRole("link", { name: "BOARDS" }).click();
+  await page.getByTitle(account.addr.toString()).click();
+  await page.getByRole("button", { name: "log out" }).click();
+  await expect(
+    page.getByRole("button", { name: /I HAVE AN ALGORAND WALLET/ }),
+  ).toBeVisible();
+});
+
+test.describe("release2_human_edge_matrix", () => {
+  test("reload and app-switch restore the chosen move", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: /PLAY A DEMO GAME/ }).click();
+    await chooseE4(page);
+    await page.reload();
+    await expect(page.getByText("FINAL MOVE?")).toBeVisible();
+    await expect(page.getByText(/e2→e4/)).toBeVisible();
+  });
+});
+
+test("release2_mobile_snapshots_420_and_768", async ({ page }, testInfo) => {
+  for (const width of [420, 768]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/");
+    await expect(
+      page.getByRole("heading", { name: /ONLY ONE MOVE/ }),
+    ).toBeVisible();
+    await testInfo.attach(`landing-${width}`, {
+      body: await page.screenshot({ fullPage: true }),
+      contentType: "image/png",
+    });
+    await page.goto("/start");
+    await expect(
+      page.getByRole("heading", { name: "GET SET UP" }),
+    ).toBeVisible();
+    await testInfo.attach(`start-${width}`, {
+      body: await page.screenshot({ fullPage: true }),
+      contentType: "image/png",
+    });
+  }
 });

@@ -79,7 +79,7 @@ function walk(entry: string): {
 describe("root bundle static import graph (§5.6)", () => {
   const graph = walk(join(SRC, "main.tsx"));
 
-  it("contains no wallet chunk (no use-wallet, wallet SDKs, or algosdk)", () => {
+  it("public_routes_exclude_wallet_and_admin_chunks", () => {
     for (const pkg of graph.packages) {
       for (const forbidden of FORBIDDEN_PACKAGES) {
         expect(pkg).not.toMatch(forbidden);
@@ -89,6 +89,31 @@ describe("root bundle static import graph (§5.6)", () => {
       for (const forbidden of FORBIDDEN_FILES) {
         expect(file.replaceAll("\\", "/")).not.toContain(forbidden);
       }
+      expect(file.replaceAll("\\", "/")).not.toContain("/admin/");
+    }
+
+    for (const entry of [
+      join(SRC, "routes/Landing.tsx"),
+      join(SRC, "routes/Replay.tsx"),
+    ]) {
+      const publicGraph = walk(entry);
+      for (const pkg of publicGraph.packages) {
+        for (const forbidden of FORBIDDEN_PACKAGES) {
+          expect(pkg).not.toMatch(forbidden);
+        }
+      }
+      expect(
+        [...publicGraph.files].some((file) =>
+          file.replaceAll("\\", "/").includes("/admin/"),
+        ),
+      ).toBe(false);
+    }
+    const replayGraph = walk(join(SRC, "routes/Replay.tsx"));
+    for (const file of replayGraph.files) {
+      const normalized = file.replaceAll("\\", "/");
+      expect(normalized).not.toContain("/live/LiveContext");
+      expect(normalized).not.toContain("/auth/SessionContext");
+      expect(normalized).not.toContain("/ContextualApp");
     }
   });
 

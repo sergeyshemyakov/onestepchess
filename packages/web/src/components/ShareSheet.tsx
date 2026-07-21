@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 
 // F-W12 share sheet — wins only; the entry points (win toast, won staked
 // quick-view) are the callers' responsibility. The `ref` param on the built
@@ -28,6 +29,8 @@ export function ShareSheet(props: {
 }) {
   const [copied, setCopied] = useState(false);
   const [imageFailed, setImageFailed] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialogFocusTrap(dialogRef, props.onClose);
   const url = shareUrl({
     origin: window.location.origin,
     gameId: props.gameId,
@@ -41,6 +44,8 @@ export function ShareSheet(props: {
   return (
     <div className="modalback">
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         className="modal sharesheet"
         role="dialog"
         aria-modal="true"

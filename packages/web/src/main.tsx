@@ -1,6 +1,4 @@
-import "@fontsource/vt323/latin-400.css";
-import "@fontsource/ibm-plex-mono/latin-400.css";
-import "@fontsource/ibm-plex-mono/latin-700.css";
+import "./styles/fonts.css";
 import "./styles/tokens.css";
 import "./styles/components.css";
 import { StrictMode } from "react";
@@ -15,12 +13,17 @@ const authHandlers: AuthHandlers = { onUnauthorized: () => undefined };
 const client = createApiClient({
   onUnauthorized: () => authHandlers.onUnauthorized(),
 });
+const eventSourceFactory = (url: string) => new EventSource(url);
 
 const container = document.getElementById("root");
 if (container) {
   createRoot(container).render(
     <StrictMode>
-      <App client={client} authHandlers={authHandlers} />
+      <App
+        client={client}
+        authHandlers={authHandlers}
+        eventSourceFactory={eventSourceFactory}
+      />
     </StrictMode>,
   );
 }

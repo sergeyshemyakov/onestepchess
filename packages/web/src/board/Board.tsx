@@ -145,11 +145,11 @@ export type BoardProps = {
   readonly fx?: BoardFx | null;
 };
 
-function playFx(layer: HTMLDivElement, fx: BoardFx): void {
+function playFx(layer: HTMLDivElement, fx: BoardFx): () => void {
   const reduced =
     typeof matchMedia === "function" &&
     matchMedia("(prefers-reduced-motion: reduce)").matches;
-  if (reduced) return;
+  if (reduced) return () => undefined;
   const board = layer.parentElement;
   const glyph = board?.querySelector<SVGElement>(
     `[data-square="${fx.to}"] svg.pc`,
@@ -164,6 +164,8 @@ function playFx(layer: HTMLDivElement, fx: BoardFx): void {
   const from = at(fromIndex);
   const to = at(toIndex);
   const clones: HTMLElement[] = [];
+  const timers: Array<ReturnType<typeof setTimeout>> = [];
+  const frames: number[] = [];
   const clone = (x: number, y: number, className: string): HTMLElement => {
     const holder = document.createElement("div");
     holder.className = `fxpc ${className}`;
@@ -194,26 +196,44 @@ function playFx(layer: HTMLDivElement, fx: BoardFx): void {
   if (targetGlyph !== null && targetGlyph !== undefined) {
     targetGlyph.style.visibility = "hidden";
   }
-  requestAnimationFrame(() => {
+  frames.push(
     requestAnimationFrame(() => {
-      mover.style.transform = `translate(${to.x}%, ${to.y}%)`;
-    });
-  });
-  setTimeout(
-    () => {
-      for (const node of clones) node.remove();
-      if (targetGlyph !== null && targetGlyph !== undefined) {
-        targetGlyph.style.visibility = "";
-      }
-      target?.classList.add("flash");
-      board?.classList.add("commitflash");
-      setTimeout(() => {
-        target?.classList.remove("flash");
-        board?.classList.remove("commitflash");
-      }, 320);
-    },
-    fx.kind === "trail" ? 480 : 340,
+      frames.push(
+        requestAnimationFrame(() => {
+          mover.style.transform = `translate(${to.x}%, ${to.y}%)`;
+        }),
+      );
+    }),
   );
+  timers.push(
+    setTimeout(
+      () => {
+        for (const node of clones) node.remove();
+        if (targetGlyph !== null && targetGlyph !== undefined) {
+          targetGlyph.style.visibility = "";
+        }
+        target?.classList.add("flash");
+        board?.classList.add("commitflash");
+        timers.push(
+          setTimeout(() => {
+            target?.classList.remove("flash");
+            board?.classList.remove("commitflash");
+          }, 320),
+        );
+      },
+      fx.kind === "trail" ? 480 : 340,
+    ),
+  );
+  return () => {
+    for (const frame of frames) cancelAnimationFrame(frame);
+    for (const timer of timers) clearTimeout(timer);
+    for (const node of clones) node.remove();
+    if (targetGlyph !== null && targetGlyph !== undefined) {
+      targetGlyph.style.visibility = "";
+    }
+    target?.classList.remove("flash");
+    board?.classList.remove("commitflash");
+  };
 }
 
 export function Board(props: BoardProps) {
@@ -254,7 +274,7 @@ export function Board(props: BoardProps) {
     if (layer === null || fx === null || fx === undefined) return;
     if (fx.seq === lastFxSeq.current) return;
     lastFxSeq.current = fx.seq;
-    playFx(layer, fx);
+    return playFx(layer, fx);
   }, [props.fx]);
 
   const onTap = interactive ? (props.onSquareTap ?? null) : null;

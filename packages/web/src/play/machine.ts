@@ -171,6 +171,8 @@ export function playReducer(state: PlayState, event: PlayEvent): PlayState {
 
     case "FOCUS":
       switch (event.type) {
+        case "RECEIPT":
+          return { ...state, phase: "RECEIPT", receipt: event.receipt };
         case "SELECT":
           return { ...state, selected: event.square };
         case "MOVE_CHOSEN":
@@ -196,6 +198,10 @@ export function playReducer(state: PlayState, event: PlayEvent): PlayState {
 
     case "CONFIRM":
       switch (event.type) {
+        case "RECEIPT": {
+          const { paymentHeader: _dropped, ...rest } = state;
+          return { ...rest, phase: "RECEIPT", receipt: event.receipt };
+        }
         case "CHANGE_MOVE": {
           const { chosenMove: _dropped, ...rest } = state;
           return { ...rest, phase: "FOCUS", error: null };
@@ -220,6 +226,10 @@ export function playReducer(state: PlayState, event: PlayEvent): PlayState {
 
     case "SIGNING":
       switch (event.type) {
+        case "RECEIPT": {
+          const { paymentHeader: _dropped, ...rest } = state;
+          return { ...rest, phase: "RECEIPT", receipt: event.receipt };
+        }
         case "HEADER_READY":
           return { ...state, phase: "SETTLING", paymentHeader: event.header };
         case "WALLET_REJECTED":
