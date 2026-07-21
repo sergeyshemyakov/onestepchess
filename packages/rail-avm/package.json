@@ -15,9 +15,11 @@
     "@onestepchess/core": "workspace:*",
     "@x402-avm/avm": "^2.6.0",
     "@x402-avm/core": "^2.6.0",
-    "algosdk": "^3.0.0"
+    "algosdk": "^3.0.0",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
+    "@types/node": "^22.20.1",
     "vitest": "^4.0.0"
   }
 }

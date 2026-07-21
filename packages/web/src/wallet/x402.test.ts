@@ -22,6 +22,8 @@ const meta = {
   },
 } as Meta;
 
+const MAINNET_CAIP2 = "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=";
+
 const requirement = {
   scheme: "mock",
   network: "mock:local",
@@ -124,6 +126,51 @@ describe("challenge validation matrix (#32)", () => {
   });
 });
 
+it("t1_fixtures_are_consumed_by_web_payment_guards", () => {
+  const address = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ";
+  const exactMeta = {
+    network: {
+      ...meta.network,
+      caip2: "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=",
+      usdcAssetId: "10458941",
+      treasuryAddress: address,
+    },
+  } as Meta;
+  const fixtureRequirement = {
+    scheme: "exact",
+    network: exactMeta.network.caip2,
+    asset: "10458941",
+    amount: "1000",
+    payTo: address,
+    maxTimeoutSeconds: 120,
+    extra: { feePayer: address, decimals: 6 },
+  };
+  const fixture = btoa(
+    JSON.stringify({
+      x402Version: 2,
+      resource: { url: "https://osc.example/api/v1/claims/clm_1/move" },
+      accepts: [fixtureRequirement],
+    }),
+  );
+  const args = { ...validArgs, meta: exactMeta };
+
+  expect(validateChallenge(fixture, args)).toMatchObject({ ok: true });
+  for (const mutation of [
+    { network: MAINNET_CAIP2 },
+    { extra: { feePayer: "unsafe", decimals: 6 } },
+    { extra: { feePayer: address, decimals: 5 } },
+  ]) {
+    const mutated = btoa(
+      JSON.stringify({
+        x402Version: 2,
+        resource: { url: "https://osc.example/api/v1/claims/clm_1/move" },
+        accepts: [{ ...fixtureRequirement, ...mutation }],
+      }),
+    );
+    expect(validateChallenge(mutated, args).ok).toBe(false);
+  }
+});
+
 const receipt: MoveReceipt = {
   status: "moved",
   move: { uci: "e2e4", san: "e4" },
@@ -207,7 +254,17 @@ describe("mock branch (#32)", () => {
     const client = scriptedClient([
       {
         kind: "payment_required",
-        challengeHeader: challengeB64({}, { scheme: "exact" }),
+        challengeHeader: challengeB64(
+          {},
+          {
+            scheme: "exact",
+            extra: {
+              feePayer:
+                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ",
+              decimals: 6,
+            },
+          },
+        ),
         envelope: { error: "PAYMENT_REQUIRED", hint: "", docs: "" },
       },
     ]);

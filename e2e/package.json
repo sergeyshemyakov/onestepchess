@@ -7,15 +7,20 @@
   "type": "module",
   "scripts": {
     "test": "pnpm --dir .. exec vitest run --project @onestepchess/e2e",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "smoke:t1": "pnpm --dir .. exec tsx e2e/src/t1-chain-smoke.ts"
   },
   "devDependencies": {
     "@onestepchess/agent-kit": "workspace:*",
     "@onestepchess/core": "workspace:*",
+    "@onestepchess/rail-avm": "workspace:*",
     "@onestepchess/rail-mock": "workspace:*",
     "@onestepchess/server": "workspace:*",
     "@playwright/test": "^1.0.0",
+    "@x402-avm/avm": "^2.6.0",
     "algosdk": "^3.0.0",
-    "vitest": "^4.0.0"
+    "tsx": "^4.0.0",
+    "vitest": "^4.0.0",
+    "zod": "^4.0.0"
   }
 }
