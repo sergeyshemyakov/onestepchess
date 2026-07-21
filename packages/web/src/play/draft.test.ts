@@ -25,10 +25,14 @@ const confirm: PlayState = {
 };
 
 describe("draft persistence points (§5.5)", () => {
-  it("entering FOCUS writes {claimId, savedAt}", () => {
+  it("entering FOCUS writes the claim identity and shell deadline", () => {
     const write = vi.fn();
     syncDraft(initialPlayState, focus, write, () => "t1");
-    expect(write).toHaveBeenCalledWith({ claimId: "clm_1", savedAt: "t1" });
+    expect(write).toHaveBeenCalledWith({
+      claimId: "clm_1",
+      deadline: "2026-07-17T14:00:00Z",
+      savedAt: "t1",
+    });
   });
 
   it("choosing a move updates the draft with moveUci", () => {
@@ -37,6 +41,7 @@ describe("draft persistence points (§5.5)", () => {
     expect(write).toHaveBeenCalledWith({
       claimId: "clm_1",
       moveUci: "e2e4",
+      deadline: "2026-07-17T14:00:00Z",
       savedAt: "t2",
     });
   });
@@ -59,7 +64,7 @@ describe("draft persistence points (§5.5)", () => {
     const draft = draftFor(confirm, () => "t3") as ClaimDraft;
     expect(JSON.stringify(draft)).not.toContain("SECRET_HEADER_BYTES");
     expect(Object.keys(draft).sort()).toEqual(
-      ["claimId", "moveUci", "savedAt"].sort(),
+      ["claimId", "moveUci", "deadline", "savedAt"].sort(),
     );
   });
 });

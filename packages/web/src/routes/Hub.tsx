@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import type { ApiClient } from "../api/client.js";
 import type {
@@ -8,7 +8,6 @@ import type {
   Meta,
   OngoingGameItem,
   PlayerView,
-  ProfileView,
 } from "../api/schemas.js";
 import { useSession } from "../auth/SessionContext.jsx";
 import { BoardLoop } from "../board/BoardLoop.jsx";
@@ -21,6 +20,11 @@ import { shortenAddress } from "../lib/address.js";
 import { explorerTxUrl } from "../lib/explorer.js";
 import { parseUci } from "../lib/fen.js";
 import { formatLocalTime, formatMicroUsdc } from "../lib/format.js";
+import {
+  readLastSeenFinishedAt,
+  writeLastSeenFinishedAt,
+} from "../lib/storage.js";
+import { useLive } from "../live/LiveContext.jsx";
 import { PlayView } from "../play/PlayView.jsx";
 import { usePlayFlow } from "../play/usePlayFlow.js";
 import { CachedDigest } from "../replay/CachedDigest.jsx";
@@ -223,42 +227,19 @@ export function Hub(props: {
   readonly player: PlayerView;
 }) {
   const { logout, signedIn } = useSession();
-  const [profile, setProfile] = useState<ProfileView | null>(null);
-  const [ongoing, setOngoing] = useState<GamesPage<OngoingGameItem> | null>(
-    null,
-  );
-  const [finished, setFinished] = useState<GamesPage<FinishedGameItem> | null>(
-    null,
-  );
+  const live = useLive();
+  const { profile, ongoing, finished } = live;
   const [pane, setPane] = useState<"active" | "finished">("active");
   const [popover, setPopover] = useState(false);
+  const handledLiveSeq = useRef(0);
   const flow = usePlayFlow({
     client: props.client,
     meta: props.meta,
     address: props.player.address,
     enabled: true,
   });
-  const { state } = flow;
+  const { state, send, refreshClaim, refreshStatus } = flow;
   const { client } = props;
-
-  const refresh = useCallback(() => {
-    client
-      .getProfile()
-      .then(setProfile)
-      .catch(() => undefined);
-    client
-      .getOngoingGames(1)
-      .then(setOngoing)
-      .catch(() => undefined);
-    client
-      .getFinishedGames(1)
-      .then(setFinished)
-      .catch(() => undefined);
-  }, [client]);
-
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
 
   // A committed move lands in the active pane — refetch when the surface
   // closes (SSE-driven invalidation arrives with #51).
@@ -267,15 +248,69 @@ export function Hub(props: {
     if (state.phase !== "IDLE") setWasOpen(true);
     else if (wasOpen) {
       setWasOpen(false);
-      refresh();
+      live.refreshAll();
     }
-  }, [state.phase, wasOpen, refresh]);
+  }, [state.phase, wasOpen, live.refreshAll]);
 
   const claimOpen =
     state.phase === "FOCUS" ||
     state.phase === "CONFIRM" ||
     state.phase === "SIGNING" ||
     state.phase === "SETTLING";
+
+  useEffect(() => {
+    live.setPlaySurfaceVisible(state.phase !== "IDLE");
+    return () => live.setPlaySurfaceVisible(false);
+  }, [state.phase, live.setPlaySurfaceVisible]);
+
+  useEffect(() => {
+    if (claimOpen && state.claim !== undefined) live.trackClaim(state.claim);
+    if (state.phase === "RECEIPT" || state.phase === "EXPIRED") {
+      live.trackClaim(null);
+    }
+  }, [claimOpen, state.claim, state.phase, live.trackClaim]);
+
+  useEffect(() => {
+    const event = live.lastEvent;
+    if (event === null || event.seq <= handledLiveSeq.current) return;
+    handledLiveSeq.current = event.seq;
+    if (
+      event.type === "claim_expiring" &&
+      event.payload.claimId === state.claim?.claimId &&
+      state.claim !== undefined
+    ) {
+      send({
+        type: "CLAIM_REFRESHED",
+        claim: { ...state.claim, deadline: event.payload.deadline },
+      });
+    } else if (
+      event.type === "claim_expired" &&
+      event.payload.claimId === state.claim?.claimId
+    ) {
+      send({ type: "CLAIM_EXPIRED" });
+    } else if (
+      event.type === "move_accepted" &&
+      event.payload.claimId === state.claim?.claimId
+    ) {
+      refreshStatus();
+    } else if (event.type === "stream_reset") {
+      refreshClaim();
+    }
+  }, [live.lastEvent, state.claim, send, refreshClaim, refreshStatus]);
+
+  const newestFinishedAt = finished?.items[0]?.finishedAt ?? null;
+  const [unseenFinished, setUnseenFinished] = useState(false);
+  useEffect(() => {
+    if (newestFinishedAt === null) return;
+    const seen = readLastSeenFinishedAt();
+    setUnseenFinished(seen === null || newestFinishedAt > seen);
+  }, [newestFinishedAt]);
+
+  const showFinished = useCallback(() => {
+    setPane("finished");
+    if (newestFinishedAt !== null) writeLastSeenFinishedAt(newestFinishedAt);
+    setUnseenFinished(false);
+  }, [newestFinishedAt]);
   const paused = props.meta.status.mode === "paused";
   const cta = playCtaState({
     phase: state.phase,
@@ -312,9 +347,6 @@ export function Hub(props: {
       belowBar={<PromoStrip />}
       topRight={
         <>
-          <Link className="chip click" to="/archive">
-            ARCHIVE
-          </Link>
           {stats !== undefined ? (
             <span className="chip" data-testid="stats-chip">
               W {stats.wins} · D {stats.draws} · L {stats.losses}
@@ -350,7 +382,7 @@ export function Hub(props: {
             <div className="hub-actions">
               <button
                 type="button"
-                className="bigplay primary"
+                className={`bigplay primary${live.playPulse > 0 ? " live-pulse" : ""}`}
                 disabled={cta.disabled || stakedQuotaOut}
                 onClick={() => start(false)}
               >
@@ -397,9 +429,12 @@ export function Hub(props: {
                   role="tab"
                   aria-selected={pane === "finished"}
                   className={pane === "finished" ? "tab active" : "tab"}
-                  onClick={() => setPane("finished")}
+                  onClick={showFinished}
                 >
                   FINISHED
+                  {unseenFinished ? (
+                    <span aria-hidden="true"> · NEW</span>
+                  ) : null}
                 </button>
               </div>
               {pane === "active" ? (
@@ -421,7 +456,17 @@ export function Hub(props: {
           </div>
         ) : null}
       </div>
-      {surfaceVisible ? <PlayView flow={flow} meta={props.meta} /> : null}
+      {surfaceVisible ? (
+        <PlayView
+          flow={flow}
+          meta={props.meta}
+          acceptedMove={
+            live.lastEvent?.type === "move_accepted"
+              ? live.lastEvent.payload
+              : null
+          }
+        />
+      ) : null}
     </AppShell>
   );
 }

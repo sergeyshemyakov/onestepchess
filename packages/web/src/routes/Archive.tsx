@@ -15,6 +15,7 @@ import { outcomeFor, outcomeGlyph } from "../games/outcome.js";
 import { QuickView } from "../games/QuickView.jsx";
 import { explorerTxUrl } from "../lib/explorer.js";
 import { formatLocalTime, formatMicroUsdc } from "../lib/format.js";
+import { useLiveOptional } from "../live/LiveContext.jsx";
 
 function Pager(props: {
   readonly page: number;
@@ -53,6 +54,8 @@ export function Archive(props: {
   readonly meta: Meta;
 }) {
   const { client } = props;
+  const live = useLiveOptional();
+  const gamesVersion = live?.gamesVersion ?? 0;
   // The sharer's refCode rides every share URL (F-W12); profile is
   // refetched on demand (§5.1).
   const [refCode, setRefCode] = useState<string | null>(null);
@@ -81,6 +84,7 @@ export function Archive(props: {
     FinishedStakedItem | FinishedDemoItem | null
   >(null);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies(gamesVersion): live events invalidate the current page without changing its query inputs
   useEffect(() => {
     let cancelled = false;
     client
@@ -92,8 +96,9 @@ export function Archive(props: {
     return () => {
       cancelled = true;
     };
-  }, [client, activePage]);
+  }, [client, activePage, gamesVersion]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies(gamesVersion): live events invalidate the current page without changing its query inputs
   useEffect(() => {
     let cancelled = false;
     client
@@ -105,7 +110,7 @@ export function Archive(props: {
     return () => {
       cancelled = true;
     };
-  }, [client, finishedPage]);
+  }, [client, finishedPage, gamesVersion]);
 
   return (
     <AppShell>

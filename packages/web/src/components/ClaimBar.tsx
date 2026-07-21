@@ -15,7 +15,9 @@ export function ClaimBar(props: {
 
   useEffect(() => {
     const tick = setInterval(() => {
-      setLeft(secondsUntil(props.deadline, now()));
+      const next = secondsUntil(props.deadline, now());
+      setLeft(next);
+      if (next <= 0) clearInterval(tick);
     }, 1_000);
     return () => clearInterval(tick);
   }, [props.deadline, now]);

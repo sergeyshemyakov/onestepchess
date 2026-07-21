@@ -24,6 +24,10 @@ backups/
 *.log
 coverage/
 
+# Playwright artifacts
+test-results/
+playwright-report/
+
 # OS / editor
 .DS_Store
 

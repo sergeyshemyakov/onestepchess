@@ -10,7 +10,8 @@ import {
 
 export type ToastAction = {
   readonly label: string;
-  readonly onClick: () => void;
+  readonly onClick?: () => void;
+  readonly href?: string;
 };
 
 type Toast = {
@@ -116,13 +117,24 @@ export function ToastProvider(props: { readonly children: ReactNode }) {
           >
             {toast.text}
             {toast.action !== undefined ? (
-              <button
-                type="button"
-                className="btn mini"
-                onClick={toast.action.onClick}
-              >
-                {toast.action.label}
-              </button>
+              toast.action.href === undefined ? (
+                <button
+                  type="button"
+                  className="btn mini"
+                  onClick={toast.action.onClick}
+                >
+                  {toast.action.label}
+                </button>
+              ) : (
+                <a
+                  className="btn mini"
+                  href={toast.action.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {toast.action.label}
+                </a>
+              )
             ) : null}
           </fieldset>
         ))}

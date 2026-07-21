@@ -211,6 +211,13 @@
 .appbar .spacer {
   flex: 1;
 }
+.appnav {
+  display: flex;
+  gap: 6px;
+}
+.reconnect {
+  color: var(--accent);
+}
 .focus-dim .appbar {
   opacity: 0.25;
   pointer-events: none;
@@ -224,6 +231,15 @@
   border-bottom: 1px solid var(--line);
   background: var(--faint);
   color: var(--ph);
+}
+.live-pulse {
+  animation: play-pulse 0.8s steps(2) 3;
+}
+@keyframes play-pulse {
+  50% {
+    outline: 3px solid var(--ph-hi);
+    outline-offset: 3px;
+  }
 }
 .banner {
   display: block;
@@ -538,6 +554,10 @@ svg.pc {
   }
 }
 @media (prefers-reduced-motion: reduce) {
+  .live-pulse {
+    animation: none;
+    outline: 2px solid var(--ph-hi);
+  }
   .toast {
     animation: none;
   }
@@ -888,9 +908,15 @@ svg.pc {
   .appbar {
     padding: 8px 12px;
     gap: 10px;
+    flex-wrap: wrap;
+  }
+  .appnav {
+    order: 3;
+    width: 100%;
   }
   .claimbar {
     padding: 5px 12px;
+    flex-wrap: wrap;
   }
 }
 

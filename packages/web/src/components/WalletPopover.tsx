@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { type ApiClient, ApiError } from "../api/client.js";
 import type { PlayerView, ProfileView } from "../api/schemas.js";
 import { formatMicroAlgo, formatMicroUsdc } from "../lib/format.js";
 import { readSfx, writeSfx } from "../lib/storage.js";
+import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 
 function copyToClipboard(value: string): void {
   navigator.clipboard?.writeText(value).catch(() => undefined);
@@ -28,6 +29,8 @@ export function WalletPopover(props: {
     readonly suggestion?: string;
   } | null>(null);
   const [sfx, setSfx] = useState(readSfx);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialogFocusTrap(dialogRef, props.onClose);
   const { client } = props;
 
   useEffect(() => {
@@ -70,6 +73,8 @@ export function WalletPopover(props: {
 
   return (
     <div
+      ref={dialogRef}
+      tabIndex={-1}
       className="popover"
       role="dialog"
       aria-label="wallet"

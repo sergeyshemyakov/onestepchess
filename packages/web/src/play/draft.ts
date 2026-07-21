@@ -14,6 +14,7 @@ export function draftFor(
   if (!DRAFT_PHASES.has(state.phase) || state.claim === undefined) return null;
   return {
     claimId: state.claim.claimId,
+    deadline: state.claim.deadline,
     ...(state.chosenMove === undefined
       ? {}
       : { moveUci: state.chosenMove.uci }),
@@ -33,7 +34,8 @@ export function syncDraft(
   const after = draftFor(next, () => "");
   if (
     before?.claimId === after?.claimId &&
-    before?.moveUci === after?.moveUci
+    before?.moveUci === after?.moveUci &&
+    before?.deadline === after?.deadline
   ) {
     return;
   }

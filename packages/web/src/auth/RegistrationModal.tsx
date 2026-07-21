@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type ApiClient, ApiError } from "../api/client.js";
 import type { Meta, VerifyResponse } from "../api/schemas.js";
+import { useDialogFocusTrap } from "../components/useDialogFocusTrap.js";
 import type { PendingRegistration } from "./login.js";
 import { obtainTurnstileToken } from "./turnstile.js";
 
@@ -30,6 +31,8 @@ export function RegistrationModal(props: {
   const [token, setToken] = useState<string | null>(null);
   const [turnstileEpoch, setTurnstileEpoch] = useState(0);
   const widgetRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialogFocusTrap(dialogRef, props.onCancel);
   const { client, meta } = props;
 
   const reroll = useCallback(() => {
@@ -107,6 +110,8 @@ export function RegistrationModal(props: {
   return (
     <div className="modalback">
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         className="modal"
         role="dialog"
         aria-modal="true"

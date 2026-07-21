@@ -7,6 +7,7 @@ export type Theme = "green" | "amber" | "ice";
 export type ClaimDraft = {
   readonly claimId: string;
   readonly moveUci?: string;
+  readonly deadline?: string;
   readonly savedAt: string;
 };
 

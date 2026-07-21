@@ -319,6 +319,23 @@ export function usePlayFlow(args: {
       .catch(() => undefined);
   }, [client, guest]);
 
+  const refreshStatus = useCallback(() => {
+    const claimId = state.claim?.claimId;
+    if (claimId === undefined) return;
+    client
+      .getClaimStatus(claimId, guest ? { anonymous: true } : undefined)
+      .then((status) => {
+        if (status === null || status.status === "expired") {
+          dispatch({ type: "CLAIM_EXPIRED" });
+        } else if (status.status === "moved") {
+          dispatch({ type: "RECEIPT", receipt: status.receipt });
+        } else {
+          dispatch({ type: "CLAIM_REFRESHED", claim: status.claim });
+        }
+      })
+      .catch(() => undefined);
+  }, [client, guest, state.claim?.claimId]);
+
   // Timer expiry is cosmetic — confirm against the server before EXPIRED.
   const checkExpiry = useCallback(() => {
     const claimId = state.claim?.claimId;
@@ -338,7 +355,7 @@ export function usePlayFlow(args: {
 
   const send = useCallback((event: PlayEvent) => dispatch(event), []);
 
-  return { state, send, checkExpiry } as const;
+  return { state, send, checkExpiry, refreshClaim, refreshStatus } as const;
 }
 
 export type PlayFlow = ReturnType<typeof usePlayFlow>;

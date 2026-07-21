@@ -10,6 +10,7 @@ import type {
 } from "../api/schemas.js";
 import { SessionProvider } from "../auth/SessionContext.jsx";
 import { ToastProvider } from "../components/Toasts.jsx";
+import { LiveProvider } from "../live/LiveContext.jsx";
 import { MetaProvider } from "../meta/MetaContext.jsx";
 
 export const metaFixture: Meta = {
@@ -228,7 +229,7 @@ export function Providers(props: {
       <ToastProvider>
         <MetaProvider client={props.client}>
           <SessionProvider client={props.client}>
-            {props.children}
+            <LiveProvider client={props.client}>{props.children}</LiveProvider>
           </SessionProvider>
         </MetaProvider>
       </ToastProvider>

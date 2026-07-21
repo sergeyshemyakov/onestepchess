@@ -12,6 +12,7 @@ import type { Meta } from "../api/schemas.js";
 type MetaState = {
   readonly meta: Meta | null;
   readonly refetch: () => void;
+  readonly updateStatus: (status: Meta["status"]) => void;
 };
 
 const MetaContext = createContext<MetaState | null>(null);
@@ -34,12 +35,16 @@ export function MetaProvider(props: {
       });
   }, [client]);
 
+  const updateStatus = useCallback((status: Meta["status"]) => {
+    setMeta((current) => (current === null ? current : { ...current, status }));
+  }, []);
+
   useEffect(() => {
     refetch();
   }, [refetch]);
 
   return (
-    <MetaContext.Provider value={{ meta, refetch }}>
+    <MetaContext.Provider value={{ meta, refetch, updateStatus }}>
       {props.children}
     </MetaContext.Provider>
   );

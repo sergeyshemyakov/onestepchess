@@ -44,7 +44,9 @@ export function Timer(props: {
     expiredFired.current = false;
     setLeft(secondsUntil(props.deadline, now()));
     const tick = setInterval(() => {
-      setLeft(secondsUntil(props.deadline, now()));
+      const next = secondsUntil(props.deadline, now());
+      setLeft(next);
+      if (next <= 0) clearInterval(tick);
     }, 300);
     return () => clearInterval(tick);
   }, [props.deadline, now]);

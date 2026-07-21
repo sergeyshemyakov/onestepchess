@@ -57,6 +57,10 @@ export function PlayView(props: {
   readonly flow: PlayFlow;
   readonly meta: Meta;
   readonly onWalletIntent?: () => void;
+  readonly acceptedMove?: {
+    readonly claimId: string;
+    readonly txid: string | null;
+  } | null;
 }) {
   const { state, send, checkExpiry } = props.flow;
   const { meta } = props;
@@ -369,6 +373,7 @@ export function PlayView(props: {
           flow={props.flow}
           meta={meta}
           onWalletIntent={props.onWalletIntent}
+          acceptedMove={props.acceptedMove}
         />
       ) : null}
 
@@ -377,6 +382,7 @@ export function PlayView(props: {
           flow={props.flow}
           meta={meta}
           onWalletIntent={props.onWalletIntent}
+          acceptedMove={props.acceptedMove}
         />
       ) : null}
     </div>
@@ -389,6 +395,10 @@ function ConfirmMorph(props: {
   readonly flow: PlayFlow;
   readonly meta: Meta;
   readonly onWalletIntent?: () => void;
+  readonly acceptedMove?: {
+    readonly claimId: string;
+    readonly txid: string | null;
+  } | null;
 }) {
   const { state, send } = props.flow;
   const claim = state.claim;
@@ -494,6 +504,17 @@ function ConfirmMorph(props: {
           ) : (
             <div className="settling">&nbsp;settling… (~4 s)</div>
           )
+        ) : null}
+
+        {props.acceptedMove !== null &&
+        props.acceptedMove !== undefined &&
+        props.acceptedMove.claimId === claim?.claimId ? (
+          <p className="console" data-testid="move-accepted-line">
+            &gt; move accepted
+            {props.acceptedMove.txid === null
+              ? " · demo"
+              : ` · txid ${props.acceptedMove.txid}`}
+          </p>
         ) : null}
 
         {state.phase === "RECEIPT" && state.receipt !== undefined ? (

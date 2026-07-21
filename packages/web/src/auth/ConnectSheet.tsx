@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ApiClient } from "../api/client.js";
 import type { Meta, PlayerView } from "../api/schemas.js";
+import { useDialogFocusTrap } from "../components/useDialogFocusTrap.js";
 import { readRef } from "../lib/storage.js";
 import { loadWalletModule } from "../wallet/lazy.js";
 import type { WalletChoice, WalletModule } from "../wallet/provider.js";
@@ -20,6 +21,8 @@ export function ConnectSheet(props: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<PendingRegistration | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialogFocusTrap(dialogRef, props.onClose);
 
   useEffect(() => {
     let cancelled = false;
@@ -98,6 +101,8 @@ export function ConnectSheet(props: {
   return (
     <div className="modalback">
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         className="modal"
         role="dialog"
         aria-modal="true"

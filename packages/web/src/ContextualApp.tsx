@@ -2,10 +2,12 @@ import { lazy, Suspense, useEffect } from "react";
 import { Navigate, Route, Routes } from "react-router";
 import type { ApiClient } from "./api/client.js";
 import type { PlayerView } from "./api/schemas.js";
+import type { EventSourceFactory } from "./api/sse.js";
 import { SessionProvider, useSession } from "./auth/SessionContext.jsx";
 import { AppShell } from "./components/AppShell.jsx";
 import { ToastProvider, useToasts } from "./components/Toasts.jsx";
 import { clearRef, writeGuestDemo } from "./lib/storage.js";
+import { LiveProvider } from "./live/LiveContext.jsx";
 import { MetaProvider, useMeta } from "./meta/MetaContext.jsx";
 
 const Landing = lazy(() =>
@@ -111,27 +113,35 @@ function ArchiveRoute(props: { readonly client: ApiClient }) {
 export function ContextualApp(props: {
   readonly client: ApiClient;
   readonly authHandlers: AuthHandlers;
+  readonly eventSourceFactory?: EventSourceFactory;
 }) {
   return (
     <ToastProvider>
       <MetaProvider client={props.client}>
         <SessionProvider client={props.client}>
-          <AuthBridge handlers={props.authHandlers} />
-          <Suspense fallback={<BootSkeleton />}>
-            <Routes>
-              <Route path="/" element={<Home client={props.client} />} />
-              <Route
-                path="/start"
-                element={<StartRoute client={props.client} />}
-              />
-              <Route path="/championship" element={<Championship />} />
-              <Route
-                path="/archive"
-                element={<ArchiveRoute client={props.client} />}
-              />
-              <Route path="*" element={<NotFound />} />
-            </Routes>
-          </Suspense>
+          <LiveProvider
+            client={props.client}
+            {...(props.eventSourceFactory === undefined
+              ? {}
+              : { eventSourceFactory: props.eventSourceFactory })}
+          >
+            <AuthBridge handlers={props.authHandlers} />
+            <Suspense fallback={<BootSkeleton />}>
+              <Routes>
+                <Route path="/" element={<Home client={props.client} />} />
+                <Route
+                  path="/start"
+                  element={<StartRoute client={props.client} />}
+                />
+                <Route path="/championship" element={<Championship />} />
+                <Route
+                  path="/archive"
+                  element={<ArchiveRoute client={props.client} />}
+                />
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+            </Suspense>
+          </LiveProvider>
         </SessionProvider>
       </MetaProvider>
     </ToastProvider>

@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect } from "react";
 import { BrowserRouter, Route, Routes, useLocation } from "react-router";
 import type { ApiClient } from "./api/client.js";
+import type { EventSourceFactory } from "./api/sse.js";
 import type { AuthHandlers } from "./ContextualApp.jsx";
 import { AppShell } from "./components/AppShell.jsx";
 import { captureRefFromUrl } from "./lib/refCapture.js";
@@ -40,6 +41,7 @@ function BootSkeleton() {
 export function App(props: {
   readonly client: ApiClient;
   readonly authHandlers: AuthHandlers;
+  readonly eventSourceFactory?: EventSourceFactory;
 }) {
   return (
     <BrowserRouter>
@@ -60,6 +62,9 @@ export function App(props: {
               <ContextualApp
                 client={props.client}
                 authHandlers={props.authHandlers}
+                {...(props.eventSourceFactory === undefined
+                  ? {}
+                  : { eventSourceFactory: props.eventSourceFactory })}
               />
             </Suspense>
           }
