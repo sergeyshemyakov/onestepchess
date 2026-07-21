@@ -1,9 +1,12 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, normalize, resolve } from "node:path";
 import { brotliCompressSync, gzipSync } from "node:zlib";
+import { eq } from "drizzle-orm";
 import type { Hono, MiddlewareHandler } from "hono";
 import type { StatusCode } from "hono/utils/http-status";
 import type { ServerConfig } from "../config.js";
+import type { Db } from "../db/open.js";
+import { schema } from "../db/open.js";
 import type { AppEnv } from "./app.js";
 
 /** Cloudflare Turnstile's fixed script/frame/connect origin (server spec
@@ -16,7 +19,66 @@ export type StaticDeps = {
   readonly staticDir?: string;
   readonly config: () => ServerConfig;
   readonly publicBaseUrl: string;
+  /** Enables the terminal-replay OG unfurl (F16 step 2). */
+  readonly db?: Db;
 };
+
+const OG_PLACEHOLDER = "<!-- osc:og -->";
+const OG_PITCH =
+  "Strangers and machines share a chess game — you play exactly one of its moves.";
+
+function htmlEscape(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+/** Replace the web shell's OG placeholder with escaped unfurl tags for a
+ * terminal replay (F16 step 2). Unknown and non-terminal ids return the shell
+ * untouched, so a pasted link never signals whether a game exists (I7). */
+function injectReplayOg(
+  html: string,
+  deps: StaticDeps,
+  path: string,
+  plyQuery: string | undefined,
+): string {
+  const match = /^\/replay\/([^/]+)$/.exec(path);
+  if (match === null || deps.db === undefined) return html;
+  const game = deps.db
+    .select()
+    .from(schema.games)
+    .where(eq(schema.games.id, match[1] as string))
+    .get();
+  if (
+    game === undefined ||
+    (game.status !== "finished" && game.status !== "aborted") ||
+    game.replayJson === null ||
+    game.result === null ||
+    game.termination === null
+  )
+    return html;
+
+  const plyNum = plyQuery === undefined ? Number.NaN : Number(plyQuery);
+  const ply = Number.isInteger(plyNum) && plyNum >= 1 ? String(plyNum) : null;
+  const cardUrl = `${deps.publicBaseUrl}/api/v1/games/${game.id}/card.png${ply === null ? "" : `?ply=${ply}`}`;
+  const outcome =
+    game.result === "draw"
+      ? "Draw"
+      : game.result === "aborted"
+        ? "Aborted"
+        : `${game.result[0]?.toUpperCase()}${game.result.slice(1)} won`;
+  const description = `${outcome} · ${game.termination}. ${OG_PITCH}`;
+  const tags = [
+    `<meta property="og:title" content="${htmlEscape(game.name)}">`,
+    `<meta property="og:description" content="${htmlEscape(description)}">`,
+    `<meta property="og:image" content="${htmlEscape(cardUrl)}">`,
+    `<meta name="twitter:card" content="summary_large_image">`,
+  ].join("\n    ");
+  return html.replace(OG_PLACEHOLDER, tags);
+}
 
 function contentType(path: string): string {
   if (path.endsWith(".js")) return "text/javascript; charset=utf-8";
@@ -193,7 +255,13 @@ export function registerStaticRoutes(
     }
     const index = join(root, "index.html");
     if (!existsSync(index)) return c.notFound();
-    return c.body(readFileSync(index, "utf8"), 200, {
+    const html = injectReplayOg(
+      readFileSync(index, "utf8"),
+      deps,
+      c.req.path,
+      c.req.query("ply"),
+    );
+    return c.body(html, 200, {
       ...headers,
       "Content-Type": "text/html; charset=utf-8",
       "Cache-Control": "no-cache",

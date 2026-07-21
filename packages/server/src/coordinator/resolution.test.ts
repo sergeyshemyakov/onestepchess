@@ -31,7 +31,10 @@ afterEach(() => {
 });
 
 function setup(
-  options: { resolve?: typeof import("@onestepchess/core").resolve } = {},
+  options: {
+    resolve?: typeof import("@onestepchess/core").resolve;
+    config?: Record<string, unknown>;
+  } = {},
 ) {
   const database = openDatabase({ path: ":memory:" });
   databases.push(database);
@@ -44,10 +47,12 @@ function setup(
     now: () => now,
     views,
   });
+  const config = serverConfigSchema.parse(options.config ?? {});
   registerResolution({
     coordinator,
     db: database.db,
     logger: createLogger({ level: "silent" }),
+    config: () => config,
     ...(options.resolve ? { resolve: options.resolve } : {}),
   });
   // Each setup() is a fresh in-memory DB; the player/claim seed state must
@@ -671,5 +676,125 @@ describe("resolution — game_resolved events (I7/I9, §6.4)", () => {
       payoutMicroUsdc: 0,
     });
     expect(carol.totalPayoutMicroUsdc).toBe(0);
+  });
+});
+
+describe("resolution — points (F15 step 1, I11)", () => {
+  it("awards move+win to staked humans and nothing to agents at resolution", async () => {
+    const stack = setup();
+    seedGame(stack.db, stack.now(), {
+      gameId: "gm_pts",
+      name: "points-game",
+      status: "finished",
+      result: "white",
+      termination: "checkmate",
+      entries: [
+        {
+          entryId: "e1",
+          player: "human_w",
+          side: "white",
+          kind: "human",
+          amountMicroUsdc: 10_000,
+        },
+        {
+          entryId: "e2",
+          player: "agent_b",
+          side: "black",
+          kind: "agent",
+          amountMicroUsdc: 1_000,
+        },
+      ],
+    });
+
+    await dispatchFinish(stack, "gm_pts");
+
+    const pointsOf = (address: string) =>
+      stack.db
+        .select({ points: schema.players.points })
+        .from(schema.players)
+        .where(eq(schema.players.address, address))
+        .get()?.points;
+    // Default knobs: POINTS_MOVE=10, POINTS_WIN=15.
+    expect(pointsOf("human_w")).toBe(25);
+    expect(pointsOf("agent_b")).toBe(0);
+    // The award sum equals the cached counter (I11).
+    const awardSum = stack.db
+      .select()
+      .from(schema.pointAwards)
+      .all()
+      .filter((a) => a.player === "human_w")
+      .reduce((s, a) => s + a.amount, 0);
+    expect(awardSum).toBe(25);
+  });
+
+  it("points_and_referrals_never_enter_resolution_or_payouts", async () => {
+    const seedFixed = (stack: ReturnType<typeof setup>) => {
+      seedGame(stack.db, stack.now(), {
+        gameId: "gm_i11",
+        name: "i11-game",
+        status: "finished",
+        result: "white",
+        termination: "checkmate",
+        entries: [
+          {
+            entryId: "e1",
+            player: "alice",
+            side: "white",
+            kind: "human",
+            amountMicroUsdc: 10_000,
+          },
+          {
+            entryId: "e2",
+            player: "bob",
+            side: "black",
+            kind: "human",
+            amountMicroUsdc: 10_000,
+          },
+        ],
+      });
+    };
+    const payoutShape = (stack: ReturnType<typeof setup>) => ({
+      jobs: stack.db
+        .select()
+        .from(schema.payoutJobs)
+        .all()
+        .map((j) => `${j.recipient}:${j.amount}:${j.reason}`)
+        .sort(),
+      entries: stack.db
+        .select()
+        .from(schema.stakeEntries)
+        .all()
+        .map((e) => `${e.id}:${e.payoutAmount}`)
+        .sort(),
+      take: stack.db
+        .select()
+        .from(schema.ledger)
+        .where(sql`ref_type IN ('fee','dust','surplus')`)
+        .all()
+        .reduce((s, r) => s + r.deltaMicrousdc, 0),
+    });
+
+    const base = setup();
+    seedFixed(base);
+    await dispatchFinish(base, "gm_i11");
+    const baseShape = payoutShape(base);
+
+    // A wildly different incentive configuration — nothing here may move a
+    // single unit of the payout math (I11).
+    const tweaked = setup({
+      config: { POINTS_MOVE: 999, POINTS_WIN: 999, REFERRAL_POINTS: 999 },
+    });
+    seedFixed(tweaked);
+    await dispatchFinish(tweaked, "gm_i11");
+
+    expect(payoutShape(tweaked)).toEqual(baseShape);
+    // The knob change did take effect on points, proving the inputs really
+    // differed — the payout math simply ignores them.
+    const alicePoints = tweaked.db
+      .select({ points: schema.players.points })
+      .from(schema.players)
+      .where(eq(schema.players.address, "alice"))
+      .get()?.points;
+    expect(alicePoints).toBe(1998);
   });
 });

@@ -20,6 +20,7 @@ import { registerResolution } from "../../coordinator/resolution.js";
 import { TimerService } from "../../coordinator/timers.js";
 import { CoordinatorViews } from "../../coordinator/views.js";
 import { type OpenedDatabase, openDatabase, schema } from "../../db/open.js";
+import { resolveReferrer } from "../../incentives/referrals.js";
 import { createLogger } from "../../logger.js";
 import { createApp } from "../app.js";
 import { registerAuthRoutes } from "./auth.js";
@@ -219,7 +220,7 @@ async function makeProof(
 async function verify(
   stack: Stack,
   identity: { seed: Uint8Array; address: string },
-  options: { nickname?: string; guestCookie?: string } = {},
+  options: { nickname?: string; guestCookie?: string; ref?: string } = {},
 ): Promise<Response> {
   const proof = await makeProof(stack, identity);
   return stack.app.request("/api/v1/auth/verify", {
@@ -239,6 +240,7 @@ async function verify(
             nickname: options.nickname,
             turnstileToken: "fixture-token",
           }),
+      ...(options.ref === undefined ? {} : { ref: options.ref }),
       ...proof,
     }),
   });
@@ -727,5 +729,163 @@ describe("guest demo sessions and link-on-login (F13)", () => {
     expect(stack.views.openClaimByPlayer.get(freeWallet.address)).toBe(
       openGuestFree.claim.claimId,
     );
+  });
+});
+
+describe("referral capture (F15 step 3)", () => {
+  it("referral_capture_is_first_touch_immutable_and_guest_link_aware", async () => {
+    const stack = setup();
+    const playerRow = (address: string) =>
+      stack.database.db
+        .select()
+        .from(schema.players)
+        .where(eq(schema.players.address, address))
+        .get();
+
+    // A referrer registers and is minted their own invite slug.
+    const referrer = nobleIdentity();
+    expect(
+      (await verify(stack, referrer, { nickname: "referrer" })).status,
+    ).toBe(200);
+    const refCode = playerRow(referrer.address)?.refCode;
+    if (refCode == null) throw new Error("referrer ref_code not minted");
+    expect(playerRow(referrer.address)?.refJoined).toBe(0);
+
+    // (a) Direct registration with a valid ref: first-touch attribution +
+    // referrer ref_joined bump; the new human also gets their own ref_code.
+    const direct = nobleIdentity();
+    expect(
+      (await verify(stack, direct, { nickname: "direct", ref: refCode }))
+        .status,
+    ).toBe(200);
+    expect(playerRow(direct.address)?.referredBy).toBe(referrer.address);
+    expect(playerRow(direct.address)?.refCode).not.toBeNull();
+    expect(playerRow(referrer.address)?.refJoined).toBe(1);
+
+    // (b) Unknown code is ignored silently.
+    const unknown = nobleIdentity();
+    await verify(stack, unknown, {
+      nickname: "unknownref",
+      ref: "no-such-999",
+    });
+    expect(playerRow(unknown.address)?.referredBy).toBeNull();
+
+    // (c) Self code is ignored (defensive; the resolver drops it).
+    expect(
+      resolveReferrer(stack.database.db, refCode, referrer.address),
+    ).toBeNull();
+
+    // (d) Repeated attempts never overwrite first-touch: the direct human logs
+    // in again carrying a different ref — referred_by stays put.
+    await verify(stack, direct, { ref: refCode });
+    expect(playerRow(direct.address)?.referredBy).toBe(referrer.address);
+    expect(playerRow(referrer.address)?.refJoined).toBe(1);
+
+    // (e) Guest link propagation: a guest created with a ref, then a fresh
+    // registration carrying no ref of its own inherits the guest's referrer.
+    stack.setNow(stack.now() + 60_000);
+    await poolTick(stack);
+    const guestRes = await postClaims(stack, {
+      demo: true,
+      turnstileToken: "tok-ref",
+      ref: refCode,
+    });
+    expect(guestRes.status).toBe(201);
+    const guestCookie = guestCookieOf(guestRes);
+    const guestClaim = (await guestRes.json()) as {
+      claim: { claimId: string };
+    };
+    const guestAddress = stack.database.db
+      .select()
+      .from(schema.claims)
+      .where(eq(schema.claims.id, guestClaim.claim.claimId))
+      .get()?.player;
+    if (guestAddress === undefined) throw new Error("guest missing");
+    expect(playerRow(guestAddress)?.referredBy).toBe(referrer.address);
+
+    const linkedWallet = nobleIdentity();
+    const linkRes = await verify(stack, linkedWallet, {
+      nickname: "inheritor",
+      guestCookie,
+    });
+    expect(linkRes.status).toBe(200);
+    expect(playerRow(linkedWallet.address)?.referredBy).toBe(referrer.address);
+    expect(playerRow(referrer.address)?.refJoined).toBe(2);
+
+    // A direct ref on the registration wins over the guest's inherited one.
+    stack.setNow(stack.now() + 60_000);
+    await poolTick(stack);
+    const other = nobleIdentity();
+    await verify(stack, other, { nickname: "other-ref" });
+    const otherCode = playerRow(other.address)?.refCode;
+    if (otherCode == null) throw new Error("missing other ref_code");
+    const guest2 = await postClaims(stack, {
+      demo: true,
+      turnstileToken: "tok-ref2",
+      ref: refCode,
+    });
+    const guest2Cookie = guestCookieOf(guest2);
+    const overrideWallet = nobleIdentity();
+    await verify(stack, overrideWallet, {
+      nickname: "override",
+      guestCookie: guest2Cookie,
+      ref: otherCode,
+    });
+    expect(playerRow(overrideWallet.address)?.referredBy).toBe(other.address);
+
+    // A supplied but invalid direct code is ignored; it must not silently fall
+    // back to the guest's stored attribution. Guest propagation applies only
+    // when registration carries no direct code at all.
+    stack.setNow(stack.now() + 60_000);
+    await poolTick(stack);
+    const guest3 = await postClaims(stack, {
+      demo: true,
+      turnstileToken: "tok-ref3",
+      ref: refCode,
+    });
+    const invalidOverride = nobleIdentity();
+    await verify(stack, invalidOverride, {
+      nickname: "invalid-override",
+      guestCookie: guestCookieOf(guest3),
+      ref: "no-such-direct-code",
+    });
+    expect(playerRow(invalidOverride.address)?.referredBy).toBeNull();
+    expect(playerRow(referrer.address)?.refJoined).toBe(2);
+
+    // Referral propagation is part of the one successful LinkGuest command.
+    // A second registration racing with the same cookie cannot inherit or bump
+    // the counter after the guest has already been consumed.
+    const raceGuest = "guest_referral_race";
+    stack.database.db
+      .insert(schema.players)
+      .values({
+        address: raceGuest,
+        kind: "guest",
+        nickname: null,
+        createdAt: stack.now(),
+        referredBy: referrer.address,
+      })
+      .run();
+    const raceWallets = ["race_wallet_a", "race_wallet_b"] as const;
+    for (const address of raceWallets) {
+      stack.database.db
+        .insert(schema.players)
+        .values({
+          address,
+          kind: "human",
+          nickname: address,
+          createdAt: stack.now(),
+        })
+        .run();
+    }
+    for (const player of raceWallets) {
+      await stack.coordinator.dispatch({
+        type: "LinkGuest",
+        payload: { guest: raceGuest, player, inheritReferral: true },
+      });
+    }
+    expect(playerRow(raceWallets[0])?.referredBy).toBe(referrer.address);
+    expect(playerRow(raceWallets[1])?.referredBy).toBeNull();
+    expect(playerRow(referrer.address)?.refJoined).toBe(3);
   });
 });

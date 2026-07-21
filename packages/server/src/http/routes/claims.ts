@@ -10,6 +10,7 @@ import type {
 import { legalMove, receiptFor } from "../../coordinator/claims.js";
 import { schema } from "../../db/open.js";
 import { newId } from "../../ids.js";
+import { resolveReferrer } from "../../incentives/referrals.js";
 import { type AppEnv, AppError } from "../app.js";
 import { claimBodySchema, moveBodySchema } from "../contracts.js";
 import { clientIp } from "../middleware/client-ip.js";
@@ -180,7 +181,9 @@ export function registerClaimRoutes(
       });
     const body = await parseBody(claimBodySchema, c.req);
     let session = c.get("session");
-    let createGuest: { turnstileVerifiedAt: number } | undefined;
+    let createGuest:
+      | { turnstileVerifiedAt: number; referredBy: string | null }
+      | undefined;
     if (session === undefined) {
       if (!body.demo)
         throw new AppError("UNAUTHENTICATED", { hint: "missing session" });
@@ -208,7 +211,13 @@ export function registerClaimRoutes(
         jti: "guest",
         exp: 0,
       };
-      createGuest = { turnstileVerifiedAt: deps.now() };
+      // F15 step 3: a ref on the anonymous claim is stored on the guest row so
+      // link-on-login can carry it into a fresh registration. Unknown codes are
+      // ignored silently (resolveReferrer returns null).
+      createGuest = {
+        turnstileVerifiedAt: deps.now(),
+        referredBy: resolveReferrer(deps.db, body.ref, address),
+      };
     }
     if (session.kind === "guest" && !body.demo)
       throw new AppError("INVALID_REQUEST", {
@@ -238,7 +247,10 @@ export function registerClaimRoutes(
         player: string;
         kind: "human" | "agent" | "guest";
         demo: boolean;
-        createGuest?: { turnstileVerifiedAt: number };
+        createGuest?: {
+          turnstileVerifiedAt: number;
+          referredBy: string | null;
+        };
       },
       {
         claim: ClaimRecord | null;

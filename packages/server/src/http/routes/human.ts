@@ -2,13 +2,19 @@ import type { PaymentRail, Rng } from "@onestepchess/core";
 import { and, eq, gt, inArray, ne, sql } from "drizzle-orm";
 import type { Hono } from "hono";
 import type { z } from "zod";
+import { CardCache } from "../../cards/raster.js";
+import { buildCardSvg, type CardOutcome } from "../../cards/svg.js";
 import type { ServerConfig } from "../../config.js";
 import type { Coordinator } from "../../coordinator/queue.js";
 import type { Db } from "../../db/open.js";
 import { schema } from "../../db/open.js";
 import { generateName } from "../../names.js";
 import { type AppEnv, AppError } from "../app.js";
-import { gamesQuerySchema, renameBodySchema } from "../contracts.js";
+import {
+  cardQuerySchema,
+  gamesQuerySchema,
+  renameBodySchema,
+} from "../contracts.js";
 import { type AuthRouteDeps, sessionAuth } from "./auth.js";
 
 const DAY_MS = 86_400_000;
@@ -158,6 +164,7 @@ export function registerHumanRoutes(
   deps: HumanRouteDeps,
 ): void {
   const auth = sessionAuth(deps as unknown as AuthRouteDeps);
+  const cardCache = new CardCache(deps.config().CARD_CACHE_MAX);
 
   app.get("/api/v1/my/profile", auth, async (c) => {
     const address = c.get("session").address;
@@ -197,6 +204,18 @@ export function registerHumanRoutes(
         : deps.config().QUOTA_HUMAN);
     const balances =
       include === "balances" ? await deps.rail.getBalances(address) : undefined;
+    // Points and referral fields are humans-only (F15) — absent for agents.
+    const incentives =
+      player.kind === "human"
+        ? {
+            points: player.points,
+            refCode: player.refCode,
+            referrals: {
+              joined: player.refJoined,
+              qualified: player.refQualified,
+            },
+          }
+        : {};
     return c.json({
       ...playerView(player),
       stats: {
@@ -216,6 +235,7 @@ export function registerHumanRoutes(
         player.deprioritizedUntil === null
           ? null
           : new Date(player.deprioritizedUntil).toISOString(),
+      ...incentives,
     });
   });
 
@@ -449,6 +469,73 @@ export function registerHumanRoutes(
         };
       }),
       pgn: stored.pgn,
+    });
+  });
+
+  app.get("/api/v1/games/:id/card.png", async (c) => {
+    const game = deps.db
+      .select()
+      .from(schema.games)
+      .where(eq(schema.games.id, c.req.param("id")))
+      .get();
+    // I7 parity with the replay route: unknown and non-terminal ids are the
+    // same GAME_NOT_FOUND, so a card never leaks a game's existence (F16).
+    if (
+      game === undefined ||
+      (game.status !== "finished" && game.status !== "aborted") ||
+      game.replayJson === null ||
+      game.result === null
+    )
+      throw new AppError("GAME_NOT_FOUND", { hint: "game not found" });
+    const stored = JSON.parse(game.replayJson) as {
+      plies: Array<{
+        ply: number;
+        side: "white" | "black";
+        move: { uci: string; san: string };
+        fenAfter: string;
+        authorAddress: string;
+        demo: boolean;
+      }>;
+    };
+    if (stored.plies.length === 0)
+      throw new AppError("GAME_NOT_FOUND", { hint: "game not found" });
+    let plyIndex = stored.plies.length;
+    const query = parseQuery(cardQuerySchema, { ply: c.req.query("ply") });
+    if (query.ply !== undefined) {
+      if (query.ply > stored.plies.length)
+        throw new AppError("INVALID_REQUEST", { hint: "ply out of range" });
+      plyIndex = query.ply;
+    }
+    const ply = stored.plies[plyIndex - 1];
+    if (ply === undefined)
+      throw new AppError("INVALID_REQUEST", { hint: "ply out of range" });
+    // Only the public nickname is rendered — the author address never leaves
+    // the server (§6.3 replay scrub).
+    const author = deps.db
+      .select({ nickname: schema.players.nickname })
+      .from(schema.players)
+      .where(eq(schema.players.address, ply.authorAddress))
+      .get();
+    const outcome: CardOutcome =
+      game.result === ply.side
+        ? "WON"
+        : game.result === "draw" || game.result === "aborted"
+          ? "DRAW"
+          : "LOST";
+    const svg = buildCardSvg({
+      gameName: game.name,
+      authorNickname: author?.nickname ?? null,
+      outcome,
+      fen: ply.fenAfter,
+      moveUci: ply.move.uci,
+      side: ply.side,
+    });
+    const png = await cardCache.render(`${game.id}:${plyIndex}`, svg);
+    // Copy into a plain Uint8Array so the body type is exact (Hono rejects the
+    // ArrayBufferLike-backed Node Buffer).
+    return c.body(new Uint8Array(png), 200, {
+      "Content-Type": "image/png",
+      "Cache-Control": "public, max-age=3600",
     });
   });
 }

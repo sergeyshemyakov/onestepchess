@@ -283,12 +283,26 @@ describe("release-2 migration (0001_release2_human_reads)", () => {
     }
     expect(
       after.players?.map((row) => {
-        const { linked_address, linked_at, ...rest } = row as Record<
-          string,
-          unknown
-        >;
+        const {
+          linked_address,
+          linked_at,
+          ref_code,
+          referred_by,
+          referral_awarded_at,
+          ref_joined,
+          ref_qualified,
+          points,
+          ...rest
+        } = row as Record<string, unknown>;
         expect(linked_address).toBeNull();
         expect(linked_at).toBeNull();
+        // Incentive columns (0002) backfill as NULL / 0 on existing rows.
+        expect(ref_code).toBeNull();
+        expect(referred_by).toBeNull();
+        expect(referral_awarded_at).toBeNull();
+        expect(ref_joined).toBe(0);
+        expect(ref_qualified).toBe(0);
+        expect(points).toBe(0);
         return rest;
       }),
     ).toEqual(snapshot.players);

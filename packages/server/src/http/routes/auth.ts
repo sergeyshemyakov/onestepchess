@@ -17,6 +17,11 @@ import type { ServerConfig } from "../../config.js";
 import type { Coordinator } from "../../coordinator/queue.js";
 import type { Db } from "../../db/open.js";
 import { schema } from "../../db/open.js";
+import {
+  bumpRefJoined,
+  freeRefCode,
+  resolveReferrer,
+} from "../../incentives/referrals.js";
 import { generateName } from "../../names.js";
 import { type AppEnv, AppError } from "../app.js";
 import { challengeBodySchema, verifyBodySchema } from "../contracts.js";
@@ -34,6 +39,7 @@ export type AuthRouteDeps = {
   readonly now: () => number;
   readonly rng: Rng;
   readonly coordinator?: Coordinator;
+  readonly publicStats?: { recordPlayerRegistered(): void };
 };
 
 const NICKNAME_PATTERN = /^[a-zA-Z0-9_-]{3,24}$/;
@@ -360,6 +366,11 @@ export function registerAuthRoutes(
       .where(eq(schema.players.address, body.address))
       .get();
 
+    // Captured once: the linking guest drives both ref inheritance (F15 step 3,
+    // below) and the LinkGuest command further down.
+    const guest = guestIdentity(deps, c);
+    let inheritGuestReferral = false;
+
     if (player === undefined) {
       // Registration path (F2 step 3) — `kind` is immutable forever (D11);
       // recoverable failures below leave the nonce live for a re-verify.
@@ -412,6 +423,24 @@ export function registerAuthRoutes(
         turnstileVerifiedAt = now;
       }
       nickname ??= freeNickname(deps.db, deps.rng);
+      // Incentives (F15 step 3): humans get their own invite slug and a
+      // first-touch, immutable referrer. A direct ref wins; failing that a
+      // fresh registration inherits the linking guest's. Unknown/self codes
+      // resolve to null and are ignored silently.
+      let refCode: string | null = null;
+      let referredBy: string | null = null;
+      if (body.kind === "human") {
+        refCode = freeRefCode(deps.db, deps.rng);
+        // A supplied direct code is authoritative even when invalid: bad/self
+        // codes are ignored, while guest inheritance is reserved for a request
+        // carrying no direct code at all (F15 step 3).
+        if (body.ref !== undefined) {
+          referredBy = resolveReferrer(deps.db, body.ref, body.address);
+        } else {
+          inheritGuestReferral = guest !== null;
+        }
+        if (referredBy === body.address) referredBy = null;
+      }
       deps.db
         .insert(schema.players)
         .values({
@@ -420,8 +449,13 @@ export function registerAuthRoutes(
           nickname,
           createdAt: now,
           turnstileVerifiedAt,
+          refCode,
+          referredBy,
         })
         .run();
+      if (referredBy !== null) bumpRefJoined(deps.db, referredBy);
+      // Public stats (F16): registered non-guest wallets (human + agent).
+      deps.publicStats?.recordPlayerRegistered();
       player = deps.db
         .select()
         .from(schema.players)
@@ -433,14 +467,17 @@ export function registerAuthRoutes(
     }
 
     let linkedGuestClaims: number | undefined;
-    const guest = guestIdentity(deps, c);
     if (guest !== null && deps.coordinator !== undefined) {
       const linked = await deps.coordinator.dispatch<
-        { guest: string; player: string },
+        { guest: string; player: string; inheritReferral?: boolean },
         { linked: boolean; claims: number }
       >({
         type: "LinkGuest",
-        payload: { guest, player: player.address },
+        payload: {
+          guest,
+          player: player.address,
+          inheritReferral: inheritGuestReferral,
+        },
         refIds: [guest, player.address],
       });
       if (linked.kind === "ok" && linked.result.linked) {

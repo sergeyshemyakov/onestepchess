@@ -10,9 +10,8 @@ import {
 
 // Conventions (server spec §4): epoch-ms integers, integer µUSDC, lowercase
 // enums, prefixed nanoids; events/ledger use autoincrement integers because
-// SSE resume and audit need a total order. Incentive and guest-link columns
-// (bonuses, funding_jobs, point_awards, players.ref_*, players.linked_*)
-// arrive with their Release-2/4 migrations, not here.
+// SSE resume and audit need a total order. The bonus surfaces (bonuses,
+// funding_jobs) arrive with their Release-4 migration, not here.
 
 export const players = sqliteTable(
   "players",
@@ -29,6 +28,17 @@ export const players = sqliteTable(
     losses: integer("losses").notNull().default(0),
     quotaOverride: integer("quota_override"),
     banned: integer("banned", { mode: "boolean" }).notNull().default(false),
+    // Incentives (F15): ref_code is the human's invite slug; referred_by is the
+    // referrer's address, first-touch immutable, and carried on guest rows too;
+    // referral_awarded_at marks when THIS player's qualifying move credited the
+    // referrer; ref_joined/ref_qualified are referrer-side O(1) counters; points
+    // is a humans-only cache of SUM(point_awards.amount), never money (I11).
+    refCode: text("ref_code"),
+    referredBy: text("referred_by"),
+    referralAwardedAt: integer("referral_awarded_at"),
+    refJoined: integer("ref_joined").notNull().default(0),
+    refQualified: integer("ref_qualified").notNull().default(0),
+    points: integer("points").notNull().default(0),
     linkedAddress: text("linked_address"),
     linkedAt: integer("linked_at"),
   },
@@ -36,6 +46,7 @@ export const players = sqliteTable(
     uniqueIndex("players_nickname_nocase").on(
       sql`${table.nickname} COLLATE NOCASE`,
     ),
+    uniqueIndex("players_ref_code").on(table.refCode),
   ],
 );
 
@@ -261,6 +272,30 @@ export const nicknameChanges = sqliteTable("nickname_changes", {
     .references(() => players.address),
   changedAt: integer("changed_at").notNull(),
 });
+
+export const pointAwards = sqliteTable(
+  "point_awards",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    player: text("player")
+      .notNull()
+      .references(() => players.address),
+    amount: integer("amount").notNull(),
+    reason: text("reason", { enum: ["move", "win", "referral"] }).notNull(),
+    // Claim id for move/win (distinct per claim); referred player's address for
+    // referral (F15). The UNIQUE key makes every award idempotent, so replayed
+    // resolutions and backfills never double-count (players.points is a cache).
+    refId: text("ref_id").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("point_awards_player_reason_ref").on(
+      table.player,
+      table.reason,
+      table.refId,
+    ),
+  ],
+);
 
 export const configOverrides = sqliteTable("config_overrides", {
   key: text("key").primaryKey(),

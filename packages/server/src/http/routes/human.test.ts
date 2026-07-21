@@ -1,7 +1,10 @@
 import { STARTING_FEN } from "@onestepchess/core";
 import { eq } from "drizzle-orm";
+import sharp from "sharp";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { signSession } from "../../auth/jwt.js";
+import { CardCache } from "../../cards/raster.js";
+import { buildCardSvg } from "../../cards/svg.js";
 import { serverConfigSchema } from "../../config.js";
 import { Coordinator } from "../../coordinator/queue.js";
 import { registerResolution } from "../../coordinator/resolution.js";
@@ -228,6 +231,59 @@ function staked(
 }
 
 describe("profile, game history, and public replay reads (§6.3)", () => {
+  it("profile_carries_points_and_referrals_for_humans_only", async () => {
+    const stack = setup();
+    stack.db
+      .insert(schema.players)
+      .values({
+        address: "alice",
+        kind: "human",
+        nickname: "alice",
+        createdAt: 0,
+        points: 120,
+        refCode: "gentle-rook-042",
+        refJoined: 2,
+        refQualified: 1,
+      })
+      .run();
+    stack.db
+      .insert(schema.players)
+      .values({
+        address: "botzilla",
+        kind: "agent",
+        nickname: "botzilla",
+        createdAt: 0,
+        points: 999,
+      })
+      .run();
+
+    const human = (await (
+      await stack.app.request("/api/v1/my/profile", {
+        headers: bearer(stack, "alice"),
+      })
+    ).json()) as Record<string, unknown>;
+    expect(human.points).toBe(120);
+    expect(human.refCode).toBe("gentle-rook-042");
+    expect(human.referrals).toEqual({ joined: 2, qualified: 1 });
+
+    const agentBearer = {
+      authorization: `Bearer ${signSession(JWT_SECRET, {
+        sub: "botzilla",
+        kind: "agent",
+        jti: "jti-bot",
+        iat: Math.floor(stack.now() / 1_000),
+        exp: Math.floor(stack.now() / 1_000) + 3_600,
+      })}`,
+    };
+    const agent = (await (
+      await stack.app.request("/api/v1/my/profile", { headers: agentBearer })
+    ).json()) as Record<string, unknown>;
+    // Points/referral fields are humans-only (F14/F15) — absent for agents.
+    expect(agent).not.toHaveProperty("points");
+    expect(agent).not.toHaveProperty("refCode");
+    expect(agent).not.toHaveProperty("referrals");
+  });
+
   it("profile_boot_probe_never_reads_chain_balances", async () => {
     const stack = setup();
     seedPlayer(stack.db, "alice", "alice");
@@ -806,5 +862,101 @@ describe("profile, game history, and public replay reads (§6.3)", () => {
       await stack.app.request("/api/v1/games/gm_replay/replay")
     ).json()) as { plies: { author: { nickname: string } }[] };
     expect(renamed.plies[0]?.author.nickname).toBe("renamed-alice");
+  });
+
+  it("share_card_uses_only_escaped_public_replay_data", async () => {
+    const stack = setup();
+    seedPlayer(stack.db, "CARDALICEADDRESS", "alice-nick");
+    seedPlayer(stack.db, "CARDBOBADDRESS", "bob-nick");
+    seedGame(stack.db, {
+      id: "gm_live_card",
+      name: "live-card",
+      status: "active",
+      moves: [staked("CARDALICEADDRESS", "white", 1)],
+    });
+    seedGame(stack.db, {
+      id: "gm_card",
+      name: "card-game",
+      status: "finished",
+      result: "white",
+      termination: "checkmate",
+      history: ["e2e4", "e7e5"],
+      finishedAt: 5_000,
+      moves: [
+        staked("CARDALICEADDRESS", "white", 1),
+        {
+          player: "CARDBOBADDRESS",
+          side: "black",
+          demo: true,
+          stake: 0,
+          ply: 2,
+          uci: "e7e5",
+          san: "e5",
+          fenAfter: FEN_AFTER_E5,
+        },
+      ],
+    });
+    await finish(stack, "gm_card");
+
+    // The default (final-position) card is a 1200×630 PNG with the right headers.
+    const res = await stack.app.request("/api/v1/games/gm_card/card.png");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/png");
+    expect(res.headers.get("cache-control")).toBe("public, max-age=3600");
+    const png = Buffer.from(await res.arrayBuffer());
+    const meta = await sharp(png).metadata();
+    expect([meta.width, meta.height]).toEqual([1200, 630]);
+
+    // ?ply selects a position; malformed or out-of-range is a 400.
+    expect(
+      (await stack.app.request("/api/v1/games/gm_card/card.png?ply=1")).status,
+    ).toBe(200);
+    for (const bad of ["999", "0", "abc", "1.5"]) {
+      expect(
+        (await stack.app.request(`/api/v1/games/gm_card/card.png?ply=${bad}`))
+          .status,
+      ).toBe(400);
+    }
+
+    // Unknown and non-terminal ids are the same 404 (I7 parity with replay).
+    for (const id of ["gm_missing", "gm_live_card"]) {
+      const miss = await stack.app.request(`/api/v1/games/${id}/card.png`);
+      expect(miss.status).toBe(404);
+      expect(((await miss.json()) as { error: string }).error).toBe(
+        "GAME_NOT_FOUND",
+      );
+    }
+
+    // Every dynamic value is XML-escaped and no address ever reaches the SVG.
+    const svg = buildCardSvg({
+      gameName: `<script>"drop"&'go'`,
+      authorNickname: "<b>nick</b>",
+      outcome: "WON",
+      fen: FEN_AFTER_E5,
+      moveUci: "e7e5",
+      side: "black",
+    });
+    expect(svg).not.toContain("<script>");
+    expect(svg).toContain("&lt;script&gt;");
+    expect(svg).not.toContain("<b>nick</b>");
+    expect(svg).not.toContain("CARDALICEADDRESS");
+    expect(svg).not.toContain("CARDBOBADDRESS");
+
+    // The LRU is bounded by its configured maximum.
+    const cache = new CardCache(2);
+    for (const key of ["a", "b", "c"]) {
+      await cache.render(
+        key,
+        buildCardSvg({
+          gameName: key,
+          authorNickname: null,
+          outcome: "DRAW",
+          fen: STARTING_FEN,
+          moveUci: "e2e4",
+          side: "white",
+        }),
+      );
+    }
+    expect(cache.size).toBeLessThanOrEqual(2);
   });
 });

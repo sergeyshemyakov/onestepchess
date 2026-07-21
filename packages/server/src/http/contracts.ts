@@ -56,6 +56,12 @@ export const gamesQuerySchema = z
   })
   .strict();
 
+export const cardQuerySchema = z
+  .object({
+    ply: z.coerce.number().int().positive().optional(),
+  })
+  .strict();
+
 const errorEnvelope = z
   .object({
     error: z.string(),
@@ -155,6 +161,15 @@ const profile = playerView.extend({
     .optional(),
   quotas: z.object({ staked: quota, demo: quota }),
   deprioritizedUntil: isoTimestamp.nullable(),
+  // Humans-only incentive fields (F15) — absent for agents.
+  points: z.number().int().nonnegative().optional(),
+  refCode: z.string().nullable().optional(),
+  referrals: z
+    .object({
+      joined: z.number().int().nonnegative(),
+      qualified: z.number().int().nonnegative(),
+    })
+    .optional(),
 });
 
 const gameCardCommon = z.object({
@@ -286,6 +301,15 @@ const metaResponse = z.object({
     banner: z.string().nullable(),
   }),
   turnstileSiteKey: z.string(),
+  // Present only when PUBLIC_STATS_ENABLED (F16 step 4).
+  stats: z
+    .object({
+      humanMoves: z.number().int().nonnegative(),
+      playersRegistered: z.number().int().nonnegative(),
+      gamesFinished: z.number().int().nonnegative(),
+      movesSettled: z.number().int().nonnegative(),
+    })
+    .optional(),
   rules: z.string(),
   docs: z.object({
     llms: z.url(),
@@ -434,6 +458,23 @@ export const publicApiRoutes = [
     },
   }),
   createRoute({
+    method: "get",
+    path: "/api/v1/games/{id}/card.png",
+    tags: ["human"],
+    summary: "Share-card image for a terminal game",
+    request: { params: idParam, query: cardQuerySchema },
+    responses: {
+      200: {
+        description: "1200 by 630 PNG share card",
+        content: {
+          "image/png": { schema: z.string().meta({ format: "binary" }) },
+        },
+      },
+      400: json("Invalid or out-of-range ply", errorEnvelope),
+      404: json("Game not found or not terminal", errorEnvelope),
+    },
+  }),
+  createRoute({
     method: "post",
     path: "/api/v1/claims",
     tags: ["claims"],
@@ -522,6 +563,7 @@ export const publicApiSchemas = {
   moveBody: moveBodySchema,
   renameBody: renameBodySchema,
   gamesQuery: gamesQuerySchema,
+  cardQuery: cardQuerySchema,
   challengeResponse,
   verifyResponse,
   claimResponse,

@@ -4,14 +4,17 @@ import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { afterEach, describe, expect, it } from "vitest";
 import { serverConfigSchema } from "../config.js";
+import { type OpenedDatabase, openDatabase } from "../db/open.js";
 import { createLogger } from "../logger.js";
 import { createApp } from "./app.js";
 import { jsonCompression, registerStaticRoutes } from "./static.js";
 
 const dirs: string[] = [];
+const opened: OpenedDatabase[] = [];
 afterEach(() => {
   for (const dir of dirs.splice(0))
     rmSync(dir, { recursive: true, force: true });
+  for (const database of opened.splice(0)) database.sqlite.close();
 });
 
 function makeStaticDir(): string {
@@ -165,5 +168,65 @@ describe("static and discovery serving (§6.6)", () => {
     const http = buildApp({}, "http://localhost:3000");
     const dev = await http.request("/play");
     expect(dev.headers.get("strict-transport-security")).toBeNull();
+  });
+
+  it("replay_og_unfurl_preserves_nonterminal_existence_blindness", async () => {
+    const shell =
+      '<!doctype html><html><head><meta name="description" content="pitch"><!-- osc:og --><title>One Step Chess</title></head><body></body></html>';
+    const dir = mkdtempSync(join(tmpdir(), "osc-og-"));
+    dirs.push(dir);
+    writeFileSync(join(dir, "index.html"), shell);
+    const database = openDatabase({ path: ":memory:" });
+    opened.push(database);
+    database.sqlite.exec(`
+      INSERT INTO games(id,name,status,fen,rules_json,ply,last_ply_at,created_at,result,termination,replay_json,finished_at) VALUES
+        ('gm_term','Knightmare & <fun>','finished','fen','{}',2,0,0,'white','checkmate','{"plies":[],"pgn":""}',5),
+        ('gm_active','live-game','active','fen','{}',0,0,0,NULL,NULL,NULL,NULL);
+    `);
+    const publicBaseUrl = "https://osc.example";
+    const app = createApp({
+      logger: createLogger({ level: "silent" }),
+      publicBaseUrl,
+      mode: () => "running",
+    });
+    registerStaticRoutes(app, {
+      staticDir: dir,
+      config: () => serverConfigSchema.parse({}),
+      publicBaseUrl,
+      db: database.db,
+    });
+
+    // A normal SPA route serves the untouched shell (placeholder intact).
+    const rawShell = await (await app.request("/play")).text();
+    expect(rawShell).toBe(shell);
+
+    // A terminal replay injects escaped OG/Twitter tags.
+    const term = await (await app.request("/replay/gm_term")).text();
+    expect(term).not.toBe(shell);
+    expect(term).not.toContain("<!-- osc:og -->");
+    expect(term).toContain(
+      '<meta property="og:title" content="Knightmare &amp; &lt;fun&gt;">',
+    );
+    expect(term).toContain(
+      `<meta property="og:image" content="${publicBaseUrl}/api/v1/games/gm_term/card.png">`,
+    );
+    expect(term).toContain(
+      '<meta name="twitter:card" content="summary_large_image">',
+    );
+    // The raw name never appears unescaped.
+    expect(term).not.toContain("Knightmare & <fun>");
+
+    // ?ply forwards into the card image URL.
+    const termPly = await (await app.request("/replay/gm_term?ply=2")).text();
+    expect(termPly).toContain(
+      `${publicBaseUrl}/api/v1/games/gm_term/card.png?ply=2`,
+    );
+
+    // Unknown and non-terminal ids serve the byte-identical untouched shell —
+    // no existence signal (I7).
+    for (const id of ["gm_missing", "gm_active"]) {
+      const res = await (await app.request(`/replay/${id}`)).text();
+      expect(res).toBe(rawShell);
+    }
   });
 });
