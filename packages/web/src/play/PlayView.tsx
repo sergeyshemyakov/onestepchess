@@ -508,8 +508,7 @@ function ConfirmMorph(props: {
 
         {props.acceptedMove !== null &&
         props.acceptedMove !== undefined &&
-        claim !== null &&
-        props.acceptedMove.claimId === claim.claimId ? (
+        props.acceptedMove.claimId === claim?.claimId ? (
           <p className="console" data-testid="move-accepted-line">
             &gt; move accepted
             {props.acceptedMove.txid === null

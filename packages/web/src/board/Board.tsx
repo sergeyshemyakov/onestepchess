@@ -154,7 +154,7 @@ function playFx(layer: HTMLDivElement, fx: BoardFx): () => void {
   const glyph = board?.querySelector<SVGElement>(
     `[data-square="${fx.to}"] svg.pc`,
   );
-  if (glyph === null || glyph === undefined) return;
+  if (glyph === null || glyph === undefined) return () => undefined;
   const fromIndex = squareIndex(fx.from);
   const toIndex = squareIndex(fx.to);
   const at = (index: number): { readonly x: number; readonly y: number } => ({
