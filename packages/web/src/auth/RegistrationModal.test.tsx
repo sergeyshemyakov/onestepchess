@@ -9,6 +9,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../api/client.js";
 import type { VerifyResponse } from "../api/schemas.js";
 import { metaFixture, mockClient, playerFixture } from "../test/fixtures.jsx";
+import type { ConnectedWallet } from "../wallet/provider.js";
+import { loginWithWallet } from "./login.js";
 import { RegistrationModal } from "./RegistrationModal.jsx";
 import {
   resetTurnstileForTests,
@@ -18,6 +20,7 @@ import {
 afterEach(() => {
   cleanup();
   resetTurnstileForTests();
+  window.turnstile = undefined;
 });
 
 function apiError(
@@ -136,9 +139,7 @@ describe("registration modal error-rendering matrix (F-W2)", () => {
     const resubmit = vi.fn(async () => response);
     const { onRegistered } = renderModal(resubmit);
     await submitOnce();
-    await waitFor(() =>
-      expect(onRegistered).toHaveBeenCalledWith(playerFixture),
-    );
+    await waitFor(() => expect(onRegistered).toHaveBeenCalledWith(response));
     expect(resubmit).toHaveBeenCalledWith({
       nickname: "gentle-rook-042",
       turnstileToken: expect.any(String),
@@ -156,4 +157,83 @@ describe("turnstile stays lazy (§4.8)", () => {
       document.querySelector('script[src*="challenges.cloudflare.com"]'),
     ).toBeNull();
   });
+});
+
+it("registration_loads_turnstile_only_when_required", async () => {
+  const challenge = {
+    nonce: "nonce-registration",
+    expiresAt: "2026-07-21T15:00:00Z",
+    arc60Payload: {
+      data: "e30=",
+      metadata: { scope: 1, encoding: "base64" },
+    },
+    fallbackTxnB64: "unused",
+  };
+  const signed = {
+    signatureB64: "c2ln",
+    authenticatorDataB64: "YXV0aA==",
+  };
+  const wallet: ConnectedWallet = {
+    address: playerFixture.address,
+    walletName: "Lute",
+    signTransactions: vi.fn(),
+    signData: vi.fn(async () => signed),
+  };
+  const registeredClient = mockClient({
+    authChallenge: vi.fn(async () => challenge),
+    authVerify: vi.fn(async () => ({ player: playerFixture, jwt: "jwt" })),
+  });
+  const registered = await loginWithWallet({
+    client: registeredClient,
+    meta: metaFixture,
+    wallet,
+  });
+  expect(registered.kind).toBe("signed-in");
+  expect(turnstileScriptRequested()).toBe(false);
+
+  const authVerify = vi
+    .fn()
+    .mockRejectedValueOnce(apiError(409, "REGISTRATION_REQUIRED"))
+    .mockRejectedValueOnce(
+      apiError(409, "NICKNAME_TAKEN", { suggestion: "live-proof-rook" }),
+    )
+    .mockResolvedValueOnce({ player: playerFixture, jwt: "jwt" });
+  const registeringClient = mockClient({
+    authChallenge: vi.fn(async () => challenge),
+    authVerify,
+  });
+  const registering = await loginWithWallet({
+    client: registeringClient,
+    meta: metaFixture,
+    wallet,
+  });
+  if (registering.kind !== "registration-required") {
+    throw new Error("expected registration to be required");
+  }
+  window.turnstile = {
+    render: (_container, options) => {
+      options.callback("turnstile-live-token");
+      return "widget-1";
+    },
+    reset: () => undefined,
+  };
+  const onRegistered = vi.fn();
+  render(
+    <RegistrationModal
+      client={registeringClient}
+      meta={{ ...metaFixture, turnstileSiteKey: "site-key" }}
+      pending={registering.pending}
+      onRegistered={onRegistered}
+      onCancel={vi.fn()}
+    />,
+  );
+  await submitOnce();
+  await screen.findByRole("alert");
+  fireEvent.click(screen.getByRole("button", { name: /use live-proof-rook/ }));
+  await submitOnce();
+  await waitFor(() => expect(onRegistered).toHaveBeenCalledTimes(1));
+  expect(turnstileScriptRequested()).toBe(true);
+  expect(wallet.signData).toHaveBeenCalledTimes(2);
+  expect(registeringClient.authChallenge).toHaveBeenCalledTimes(1);
+  expect(authVerify).toHaveBeenCalledTimes(3);
 });

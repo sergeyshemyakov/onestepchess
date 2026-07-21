@@ -57,7 +57,7 @@ export function guardFallbackTxn(
   if (input.caip2 !== "mock:local") {
     const reference = input.caip2.split(":")[1] ?? "";
     const genesisB64 = bytesToB64(txn.genesisHash ?? new Uint8Array());
-    if (reference.length === 0 || !genesisB64.startsWith(reference)) {
+    if (reference.length === 0 || genesisB64 !== reference) {
       return fail("genesis");
     }
   }

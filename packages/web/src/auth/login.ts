@@ -35,6 +35,7 @@ export async function loginWithWallet(deps: {
   readonly client: ApiClient;
   readonly meta: Meta;
   readonly wallet: ConnectedWallet;
+  readonly ref?: string;
 }): Promise<LoginOutcome> {
   const { client, meta, wallet } = deps;
   const challenge = await client.authChallenge(wallet.address);
@@ -83,12 +84,17 @@ export async function loginWithWallet(deps: {
     proofBody = { method: "txn", signedTxnB64: bytesToB64(signedBytes) };
   }
 
-  return submitVerify(client, { address: wallet.address, ...proofBody });
+  return submitVerify(
+    client,
+    { address: wallet.address, ...proofBody },
+    deps.ref,
+  );
 }
 
 async function submitVerify(
   client: ApiClient,
   body: Record<string, unknown>,
+  ref?: string,
 ): Promise<LoginOutcome> {
   try {
     const response = await client.authVerify(body);
@@ -106,7 +112,12 @@ async function submitVerify(
         pending: {
           address: body.address as string,
           resubmit: (fields) =>
-            client.authVerify({ ...body, kind: "human", ...fields }),
+            client.authVerify({
+              ...body,
+              kind: "human",
+              ...fields,
+              ...(ref === undefined ? {} : { ref }),
+            }),
         },
       };
     }

@@ -1,10 +1,14 @@
-// The lazy wallet subtree (§5.6): use-wallet + wallet SDKs + algosdk enter
-// the bundle only through this chunk, dynamically imported on first wallet
-// intent. Release 1 develops against use-wallet's Mnemonic provider
-// (release plan §9 decision 1). Branded wallets are deliberately absent from
-// this Release-1 list until their Release-2 certification is complete.
+// The wallet subtree stays behind the first wallet intent so anonymous demo
+// visitors do not download wallet SDKs. Mnemonic remains development-only;
+// production offers the certified branded providers.
 
-import { NetworkId, WalletId, WalletManager } from "@txnlab/use-wallet-react";
+import {
+  NetworkId,
+  ScopeType,
+  type SupportedWallet,
+  WalletId,
+  WalletManager,
+} from "@txnlab/use-wallet-react";
 import algosdk from "algosdk";
 
 const MNEMONIC_STORAGE_KEY = "@txnlab/use-wallet:v4_mnemonic";
@@ -85,24 +89,64 @@ export type WalletModule = {
   readonly disconnect: () => Promise<void>;
 };
 
-export function createWalletModule(): WalletModule {
+export type WalletModuleOptions = {
+  readonly walletConnectProjectId?: string;
+  readonly includeMnemonic?: boolean;
+};
+
+export function createWalletModule(
+  options: WalletModuleOptions = {},
+): WalletModule {
   // use-wallet persists the prompt result before deriving the account. Clean
   // up invalid values left by earlier builds so the prompt can open again.
   removeInvalidPersistedMnemonic();
-  const manager = new WalletManager({
-    wallets: [
-      {
-        id: WalletId.MNEMONIC,
-        options: {
-          persistToStorage: true,
-          promptForMnemonic: promptForValidMnemonic,
-        },
+  const walletConnectProjectId =
+    options.walletConnectProjectId ??
+    import.meta.env.VITE_WALLETCONNECT_PROJECT_ID;
+  const includeMnemonic = options.includeMnemonic ?? import.meta.env.DEV;
+  const wallets: SupportedWallet[] = [
+    WalletId.PERA,
+    WalletId.DEFLY,
+    { id: WalletId.LUTE, options: { siteName: "One Step Chess" } },
+  ];
+  if (
+    walletConnectProjectId !== undefined &&
+    walletConnectProjectId.trim() !== ""
+  ) {
+    wallets.push({
+      id: WalletId.WALLETCONNECT,
+      options: {
+        projectId: walletConnectProjectId,
+        enableExplorer: true,
+        explorerRecommendedWalletIds: [],
+        privacyPolicyUrl: window.location.origin,
+        termsOfServiceUrl: window.location.origin,
+        themeMode: "dark",
+        themeVariables: {},
       },
-    ],
-    defaultNetwork: NetworkId.LOCALNET,
+    });
+  }
+  if (includeMnemonic) {
+    wallets.push({
+      id: WalletId.MNEMONIC,
+      options: {
+        persistToStorage: true,
+        promptForMnemonic: promptForValidMnemonic,
+      },
+    });
+  }
+  const manager = new WalletManager({
+    wallets: wallets as [SupportedWallet, ...SupportedWallet[]],
+    // The fallback auth artifact uses the mainnet genesis profile even in
+    // mock deployments so real wallet apps can render it consistently.
+    defaultNetwork: includeMnemonic ? NetworkId.LOCALNET : NetworkId.MAINNET,
   });
 
   const names: Record<string, string> = {
+    [WalletId.PERA]: "Pera",
+    [WalletId.DEFLY]: "Defly",
+    [WalletId.LUTE]: "Lute",
+    [WalletId.WALLETCONNECT]: "WalletConnect",
     [WalletId.MNEMONIC]: "dev wallet (mnemonic)",
   };
 
@@ -119,6 +163,24 @@ export function createWalletModule(): WalletModule {
       const accounts = await wallet.connect();
       const address = wallet.activeAccount?.address ?? accounts[0]?.address;
       if (address === undefined) throw new Error("wallet connected no account");
+      const signData = wallet.canSignData
+        ? async (
+            dataB64: string,
+            metadata: { readonly scope: number; readonly encoding: string },
+          ) => {
+            if (metadata.scope !== ScopeType.AUTH) {
+              throw new Error("wallet auth metadata has an unsupported scope");
+            }
+            const signed = await wallet.signData(dataB64, {
+              scope: ScopeType.AUTH,
+              encoding: metadata.encoding,
+            });
+            return {
+              signatureB64: bytesToBase64(signed.signature),
+              authenticatorDataB64: bytesToBase64(signed.authenticatorData),
+            };
+          }
+        : undefined;
       return {
         address,
         walletName: names[wallet.id] ?? wallet.metadata.name,
@@ -130,6 +192,7 @@ export function createWalletModule(): WalletModule {
           }
           return bytes;
         },
+        ...(signData === undefined ? {} : { signData }),
       };
     },
 
@@ -138,4 +201,10 @@ export function createWalletModule(): WalletModule {
       if (active !== null) await active.disconnect();
     },
   };
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
 }

@@ -10,6 +10,8 @@ import type {
 
 export type PlayPhase =
   | "IDLE"
+  | "GUEST_GATE"
+  | "GUEST_USED"
   | "CLAIMING"
   | "FOCUS"
   | "CONFIRM"
@@ -24,6 +26,10 @@ export type PlayPhase =
 export type PlayState = {
   readonly phase: PlayPhase;
   readonly demo: boolean;
+  /** Guest mode shares the play reducer but can never enter signing/x402. */
+  readonly guest?: boolean;
+  readonly turnstileToken?: string;
+  readonly ref?: string;
   readonly claim?: ClaimView;
   /** FOCUS sub-state is plain context, not extra FSM states (§5.5). */
   readonly selected?: string | null;
@@ -41,7 +47,14 @@ export type PlayState = {
 export const initialPlayState: PlayState = { phase: "IDLE", demo: false };
 
 export type PlayEvent =
-  | { readonly type: "PLAY"; readonly demo: boolean }
+  | { readonly type: "PLAY"; readonly demo: boolean; readonly guest?: boolean }
+  | {
+      readonly type: "GUEST_VERIFIED";
+      readonly turnstileToken: string;
+      readonly ref?: string;
+    }
+  | { readonly type: "GUEST_GATE_FAILED"; readonly envelope: ErrorEnvelope }
+  | { readonly type: "GUEST_DEMO_USED" }
   | { readonly type: "CLAIM_READY"; readonly claim: ClaimView }
   | { readonly type: "NO_BOARDS"; readonly retryAfterSeconds: number }
   | { readonly type: "QUOTA_OUT"; readonly retryAfterSeconds: number }
@@ -74,14 +87,38 @@ export function playReducer(state: PlayState, event: PlayEvent): PlayState {
     case "NO_BOARDS":
     case "QUOTA_OUT":
       if (event.type === "PLAY") {
-        return { phase: "CLAIMING", demo: event.demo };
+        return event.guest === true
+          ? { phase: "GUEST_GATE", demo: true, guest: true }
+          : { phase: "CLAIMING", demo: event.demo };
       }
       if (state.phase === "NO_BOARDS" && event.type === "RETRY") {
-        return { phase: "CLAIMING", demo: state.demo };
+        return state.guest === true
+          ? { phase: "GUEST_GATE", demo: true, guest: true }
+          : { phase: "CLAIMING", demo: state.demo };
       }
       if (state.phase !== "IDLE" && event.type === "ACK") {
         return initialPlayState;
       }
+      return state;
+
+    case "GUEST_GATE":
+      if (event.type === "GUEST_VERIFIED") {
+        return {
+          phase: "CLAIMING",
+          demo: true,
+          guest: true,
+          turnstileToken: event.turnstileToken,
+          ...(event.ref === undefined ? {} : { ref: event.ref }),
+        };
+      }
+      if (event.type === "GUEST_GATE_FAILED") {
+        return { ...state, error: event.envelope };
+      }
+      if (event.type === "ACK") return initialPlayState;
+      return state;
+
+    case "GUEST_USED":
+      if (event.type === "ACK") return initialPlayState;
       return state;
 
     case "PAUSED":
@@ -95,23 +132,39 @@ export function playReducer(state: PlayState, event: PlayEvent): PlayState {
           return {
             phase: "FOCUS",
             demo: event.claim.demo,
+            ...(state.guest === true ? { guest: true } : {}),
             claim: event.claim,
             selected: null,
           };
+        case "GUEST_GATE_FAILED":
+          return {
+            phase: "GUEST_GATE",
+            demo: true,
+            guest: true,
+            error: event.envelope,
+          };
+        case "GUEST_DEMO_USED":
+          return { phase: "GUEST_USED", demo: true, guest: true };
         case "NO_BOARDS":
           return {
             phase: "NO_BOARDS",
             demo: state.demo,
+            ...(state.guest === true ? { guest: true } : {}),
             retryAfterSeconds: event.retryAfterSeconds,
           };
         case "QUOTA_OUT":
           return {
             phase: "QUOTA_OUT",
             demo: state.demo,
+            ...(state.guest === true ? { guest: true } : {}),
             retryAfterSeconds: event.retryAfterSeconds,
           };
         case "PAUSED":
-          return { phase: "PAUSED", demo: state.demo };
+          return {
+            phase: "PAUSED",
+            demo: state.demo,
+            ...(state.guest === true ? { guest: true } : {}),
+          };
         default:
           return state;
       }
@@ -128,11 +181,12 @@ export function playReducer(state: PlayState, event: PlayEvent): PlayState {
             error: null,
           };
         case "CLAIM_EXPIRED":
-          return { phase: "EXPIRED", demo: state.demo };
+          return terminalExpired(state);
         case "CLAIM_REFRESHED":
           return {
             phase: "FOCUS",
             demo: event.claim.demo,
+            ...(state.guest === true ? { guest: true } : {}),
             claim: event.claim,
             selected: null,
           };
@@ -147,15 +201,16 @@ export function playReducer(state: PlayState, event: PlayEvent): PlayState {
           return { ...rest, phase: "FOCUS", error: null };
         }
         case "CONFIRM":
-          return state.demo
+          return state.demo || state.guest === true
             ? { ...state, phase: "SETTLING", error: null }
             : { ...state, phase: "SIGNING", error: null };
         case "CLAIM_EXPIRED":
-          return { phase: "EXPIRED", demo: state.demo };
+          return terminalExpired(state);
         case "CLAIM_REFRESHED":
           return {
             phase: "FOCUS",
             demo: event.claim.demo,
+            ...(state.guest === true ? { guest: true } : {}),
             claim: event.claim,
             selected: null,
           };
@@ -171,7 +226,7 @@ export function playReducer(state: PlayState, event: PlayEvent): PlayState {
           // Move preserved, timer still live (F-W10).
           return { ...state, phase: "CONFIRM" };
         case "CLAIM_EXPIRED":
-          return { phase: "EXPIRED", demo: state.demo };
+          return terminalExpired(state);
         default:
           return state;
       }
@@ -211,7 +266,7 @@ export function playReducer(state: PlayState, event: PlayEvent): PlayState {
           };
         }
         case "CLAIM_EXPIRED":
-          return { phase: "EXPIRED", demo: state.demo };
+          return terminalExpired(state);
         default:
           return state;
       }
@@ -225,4 +280,12 @@ export function playReducer(state: PlayState, event: PlayEvent): PlayState {
     default:
       return state;
   }
+}
+
+function terminalExpired(state: PlayState): PlayState {
+  return {
+    phase: "EXPIRED",
+    demo: state.demo,
+    ...(state.guest === true ? { guest: true } : {}),
+  };
 }

@@ -70,6 +70,8 @@ export type CreateClaimResult =
     }
   | { readonly kind: "none"; readonly retryAfterSeconds: number }
   | { readonly kind: "quota"; readonly retryAfterSeconds: number }
+  | { readonly kind: "guest_used"; readonly envelope: ErrorEnvelope }
+  | { readonly kind: "turnstile_failed"; readonly envelope: ErrorEnvelope }
   | { readonly kind: "paused" };
 
 export type PostMoveResult =
@@ -205,7 +207,11 @@ export function createApiClient(options: ApiClientOptions = {}) {
       }
     },
 
-    async createClaim(body: { demo?: boolean }): Promise<CreateClaimResult> {
+    async createClaim(body: {
+      demo?: boolean;
+      turnstileToken?: string;
+      ref?: string;
+    }): Promise<CreateClaimResult> {
       try {
         const response = await request("/claims", { method: "POST", body });
         if (response.status === 204) {
@@ -229,32 +235,57 @@ export function createApiClient(options: ApiClientOptions = {}) {
             };
           }
           if (error.code === "PAUSED") return { kind: "paused" };
+          if (error.code === "GUEST_DEMO_USED") {
+            return { kind: "guest_used", envelope: error.envelope };
+          }
+          if (
+            error.code === "TURNSTILE_FAILED" ||
+            error.code === "TURNSTILE_REQUIRED"
+          ) {
+            return { kind: "turnstile_failed", envelope: error.envelope };
+          }
         }
         throw error;
       }
     },
 
-    async getCurrentClaim(): Promise<ClaimView | null> {
+    async getCurrentClaim(options?: {
+      readonly anonymous?: boolean;
+    }): Promise<ClaimView | null> {
       try {
-        const response = await request("/claims/current");
+        const response = await request("/claims/current", {
+          suppressAuthHook: options?.anonymous === true,
+        });
         return (await json(response, claimEnvelopeSchema)).claim;
       } catch (error) {
-        if (error instanceof ApiError && error.code === "NO_OPEN_CLAIM")
+        if (
+          error instanceof ApiError &&
+          (error.code === "NO_OPEN_CLAIM" ||
+            (options?.anonymous === true && error.status === 401))
+        ) {
           return null;
+        }
         throw error;
       }
     },
 
-    async getClaimStatus(id: string): Promise<ClaimStatus | null> {
+    async getClaimStatus(
+      id: string,
+      options?: { readonly anonymous?: boolean },
+    ): Promise<ClaimStatus | null> {
       try {
         return await json(
-          await request(`/claims/${id}/status`),
+          await request(`/claims/${id}/status`, {
+            suppressAuthHook: options?.anonymous === true,
+          }),
           claimStatusSchema,
         );
       } catch (error) {
         if (
           error instanceof ApiError &&
-          (error.code === "CLAIM_NOT_FOUND" || error.code === "NOT_YOUR_CLAIM")
+          (error.code === "CLAIM_NOT_FOUND" ||
+            error.code === "NOT_YOUR_CLAIM" ||
+            (options?.anonymous === true && error.status === 401))
         ) {
           return null;
         }

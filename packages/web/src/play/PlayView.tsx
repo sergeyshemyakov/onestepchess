@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Meta, Move } from "../api/schemas.js";
+import { obtainTurnstileToken } from "../auth/turnstile.js";
 import { Board, type BoardFx } from "../board/Board.jsx";
 import {
   enPassantCaptures,
@@ -22,7 +23,7 @@ import {
   formatMicroUsdc,
   nextAtLabel,
 } from "../lib/format.js";
-import { coachMarksSeen, markCoachMarksSeen } from "../lib/storage.js";
+import { coachMarksSeen, markCoachMarksSeen, readRef } from "../lib/storage.js";
 import { Timer } from "./Timer.jsx";
 import type { PlayFlow } from "./usePlayFlow.js";
 
@@ -55,6 +56,7 @@ function CountdownLine(props: {
 export function PlayView(props: {
   readonly flow: PlayFlow;
   readonly meta: Meta;
+  readonly onWalletIntent?: () => void;
 }) {
   const { state, send, checkExpiry } = props.flow;
   const { meta } = props;
@@ -160,6 +162,18 @@ export function PlayView(props: {
         <p className="console">&gt; matchmaking… finding you a board ▊</p>
       ) : null}
 
+      {state.phase === "GUEST_GATE" ? (
+        <GuestGate flow={props.flow} meta={meta} />
+      ) : null}
+
+      {state.phase === "GUEST_USED" ? (
+        <LoginWall
+          message="your one-move demo is already waiting — log in to see how it ends."
+          onWalletIntent={props.onWalletIntent}
+          onClose={() => send({ type: "ACK" })}
+        />
+      ) : null}
+
       {state.phase === "NO_BOARDS" ? (
         <div className="modalback">
           <div className="modal" role="dialog" aria-modal="true">
@@ -233,8 +247,13 @@ export function PlayView(props: {
             <h3>TIME</h3>
             <p className="mv">POSITION PASSED ON</p>
             <p className="sub">
-              the board went to another player. nothing was charged.
+              {state.guest === true
+                ? "nothing charged. log in to keep playing."
+                : "the board went to another player. nothing was charged."}
             </p>
+            {state.guest === true ? (
+              <OnboardingDoors onWalletIntent={props.onWalletIntent} />
+            ) : null}
             <div className="modal-actions single">
               <button
                 type="button"
@@ -346,11 +365,19 @@ export function PlayView(props: {
         state.phase === "RECEIPT") &&
       claim !== undefined &&
       state.chosenMove !== undefined ? (
-        <ConfirmMorph flow={props.flow} meta={meta} />
+        <ConfirmMorph
+          flow={props.flow}
+          meta={meta}
+          onWalletIntent={props.onWalletIntent}
+        />
       ) : null}
 
       {state.phase === "RECEIPT" && state.chosenMove === undefined ? (
-        <ConfirmMorph flow={props.flow} meta={meta} />
+        <ConfirmMorph
+          flow={props.flow}
+          meta={meta}
+          onWalletIntent={props.onWalletIntent}
+        />
       ) : null}
     </div>
   );
@@ -358,7 +385,11 @@ export function PlayView(props: {
 
 /** The morph: confirm → (signing) → settling → typed receipt, one surface
  * (mockups M05). Backdrop is deliberately not click-to-close. */
-function ConfirmMorph(props: { readonly flow: PlayFlow; readonly meta: Meta }) {
+function ConfirmMorph(props: {
+  readonly flow: PlayFlow;
+  readonly meta: Meta;
+  readonly onWalletIntent?: () => void;
+}) {
   const { state, send } = props.flow;
   const claim = state.claim;
   const move = state.chosenMove ?? state.receipt?.move;
@@ -466,7 +497,7 @@ function ConfirmMorph(props: { readonly flow: PlayFlow; readonly meta: Meta }) {
         ) : null}
 
         {state.phase === "RECEIPT" && state.receipt !== undefined ? (
-          <Receipt flow={props.flow} />
+          <Receipt flow={props.flow} onWalletIntent={props.onWalletIntent} />
         ) : null}
       </div>
     </div>
@@ -475,7 +506,10 @@ function ConfirmMorph(props: { readonly flow: PlayFlow; readonly meta: Meta }) {
 
 /** Typed receipt (F-W4): never a game name — a second entry's receipt would
  * correlate two claims to one game (D16). */
-function Receipt(props: { readonly flow: PlayFlow }) {
+function Receipt(props: {
+  readonly flow: PlayFlow;
+  readonly onWalletIntent?: () => void;
+}) {
   const { state, send } = props.flow;
   const receipt = state.receipt;
   if (receipt === undefined) return null;
@@ -483,7 +517,13 @@ function Receipt(props: { readonly flow: PlayFlow }) {
   return (
     <>
       <div className="console" data-testid="receipt">
-        {demo ? (
+        {state.guest === true ? (
+          <>
+            &gt; move played :: {receipt.move.san}
+            {"\n"}&gt; the game goes on without you
+            {"\n"}&gt; connect an Algorand wallet to see how it ends
+          </>
+        ) : demo ? (
           <>
             &gt; demo move committed :: {receipt.move.san}
             {"\n"}&gt; nothing staked · not counted
@@ -506,11 +546,17 @@ function Receipt(props: { readonly flow: PlayFlow }) {
             )}
           </>
         )}
-        {"\n"}&gt; the game plays on without you
+        {state.guest === true ? null : (
+          <>{"\n"}&gt; the game plays on without you</>
+        )}
       </div>
-      <p className="console receipt-notice">
-        &gt; you will be notified when the game ends
-      </p>
+      {state.guest === true ? (
+        <OnboardingDoors onWalletIntent={props.onWalletIntent} />
+      ) : (
+        <p className="console receipt-notice">
+          &gt; you will be notified when the game ends
+        </p>
+      )}
       <div className="modal-actions single">
         <button
           type="button"
@@ -521,6 +567,101 @@ function Receipt(props: { readonly flow: PlayFlow }) {
         </button>
       </div>
     </>
+  );
+}
+
+function GuestGate(props: { readonly flow: PlayFlow; readonly meta: Meta }) {
+  const { state, send } = props.flow;
+  const slot = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const container = slot.current;
+    if (container === null) return;
+    let cancelled = false;
+    obtainTurnstileToken(container, props.meta.turnstileSiteKey)
+      .then((turnstileToken) => {
+        if (!cancelled) {
+          const ref = readRef();
+          send({
+            type: "GUEST_VERIFIED",
+            turnstileToken,
+            ...(ref === null ? {} : { ref }),
+          });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          send({
+            type: "GUEST_GATE_FAILED",
+            envelope: {
+              error: "TURNSTILE_FAILED",
+              hint: "verification failed — retry the demo gate",
+              docs: "",
+            },
+          });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [props.meta.turnstileSiteKey, send]);
+
+  return (
+    <div className="modalback">
+      <div className="modal" role="dialog" aria-modal="true">
+        <h3>ONE-MOVE DEMO</h3>
+        <p className="sub">verify once, then play — no wallet needed.</p>
+        {state.error !== null && state.error !== undefined ? (
+          <p className="formerr" role="alert">
+            {state.error.hint}
+          </p>
+        ) : null}
+        <div ref={slot} data-testid="guest-turnstile-slot" />
+        <div className="modal-actions single">
+          <button
+            type="button"
+            className="btn mini"
+            onClick={() => send({ type: "ACK" })}
+          >
+            ← back
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LoginWall(props: {
+  readonly message: string;
+  readonly onWalletIntent?: () => void;
+  readonly onClose: () => void;
+}) {
+  return (
+    <div className="modalback">
+      <div className="modal" role="dialog" aria-modal="true">
+        <h3>DEMO WAITING</h3>
+        <p className="sub">{props.message}</p>
+        <OnboardingDoors onWalletIntent={props.onWalletIntent} />
+        <div className="modal-actions single">
+          <button type="button" className="btn mini" onClick={props.onClose}>
+            ← back
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OnboardingDoors(props: { readonly onWalletIntent?: () => void }) {
+  return (
+    <div className="modal-actions pair" data-testid="onboarding-doors">
+      <button type="button" className="btn pri" onClick={props.onWalletIntent}>
+        I have a wallet
+      </button>
+      <a className="btn" href="/start">
+        I don't have one yet
+      </a>
+    </div>
   );
 }
 
