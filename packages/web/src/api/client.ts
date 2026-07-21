@@ -199,7 +199,7 @@ export function createApiClient(options: ApiClientOptions = {}) {
     async suggestNickname(): Promise<string> {
       const parsed = await json(
         await request("/auth/suggest-nickname"),
-        playerSchema.pick({ nickname: true }),
+        z.object({ nickname: z.string() }),
       );
       return parsed.nickname;
     },

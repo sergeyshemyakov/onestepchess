@@ -8,6 +8,7 @@ import {
 import { afterEach, expect, it, vi } from "vitest";
 import type { MoveReceipt } from "../api/schemas.js";
 import { resetTurnstileForTests } from "../auth/turnstile.js";
+import { writeClaimDraft } from "../lib/storage.js";
 import {
   claimFixture,
   metaFixture,
@@ -106,6 +107,7 @@ it("landing_uses_only_meta_and_session_probe_before_interaction", async () => {
   expect(client.getProfile).not.toHaveBeenCalled();
   expect(client.getOngoingGames).not.toHaveBeenCalled();
   expect(client.getFinishedGames).not.toHaveBeenCalled();
+  expect(client.getCurrentClaim).not.toHaveBeenCalled();
 
   // -- Bundled replay: the Deep Blue strip renders a board with no fetch.
   const strip = screen.getByTestId("deepblue-strip");
@@ -161,6 +163,19 @@ it("landing_uses_only_meta_and_session_probe_before_interaction", async () => {
   expect(screen.getByTestId("stats-strip").textContent).toContain(
     "41 human moves · 7 wallets · 5 games settled · 44 payments",
   );
+});
+
+it("guest_claim_rehydrates_only_when_this_tab_has_a_draft", async () => {
+  const claim = claimFixture({ demo: true, stakeMicroUsdc: 0 });
+  writeClaimDraft({
+    claimId: claim.claimId,
+    savedAt: new Date().toISOString(),
+  });
+  const client = guestClient();
+  client.getCurrentClaim = vi.fn(async () => claim);
+  renderLanding(client);
+  await screen.findByText(/YOU PLAY WHITE/);
+  expect(client.getCurrentClaim).toHaveBeenCalledWith({ anonymous: true });
 });
 
 it("anonymous_demo_never_loads_wallet_or_x402_code", async () => {
@@ -227,5 +242,7 @@ it("guest_demo_receipt_and_expiry_render_only_login_wall_data", async () => {
   await screen.findByText("POSITION PASSED ON");
   expect(screen.getByText(/log in to keep playing/)).not.toBeNull();
   assertNoGameIdentity(expiredView.container, identitySeeds);
-  expect(localStorage.getItem("osc.guestDemo")).toBe("expired");
+  await waitFor(() => {
+    expect(localStorage.getItem("osc.guestDemo")).toBe("expired");
+  });
 });

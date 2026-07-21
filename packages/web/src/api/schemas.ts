@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+const isoTimestampSchema = z.iso.datetime({ offset: true });
+const nonNegativeIntegerSchema = z.number().int().nonnegative();
+
 // Wire schemas mirroring server spec §6.3 (Release-1 subset). Zod decodes
 // every payload so wire drift becomes a controlled error, not silent
 // undefined reads (§5.1).
@@ -60,10 +63,10 @@ export const metaSchema = z.object({
   // Present only when the server enables public stats (F-W13 strip gating).
   stats: z
     .object({
-      humanMoves: z.number(),
-      playersRegistered: z.number(),
-      gamesFinished: z.number(),
-      movesSettled: z.number(),
+      humanMoves: nonNegativeIntegerSchema,
+      playersRegistered: nonNegativeIntegerSchema,
+      gamesFinished: nonNegativeIntegerSchema,
+      movesSettled: nonNegativeIntegerSchema,
     })
     .optional(),
   rules: z.string(),
@@ -80,15 +83,15 @@ export type Meta = z.infer<typeof metaSchema>;
 export const playerSchema = z.object({
   address: z.string(),
   kind: z.enum(["human", "agent"]),
-  nickname: z.string(),
-  createdAt: z.string(),
+  nickname: z.string().nullable(),
+  createdAt: isoTimestampSchema,
 });
 export type PlayerView = z.infer<typeof playerSchema>;
 
 const quotaWindowSchema = z.object({
-  limit: z.number(),
-  remaining: z.number(),
-  resetsAt: z.string().nullable(),
+  limit: nonNegativeIntegerSchema,
+  remaining: nonNegativeIntegerSchema,
+  resetsAt: isoTimestampSchema.nullable(),
 });
 
 /** Full `/my/profile` payload (server §6.3). `balances` appears only when
@@ -97,37 +100,54 @@ const quotaWindowSchema = z.object({
  * rendered (non-goal: no net-PnL display). */
 export const profileSchema = playerSchema.extend({
   stats: z.object({
-    moves: z.number(),
-    wins: z.number(),
-    draws: z.number(),
-    losses: z.number(),
-    winratePct: z.number().nullable(),
+    moves: nonNegativeIntegerSchema,
+    wins: nonNegativeIntegerSchema,
+    draws: nonNegativeIntegerSchema,
+    losses: nonNegativeIntegerSchema,
+    winratePct: z.number().min(0).max(100).nullable(),
   }),
-  netPnlMicroUsdc: z.number(),
+  netPnlMicroUsdc: z.number().int(),
   balances: z
-    .object({ usdcMicroUsdc: z.number(), algoMicroAlgo: z.number() })
+    .object({
+      usdcMicroUsdc: nonNegativeIntegerSchema,
+      algoMicroAlgo: nonNegativeIntegerSchema,
+    })
     .optional(),
   quotas: z.object({
     staked: quotaWindowSchema,
     demo: quotaWindowSchema,
   }),
-  deprioritizedUntil: z.string().nullable(),
-  points: z.number().optional(),
+  deprioritizedUntil: isoTimestampSchema.nullable(),
+  points: nonNegativeIntegerSchema.optional(),
   refCode: z.string().nullable().optional(),
-  referrals: z.object({ joined: z.number(), qualified: z.number() }).optional(),
+  referrals: z
+    .object({
+      joined: nonNegativeIntegerSchema,
+      qualified: nonNegativeIntegerSchema,
+    })
+    .optional(),
 });
 export type ProfileView = z.infer<typeof profileSchema>;
 
 export const gameResultSchema = z.enum(["white", "black", "draw", "aborted"]);
 export type GameResult = z.infer<typeof gameResultSchema>;
+const terminationSchema = z.enum([
+  "checkmate",
+  "stalemate",
+  "insufficient",
+  "threefold",
+  "fifty_move",
+  "max_plies",
+  "aborted",
+]);
 
 const gameItemCommonSchema = z.object({
   yourMove: moveSchema,
   yourSide: z.enum(["white", "black"]),
   demo: z.boolean(),
-  stakeMicroUsdc: z.number(),
-  claimedAt: z.string(),
-  movedAt: z.string(),
+  stakeMicroUsdc: nonNegativeIntegerSchema,
+  claimedAt: isoTimestampSchema,
+  movedAt: isoTimestampSchema,
 });
 
 /** Ongoing entries never carry game identity (I7 — CA-W2). */
@@ -137,28 +157,30 @@ export const ongoingGameItemSchema = gameItemCommonSchema.extend({
 export type OngoingGameItem = z.infer<typeof ongoingGameItemSchema>;
 
 export const finishedDemoItemSchema = gameItemCommonSchema.extend({
+  demo: z.literal(true),
   result: gameResultSchema,
-  termination: z.string(),
-  payoutMicroUsdc: z.number(),
+  termination: terminationSchema,
+  payoutMicroUsdc: z.literal(0),
   payoutStatus: z.null(),
   statsCounted: z.literal(false),
-  finishedAt: z.string(),
+  finishedAt: isoTimestampSchema,
 });
 export type FinishedDemoItem = z.infer<typeof finishedDemoItemSchema>;
 
 export const finishedStakedItemSchema = gameItemCommonSchema.extend({
+  demo: z.literal(false),
   gameId: z.string(),
   gameName: z.string(),
   finalFen: z.string(),
   result: gameResultSchema,
-  termination: z.string(),
-  yourPly: z.number(),
-  payTxid: z.string().nullable(),
-  payoutMicroUsdc: z.number(),
+  termination: terminationSchema,
+  yourPly: z.number().int().positive(),
+  payTxid: z.string(),
+  payoutMicroUsdc: nonNegativeIntegerSchema,
   payoutTxid: z.string().nullable(),
   payoutStatus: z.enum(["none", "queued", "confirmed", "failed"]),
   statsCounted: z.literal(true),
-  finishedAt: z.string(),
+  finishedAt: isoTimestampSchema,
 });
 export type FinishedStakedItem = z.infer<typeof finishedStakedItemSchema>;
 
@@ -171,9 +193,9 @@ export type FinishedGameItem = z.infer<typeof finishedGameItemSchema>;
 export function gamesPageSchema<T extends z.ZodType>(item: T) {
   return z.object({
     items: z.array(item),
-    page: z.number(),
-    pageCount: z.number(),
-    total: z.number(),
+    page: z.number().int().positive(),
+    pageCount: nonNegativeIntegerSchema,
+    total: nonNegativeIntegerSchema,
   });
 }
 export type GamesPage<T> = {
@@ -184,16 +206,16 @@ export type GamesPage<T> = {
 };
 
 export const replayPlySchema = z.object({
-  ply: z.number(),
+  ply: z.number().int().positive(),
   side: z.enum(["white", "black"]),
   move: moveSchema,
   fenAfter: z.string(),
-  stakeMicroUsdc: z.number(),
+  stakeMicroUsdc: nonNegativeIntegerSchema,
   demo: z.boolean(),
   author: z.object({
-    nickname: z.string(),
+    nickname: z.string().nullable(),
     kind: z.enum(["human", "agent", "guest"]),
-    winratePct: z.number().nullable(),
+    winratePct: z.number().min(0).max(100).nullable(),
   }),
 });
 export type ReplayPly = z.infer<typeof replayPlySchema>;
@@ -202,10 +224,10 @@ export const replayViewSchema = z.object({
   gameId: z.string(),
   name: z.string(),
   result: gameResultSchema,
-  termination: z.string(),
-  endspielPly: z.number().nullable(),
-  createdAt: z.string(),
-  finishedAt: z.string(),
+  termination: terminationSchema,
+  endspielPly: z.number().int().positive().nullable(),
+  createdAt: isoTimestampSchema,
+  finishedAt: isoTimestampSchema,
   plies: z.array(replayPlySchema),
   pgn: z.string(),
 });

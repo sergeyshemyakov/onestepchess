@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router";
 import type { ApiClient } from "../api/client.js";
-import { fetchReplayCached } from "../api/replayCache.js";
 import type {
   FinishedGameItem,
   FinishedStakedItem,
@@ -10,7 +9,6 @@ import type {
   OngoingGameItem,
   PlayerView,
   ProfileView,
-  ReplayView,
 } from "../api/schemas.js";
 import { useSession } from "../auth/SessionContext.jsx";
 import { BoardLoop } from "../board/BoardLoop.jsx";
@@ -25,7 +23,7 @@ import { parseUci } from "../lib/fen.js";
 import { formatLocalTime, formatMicroUsdc } from "../lib/format.js";
 import { PlayView } from "../play/PlayView.jsx";
 import { usePlayFlow } from "../play/usePlayFlow.js";
-import { DigestLoop } from "../replay/DigestLoop.jsx";
+import { CachedDigest } from "../replay/CachedDigest.jsx";
 import { playCtaState } from "./hubCta.js";
 
 /** F-W3 active hero/minicards: everything derives from the item's own
@@ -128,22 +126,6 @@ function FinishedPane(props: {
   const hero = items.find(
     (item): item is FinishedStakedItem => !item.demo && "gameId" in item,
   );
-  const [replay, setReplay] = useState<ReplayView | null>(null);
-  const { client } = props;
-
-  useEffect(() => {
-    if (hero === undefined) return;
-    let cancelled = false;
-    fetchReplayCached(client, hero.gameId)
-      .then((fetched) => {
-        if (!cancelled) setReplay(fetched);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [client, hero]);
-
   if (items.length === 0) {
     return (
       <div className="empty">
@@ -158,18 +140,11 @@ function FinishedPane(props: {
     <div data-testid="finished-pane">
       {hero !== undefined ? (
         <div className="herocard" data-testid="finished-hero">
-          {replay !== null ? (
-            <DigestLoop
-              plies={replay.plies.map((item) => ({
-                fenAfter: item.fenAfter,
-                from: parseUci(item.move.uci).from,
-                to: parseUci(item.move.uci).to,
-              }))}
-              highlightPly={hero.yourPly}
-            />
-          ) : (
-            <p className="console">&gt; loading replay…</p>
-          )}
+          <CachedDigest
+            client={props.client}
+            gameId={hero.gameId}
+            highlightPly={hero.yourPly}
+          />
           <dl className="qv-fields">
             <dt>game</dt>
             <dd className="vt">{hero.gameName}</dd>
@@ -354,7 +329,8 @@ export function Hub(props: {
             title={props.player.address}
             onClick={() => setPopover((open) => !open)}
           >
-            {props.player.nickname} · {shortenAddress(props.player.address)}
+            {props.player.nickname ?? "anonymous"} ·{" "}
+            {shortenAddress(props.player.address)}
           </button>
           {popover ? (
             <WalletPopover

@@ -1,22 +1,19 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router";
 import type { ApiClient } from "../api/client.js";
-import { fetchReplayCached } from "../api/replayCache.js";
 import type {
   FinishedDemoItem,
   FinishedStakedItem,
   Meta,
-  ReplayView,
 } from "../api/schemas.js";
 import { ShareSheet } from "../components/ShareSheet.jsx";
 import { explorerTxUrl } from "../lib/explorer.js";
-import { parseUci } from "../lib/fen.js";
 import {
   formatLocalTime,
   formatMicroUsdc,
   formatThinkingTime,
 } from "../lib/format.js";
-import { DigestLoop } from "../replay/DigestLoop.jsx";
+import { CachedDigest } from "../replay/CachedDigest.jsx";
 import { outcomeFor, outcomeGlyph } from "./outcome.js";
 
 export function payoutChip(
@@ -49,24 +46,8 @@ export function QuickView(props: {
   // regression payload carrying identity fields on a demo item must still
   // render the demo variant (I7 defense in depth).
   const staked = !item.demo;
-  const [replay, setReplay] = useState<ReplayView | null>(null);
   const [sharing, setSharing] = useState(false);
   const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    if (!staked) return;
-    let cancelled = false;
-    fetchReplayCached(client, (item as FinishedStakedItem).gameId)
-      .then((fetched) => {
-        if (!cancelled) setReplay(fetched);
-      })
-      .catch(() => {
-        // digest stays on the static thumbnail fields — no retry loop
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [client, staked, item]);
 
   const outcome = outcomeFor(item.result, item.yourSide);
 
@@ -108,18 +89,11 @@ export function QuickView(props: {
         data-testid="quick-view"
       >
         <h3>{stakedItem.gameName}</h3>
-        {replay !== null ? (
-          <DigestLoop
-            plies={replay.plies.map((ply) => ({
-              fenAfter: ply.fenAfter,
-              from: parseUci(ply.move.uci).from,
-              to: parseUci(ply.move.uci).to,
-            }))}
-            highlightPly={stakedItem.yourPly}
-          />
-        ) : (
-          <p className="console">&gt; loading replay…</p>
-        )}
+        <CachedDigest
+          client={client}
+          gameId={stakedItem.gameId}
+          highlightPly={stakedItem.yourPly}
+        />
         <p className="mv">{outcomeGlyph(outcome)}</p>
         <dl className="qv-fields">
           <dt>your move</dt>

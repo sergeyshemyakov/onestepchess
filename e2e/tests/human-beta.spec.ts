@@ -3,8 +3,9 @@ import algosdk from "algosdk";
 
 async function chooseE4(page: Page) {
   await expect(page.getByText(/YOU PLAY WHITE/)).toBeVisible();
-  await page.locator('[data-square="e2"]').click();
-  await page.locator('[data-square="e4"]').click();
+  const playSurface = page.getByTestId("play-surface");
+  await playSurface.locator('[data-square="e2"]').click();
+  await playSurface.locator('[data-square="e4"]').click();
   await expect(page.getByText("FINAL MOVE?")).toBeVisible();
 }
 

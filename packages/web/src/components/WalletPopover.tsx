@@ -22,7 +22,7 @@ export function WalletPopover(props: {
   const [profile, setProfile] = useState<ProfileView | null>(null);
   const [copiedWhat, setCopiedWhat] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
-  const [nickname, setNickname] = useState(props.player.nickname);
+  const [nickname, setNickname] = useState(props.player.nickname ?? "");
   const [renameError, setRenameError] = useState<{
     readonly hint: string;
     readonly suggestion?: string;
@@ -51,7 +51,7 @@ export function WalletPopover(props: {
       .renameProfile(value)
       .then((player) => {
         setEditing(false);
-        setNickname(player.nickname);
+        setNickname(player.nickname ?? "");
         props.onRenamed(player);
       })
       .catch((error: unknown) => {
@@ -122,7 +122,7 @@ export function WalletPopover(props: {
               className="btn mini"
               onClick={() => {
                 setEditing(false);
-                setNickname(props.player.nickname);
+                setNickname(props.player.nickname ?? "");
                 setRenameError(null);
               }}
             >

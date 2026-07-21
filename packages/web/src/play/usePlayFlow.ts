@@ -40,6 +40,11 @@ export function usePlayFlow(args: {
   useEffect(() => {
     if (!enabled || rehydrated.current) return;
     rehydrated.current = true;
+    const draft = readClaimDraft();
+    // A cold logged-out landing is limited to `/meta` + the session probe.
+    // Guest claim recovery is per-tab, so only a tab with a persisted draft
+    // needs the anonymous current-claim request.
+    if (guest && draft === null) return;
     const recoveryClient = guest
       ? {
           getCurrentClaim: () => client.getCurrentClaim({ anonymous: true }),
@@ -47,7 +52,7 @@ export function usePlayFlow(args: {
             client.getClaimStatus(id, { anonymous: true }),
         }
       : client;
-    rehydrate(recoveryClient, readClaimDraft())
+    rehydrate(recoveryClient, draft)
       .then((restored) => {
         if (restored.phase !== "IDLE") {
           dispatch({

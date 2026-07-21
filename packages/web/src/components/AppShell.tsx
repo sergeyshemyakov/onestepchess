@@ -56,6 +56,8 @@ export function AppShell(props: {
   readonly children: ReactNode;
   readonly topRight?: ReactNode;
   readonly belowBar?: ReactNode;
+  /** Public replay is intentionally independent of `/meta` (§6 F-W6). */
+  readonly showSystemBanner?: boolean;
 }) {
   return (
     <div className="crt">
@@ -72,7 +74,7 @@ export function AppShell(props: {
         <AlgorandMark />
       </div>
       {props.belowBar}
-      <SystemBanner />
+      {props.showSystemBanner === false ? null : <SystemBanner />}
       {props.children}
     </div>
   );

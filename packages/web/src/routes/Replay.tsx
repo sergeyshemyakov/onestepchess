@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from "react";
 import { useParams, useSearchParams } from "react-router";
-import type { ApiClient } from "../api/client.js";
+import { type ApiClient, ApiError } from "../api/client.js";
 import { fetchReplayCached } from "../api/replayCache.js";
 import type { ReplayView } from "../api/schemas.js";
 import { AppShell } from "../components/AppShell.jsx";
@@ -31,8 +31,25 @@ export function Replay(props: { readonly client: ApiClient }) {
   const { gameId } = useParams();
   const [searchParams] = useSearchParams();
   const hintParam = Number(searchParams.get("ply") ?? "");
-  const [replay, setReplay] = useState<ReplayView | null>(null);
-  const [missing, setMissing] = useState(false);
+  const [load, setLoad] = useState<
+    | {
+        readonly gameId: string | undefined;
+        readonly kind: "loading";
+        readonly attempt: number;
+      }
+    | {
+        readonly gameId: string;
+        readonly kind: "ready";
+        readonly replay: ReplayView;
+      }
+    | { readonly gameId: string | undefined; readonly kind: "missing" }
+    | {
+        readonly gameId: string | undefined;
+        readonly kind: "failed";
+        readonly hint: string;
+      }
+  >({ gameId, kind: "loading", attempt: 0 });
+  const [retry, setRetry] = useState(0);
   const [ply, setPly] = useState(0);
   const [winratePly, setWinratePly] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
@@ -40,15 +57,16 @@ export function Replay(props: { readonly client: ApiClient }) {
 
   // biome-ignore lint/correctness/useExhaustiveDependencies(hintParam): the ?ply= hint applies once at load — scrubbing owns the position afterwards
   useEffect(() => {
+    setLoad({ gameId, kind: "loading", attempt: retry });
     if (gameId === undefined) {
-      setMissing(true);
+      setLoad({ gameId, kind: "missing" });
       return;
     }
     let cancelled = false;
     fetchReplayCached(client, gameId)
       .then((fetched) => {
         if (cancelled) return;
-        setReplay(fetched);
+        setLoad({ gameId, kind: "ready", replay: fetched });
         const hint =
           Number.isInteger(hintParam) &&
           hintParam >= 1 &&
@@ -57,24 +75,56 @@ export function Replay(props: { readonly client: ApiClient }) {
             : 0;
         setPly(hint);
       })
-      .catch(() => {
-        if (!cancelled) setMissing(true);
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        if (error instanceof ApiError && error.status === 404) {
+          setLoad({ gameId, kind: "missing" });
+          return;
+        }
+        setLoad({
+          gameId,
+          kind: "failed",
+          hint:
+            error instanceof ApiError
+              ? error.envelope.hint
+              : "replay unavailable — try again",
+        });
       });
     return () => {
       cancelled = true;
     };
-  }, [client, gameId]);
+  }, [client, gameId, retry]);
 
-  if (missing) return <NotFound />;
-  if (replay === null) {
+  if (load.gameId === gameId && load.kind === "missing") {
+    return <NotFound standalone />;
+  }
+  if (load.gameId === gameId && load.kind === "failed") {
     return (
-      <AppShell>
+      <AppShell showSystemBanner={false}>
+        <div className="empty" role="alert">
+          <span className="vt">[ SIGNAL LOST ]</span>
+          {load.hint}
+          <button
+            type="button"
+            className="btn mini"
+            onClick={() => setRetry((current) => current + 1)}
+          >
+            retry ▸
+          </button>
+        </div>
+      </AppShell>
+    );
+  }
+  if (load.gameId !== gameId || load.kind !== "ready") {
+    return (
+      <AppShell showSystemBanner={false}>
         <p className="console" style={{ padding: "40px 22px" }}>
           &gt; loading replay<span className="blink">▊</span>
         </p>
       </AppShell>
     );
   }
+  const replay = load.replay;
 
   const highlightPly =
     Number.isInteger(hintParam) &&
@@ -84,7 +134,7 @@ export function Replay(props: { readonly client: ApiClient }) {
       : undefined;
 
   return (
-    <AppShell>
+    <AppShell showSystemBanner={false}>
       <div className="replaypage" data-testid="replay-page">
         <header className="replayhead">
           <h1>{replay.name}</h1>
@@ -148,7 +198,7 @@ export function Replay(props: { readonly client: ApiClient }) {
                       setWinratePly(winratePly === item.ply ? null : item.ply)
                     }
                   >
-                    {item.author.nickname}{" "}
+                    {item.author.nickname ?? "anonymous"}{" "}
                     <span className="chip">{item.author.kind}</span>
                   </button>
                   {item.demo ? (

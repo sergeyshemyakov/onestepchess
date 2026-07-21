@@ -7,17 +7,19 @@ import {
 } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, expect, it, vi } from "vitest";
+import { App, type AuthHandlers } from "../App.jsx";
 import type { ApiClient } from "../api/client.js";
 import { ApiError } from "../api/client.js";
 import { clearReplayCacheForTests } from "../api/replayCache.js";
-import { ToastProvider } from "../components/Toasts.jsx";
-import { MetaProvider } from "../meta/MetaContext.jsx";
-import { metaFixture, replayFixture } from "../test/fixtures.jsx";
+import { replayFixture } from "../test/fixtures.jsx";
 import { Replay } from "./Replay.jsx";
+
+const handlers: AuthHandlers = { onUnauthorized: () => undefined };
 
 afterEach(() => {
   cleanup();
   clearReplayCacheForTests();
+  window.history.replaceState({}, "", "/");
 });
 
 /** The public page must never touch authenticated endpoints — every other
@@ -29,7 +31,7 @@ function publicOnlyClient(
     throw new Error("public replay called an authenticated endpoint");
   };
   return {
-    getMeta: vi.fn(async () => metaFixture),
+    getMeta: forbidden,
     getReplay: vi.fn(getReplay),
     authChallenge: forbidden,
     authVerify: forbidden,
@@ -50,16 +52,9 @@ function publicOnlyClient(
 function renderReplay(client: ApiClient, entry: string) {
   return render(
     <MemoryRouter initialEntries={[entry]}>
-      <ToastProvider>
-        <MetaProvider client={client}>
-          <Routes>
-            <Route
-              path="/replay/:gameId"
-              element={<Replay client={client} />}
-            />
-          </Routes>
-        </MetaProvider>
-      </ToastProvider>
+      <Routes>
+        <Route path="/replay/:gameId" element={<Replay client={client} />} />
+      </Routes>
     </MemoryRouter>,
   );
 }
@@ -67,11 +62,19 @@ function renderReplay(client: ApiClient, entry: string) {
 it("public_replay_is_session_free_scrubbable_and_downloads_exact_pgn", async () => {
   // -- 300 plies, fenAfter-indexed; one public request renders everything.
   const replay = replayFixture("gm_300", 300);
+  const firstPly = replay.plies[0];
+  if (firstPly === undefined) throw new Error("fixture has no plies");
+  replay.plies[0] = {
+    ...firstPly,
+    author: { ...firstPly.author, nickname: null },
+  };
   const client = publicOnlyClient(async () => replay);
-  const view = renderReplay(client, "/replay/gm_300");
+  window.history.replaceState({}, "", "/replay/gm_300");
+  const view = render(<App client={client} authHandlers={handlers} />);
   await screen.findByTestId("replay-page");
   expect(client.getReplay).toHaveBeenCalledTimes(1);
   expect(screen.getAllByText(/^M\d+$/)).toHaveLength(300);
+  expect(screen.getByText("anonymous")).not.toBeNull();
 
   // -- Scrubbing is indexed: ply 150's queen file is (150-1)%8 = 5 → f8.
   const scrub = screen.getByLabelText("scrub plies") as HTMLInputElement;
@@ -123,4 +126,24 @@ it("public_replay_is_session_free_scrubbable_and_downloads_exact_pgn", async () 
   await waitFor(() => {
     expect(missing.getReplay).toHaveBeenCalledTimes(1);
   });
+
+  // -- Transport failures retain their hint and offer an explicit retry;
+  //    they are not misrepresented as an unknown game.
+  cleanup();
+  clearReplayCacheForTests();
+  const recoveredReplay = replayFixture("gm_retry");
+  const flaky = publicOnlyClient(
+    vi
+      .fn()
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce(recoveredReplay),
+  );
+  renderReplay(flaky, "/replay/gm_retry");
+  expect((await screen.findByRole("alert")).textContent).toContain(
+    "replay unavailable",
+  );
+  expect(screen.queryByText("[ NO SIGNAL ]")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "retry ▸" }));
+  await screen.findByTestId("replay-page");
+  expect(flaky.getReplay).toHaveBeenCalledTimes(2);
 });
