@@ -102,6 +102,25 @@ export function validateChallenge(
       reason: "challenge asset is not the pinned USDC asset",
     };
   }
+  if (requirement.network !== args.meta.network.caip2) {
+    return {
+      ok: false,
+      reason: "challenge network is not the runtime network",
+    };
+  }
+  if (requirement.scheme === "exact") {
+    const feePayer = requirement.extra?.feePayer;
+    if (
+      typeof feePayer !== "string" ||
+      !/^[A-Z2-7]{58}$/.test(feePayer) ||
+      requirement.extra?.decimals !== 6
+    ) {
+      return {
+        ok: false,
+        reason: "exact challenge has unsafe fee-payer parameters",
+      };
+    }
+  }
   return { ok: true, required, requirement };
 }
 

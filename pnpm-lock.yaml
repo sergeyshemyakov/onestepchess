@@ -26,6 +26,9 @@ importers:
       '@onestepchess/core':
         specifier: workspace:*
         version: link:../packages/core
+      '@onestepchess/rail-avm':
+        specifier: workspace:*
+        version: link:../packages/rail-avm
       '@onestepchess/rail-mock':
         specifier: workspace:*
         version: link:../packages/rail-mock
@@ -35,12 +38,21 @@ importers:
       '@playwright/test':
         specifier: ^1.0.0
         version: 1.61.1
+      '@x402-avm/avm':
+        specifier: ^2.6.0
+        version: 2.6.1
       algosdk:
         specifier: ^3.0.0
         version: 3.6.0
+      tsx:
+        specifier: ^4.0.0
+        version: 4.23.0
       vitest:
         specifier: ^4.0.0
         version: 4.1.10(@types/node@26.1.1)(happy-dom@20.10.6)(vite@8.1.4(@types/node@26.1.1)(esbuild@0.28.1)(tsx@4.23.0)(yaml@2.9.0))
+      zod:
+        specifier: ^4.0.0
+        version: 4.4.3
 
   packages/agent-kit:
     dependencies:
@@ -107,10 +119,16 @@ importers:
       algosdk:
         specifier: ^3.0.0
         version: 3.6.0
+      zod:
+        specifier: ^4.0.0
+        version: 4.4.3
     devDependencies:
+      '@types/node':
+        specifier: ^22.20.1
+        version: 22.20.1
       vitest:
         specifier: ^4.0.0
-        version: 4.1.10(@types/node@26.1.1)(happy-dom@20.10.6)(vite@8.1.4(@types/node@26.1.1)(esbuild@0.28.1)(tsx@4.23.0)(yaml@2.9.0))
+        version: 4.1.10(@types/node@22.20.1)(happy-dom@20.10.6)(vite@8.1.4(@types/node@22.20.1)(esbuild@0.28.1)(tsx@4.23.0)(yaml@2.9.0))
 
   packages/rail-mock:
     dependencies:
@@ -3013,7 +3031,7 @@ snapshots:
 
   '@types/better-sqlite3@7.6.13':
     dependencies:
-      '@types/node': 26.1.1
+      '@types/node': 22.20.1
 
   '@types/chai@5.2.3':
     dependencies:
@@ -3031,6 +3049,7 @@ snapshots:
   '@types/node@26.1.1':
     dependencies:
       undici-types: 8.3.0
+    optional: true
 
   '@types/react-dom@19.2.3(@types/react@19.2.17)':
     dependencies:
@@ -3044,7 +3063,7 @@ snapshots:
 
   '@types/ws@8.18.1':
     dependencies:
-      '@types/node': 26.1.1
+      '@types/node': 22.20.1
 
   '@vitest/expect@4.1.10':
     dependencies:
@@ -3186,7 +3205,7 @@ snapshots:
 
   buffer-image-size@0.6.4:
     dependencies:
-      '@types/node': 26.1.1
+      '@types/node': 22.20.1
 
   buffer@5.7.1:
     dependencies:
@@ -3511,7 +3530,7 @@ snapshots:
 
   happy-dom@20.10.6:
     dependencies:
-      '@types/node': 26.1.1
+      '@types/node': 22.20.1
       '@types/whatwg-mimetype': 3.0.2
       '@types/ws': 8.18.1
       buffer-image-size: 0.6.4
@@ -4054,7 +4073,8 @@ snapshots:
 
   undici-types@6.21.0: {}
 
-  undici-types@8.3.0: {}
+  undici-types@8.3.0:
+    optional: true
 
   unpipe@1.0.0: {}
 
