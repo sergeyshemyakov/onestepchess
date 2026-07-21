@@ -119,6 +119,45 @@ describe("rehydration decision table (§5.5)", () => {
 });
 
 describe("rehydration runner (§5.5, #31 one-call restore)", () => {
+  it("play_rehydrates_focus_confirm_and_settlement_after_reload", async () => {
+    const focusState = await rehydrate(
+      {
+        getCurrentClaim: vi.fn(async () => claim),
+        getClaimStatus: vi.fn(),
+      },
+      draft,
+    );
+    expect(focusState).toMatchObject({ phase: "FOCUS", claim });
+
+    const currentClaim = vi.fn(async () => claim);
+    const currentStatus = vi.fn();
+    const confirmState = await rehydrate(
+      { getCurrentClaim: currentClaim, getClaimStatus: currentStatus },
+      draftWithMove,
+    );
+    expect(confirmState).toMatchObject({
+      phase: "CONFIRM",
+      chosenMove: { uci: "e2e4" },
+      claim: { deadline: claim.deadline },
+    });
+    expect(currentClaim).toHaveBeenCalledTimes(1);
+    expect(currentStatus).not.toHaveBeenCalled();
+
+    const settlementState = await rehydrate(
+      {
+        getCurrentClaim: vi.fn(async () => null),
+        getClaimStatus: vi.fn(async () => open("verifying")),
+      },
+      draftWithMove,
+    );
+    expect(settlementState).toMatchObject({
+      phase: "SETTLING",
+      settlePoll: true,
+      chosenMove: { uci: "e2e4" },
+    });
+    expect(settlementState.paymentHeader).toBeUndefined();
+  });
+
   it("FOCUS/CONFIRM restore costs exactly one GET /claims/current", async () => {
     const getCurrentClaim = vi.fn(async () => claim);
     const getClaimStatus = vi.fn();

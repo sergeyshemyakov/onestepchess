@@ -14,6 +14,8 @@ const THEME_KEY = "osc.theme";
 const SFX_KEY = "osc.sfx";
 const DRAFT_KEY = "osc.claimDraft";
 const COACH_KEY = "osc.coach";
+const GUEST_DEMO_KEY = "osc.guestDemo";
+const REF_KEY = "osc.ref";
 
 function safeGet(store: Storage, key: string): string | null {
   try {
@@ -84,4 +86,23 @@ export function coachMarksSeen(): boolean {
 
 export function markCoachMarksSeen(): void {
   safeSet(sessionStorage, COACH_KEY, "seen");
+}
+
+export type GuestDemoState = "played" | "expired";
+
+export function readGuestDemo(): GuestDemoState | null {
+  const value = safeGet(localStorage, GUEST_DEMO_KEY);
+  return value === "played" || value === "expired" ? value : null;
+}
+
+export function writeGuestDemo(value: GuestDemoState | null): void {
+  safeSet(localStorage, GUEST_DEMO_KEY, value);
+}
+
+export function readRef(): string | null {
+  return safeGet(localStorage, REF_KEY);
+}
+
+export function clearRef(): void {
+  safeSet(localStorage, REF_KEY, null);
 }

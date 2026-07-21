@@ -89,7 +89,8 @@ describe("root bundle static import graph (§5.6)", () => {
     expect(names.some((name) => name.endsWith("play/usePlayFlow.ts"))).toBe(
       true,
     );
-    // the mock x402 module is wallet-free and may live in the root graph
-    expect(names.some((name) => name.endsWith("wallet/x402.ts"))).toBe(true);
+    // Guest/demo rendering reaches the flow hook without pulling x402 in;
+    // staked confirmation crosses that dynamic boundary only on demand.
+    expect(names.some((name) => name.endsWith("wallet/x402.ts"))).toBe(false);
   });
 });

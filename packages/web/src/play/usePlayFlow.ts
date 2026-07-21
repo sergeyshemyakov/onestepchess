@@ -2,7 +2,6 @@ import { useCallback, useEffect, useReducer, useRef } from "react";
 import type { ApiClient } from "../api/client.js";
 import type { Meta, Move } from "../api/schemas.js";
 import { readClaimDraft } from "../lib/storage.js";
-import { payMove } from "../wallet/x402.js";
 import { syncDraft } from "./draft.js";
 import {
   initialPlayState,
@@ -21,6 +20,7 @@ export function usePlayFlow(args: {
   readonly meta: Meta | null;
   readonly address: string | null;
   readonly enabled: boolean;
+  readonly guest?: boolean;
 }) {
   const [state, dispatch] = useReducer(playReducer, initialPlayState);
   const { client, address, enabled } = args;
@@ -28,6 +28,7 @@ export function usePlayFlow(args: {
   const claimInFlight = useRef(false);
   const submitInFlight = useRef(false);
   const rehydrated = useRef(false);
+  const guest = args.guest === true;
 
   // Draft persistence exactly at the specced points (§5.5).
   useEffect(() => {
@@ -39,21 +40,41 @@ export function usePlayFlow(args: {
   useEffect(() => {
     if (!enabled || rehydrated.current) return;
     rehydrated.current = true;
-    rehydrate(client, readClaimDraft())
+    const recoveryClient = guest
+      ? {
+          getCurrentClaim: () => client.getCurrentClaim({ anonymous: true }),
+          getClaimStatus: (id: string) =>
+            client.getClaimStatus(id, { anonymous: true }),
+        }
+      : client;
+    rehydrate(recoveryClient, readClaimDraft())
       .then((restored) => {
         if (restored.phase !== "IDLE") {
-          dispatch({ type: "RESTORE", state: restored });
+          dispatch({
+            type: "RESTORE",
+            state: guest ? { ...restored, guest: true } : restored,
+          });
         }
       })
       .catch(() => undefined);
-  }, [enabled, client]);
+  }, [enabled, client, guest]);
 
   // CLAIMING → POST /claims (get-or-create).
   useEffect(() => {
     if (state.phase !== "CLAIMING" || claimInFlight.current) return;
     claimInFlight.current = true;
     client
-      .createClaim(state.demo ? { demo: true } : {})
+      .createClaim(
+        state.demo
+          ? {
+              demo: true,
+              ...(state.turnstileToken === undefined
+                ? {}
+                : { turnstileToken: state.turnstileToken }),
+              ...(state.ref === undefined ? {} : { ref: state.ref }),
+            }
+          : {},
+      )
       .then((result) => {
         switch (result.kind) {
           case "claim":
@@ -74,13 +95,22 @@ export function usePlayFlow(args: {
           case "paused":
             dispatch({ type: "PAUSED" });
             break;
+          case "guest_used":
+            dispatch({ type: "GUEST_DEMO_USED" });
+            break;
+          case "turnstile_failed":
+            dispatch({
+              type: "GUEST_GATE_FAILED",
+              envelope: result.envelope,
+            });
+            break;
         }
       })
       .catch(() => dispatch({ type: "NO_BOARDS", retryAfterSeconds: 5 }))
       .finally(() => {
         claimInFlight.current = false;
       });
-  }, [state.phase, state.demo, client]);
+  }, [state.phase, state.demo, state.turnstileToken, state.ref, client]);
 
   // Demo settle: plain POST, no header, no wallet, ever (F-W4).
   // biome-ignore lint/correctness/useExhaustiveDependencies: fires on the phase transition only — re-running on claim/move context would double-submit
@@ -161,18 +191,21 @@ export function usePlayFlow(args: {
     }
     submitInFlight.current = true;
     const { claim, chosenMove } = state;
-    payMove({
-      claimId: claim.claimId,
-      moveUci: chosenMove.uci,
-      address,
-      stakeMicroUsdc: claim.stakeMicroUsdc,
-      meta: args.meta,
-      client,
-      onPhase: (phase) => {
-        if (phase === "settling")
-          dispatch({ type: "HEADER_READY", header: "" });
-      },
-    })
+    import("../wallet/x402.js")
+      .then(({ payMove }) =>
+        payMove({
+          claimId: claim.claimId,
+          moveUci: chosenMove.uci,
+          address,
+          stakeMicroUsdc: claim.stakeMicroUsdc,
+          meta: args.meta as Meta,
+          client,
+          onPhase: (phase) => {
+            if (phase === "settling")
+              dispatch({ type: "HEADER_READY", header: "" });
+          },
+        }),
+      )
       .then((outcome) => {
         dispatch({ type: "HEADER_READY", header: "" });
         switch (outcome.kind) {
@@ -273,20 +306,20 @@ export function usePlayFlow(args: {
 
   const refreshClaim = useCallback(() => {
     client
-      .getCurrentClaim()
+      .getCurrentClaim(guest ? { anonymous: true } : undefined)
       .then((claim) => {
         if (claim !== null) dispatch({ type: "CLAIM_REFRESHED", claim });
         else dispatch({ type: "CLAIM_EXPIRED" });
       })
       .catch(() => undefined);
-  }, [client]);
+  }, [client, guest]);
 
   // Timer expiry is cosmetic — confirm against the server before EXPIRED.
   const checkExpiry = useCallback(() => {
     const claimId = state.claim?.claimId;
     if (claimId === undefined) return;
     client
-      .getClaimStatus(claimId)
+      .getClaimStatus(claimId, guest ? { anonymous: true } : undefined)
       .then((status) => {
         if (status === null || status.status === "expired") {
           dispatch({ type: "CLAIM_EXPIRED" });
@@ -296,7 +329,7 @@ export function usePlayFlow(args: {
         // open → the settle-grace rule is playing out; keep the surface.
       })
       .catch(() => undefined);
-  }, [client, state.claim?.claimId]);
+  }, [client, guest, state.claim?.claimId]);
 
   const send = useCallback((event: PlayEvent) => dispatch(event), []);
 

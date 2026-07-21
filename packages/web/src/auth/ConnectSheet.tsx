@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ApiClient } from "../api/client.js";
 import type { Meta, PlayerView } from "../api/schemas.js";
+import { readRef } from "../lib/storage.js";
 import { loadWalletModule } from "../wallet/lazy.js";
 import type { WalletChoice, WalletModule } from "../wallet/provider.js";
 import { loginWithWallet, type PendingRegistration } from "./login.js";
@@ -12,7 +13,7 @@ import { RegistrationModal } from "./RegistrationModal.jsx";
 export function ConnectSheet(props: {
   readonly client: ApiClient;
   readonly meta: Meta;
-  readonly onSignedIn: (player: PlayerView) => void;
+  readonly onSignedIn: (player: PlayerView, linkedGuestClaims?: number) => void;
   readonly onClose: () => void;
 }) {
   const [wallets, setWallets] = useState<readonly WalletChoice[] | null>(null);
@@ -43,14 +44,16 @@ export function ConnectSheet(props: {
       try {
         module = await loadWalletModule();
         const wallet = await module.connect(id);
+        const ref = readRef();
         const outcome = await loginWithWallet({
           client: props.client,
           meta: props.meta,
           wallet,
+          ...(ref === null ? {} : { ref }),
         });
         switch (outcome.kind) {
           case "signed-in":
-            props.onSignedIn(outcome.player);
+            props.onSignedIn(outcome.player, outcome.linkedGuestClaims);
             return;
           case "registration-required":
             setPending(outcome.pending);
@@ -84,7 +87,9 @@ export function ConnectSheet(props: {
         client={props.client}
         meta={props.meta}
         pending={pending}
-        onRegistered={props.onSignedIn}
+        onRegistered={(response) =>
+          props.onSignedIn(response.player, response.linkedGuestClaims)
+        }
         onCancel={props.onClose}
       />
     );

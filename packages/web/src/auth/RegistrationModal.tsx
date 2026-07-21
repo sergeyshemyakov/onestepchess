@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type ApiClient, ApiError } from "../api/client.js";
-import type { Meta, PlayerView } from "../api/schemas.js";
+import type { Meta, VerifyResponse } from "../api/schemas.js";
 import type { PendingRegistration } from "./login.js";
 import { obtainTurnstileToken } from "./turnstile.js";
 
@@ -21,7 +21,7 @@ export function RegistrationModal(props: {
   readonly client: ApiClient;
   readonly meta: Meta;
   readonly pending: PendingRegistration;
-  readonly onRegistered: (player: PlayerView) => void;
+  readonly onRegistered: (response: VerifyResponse) => void;
   readonly onCancel: () => void;
 }) {
   const [nickname, setNickname] = useState("");
@@ -72,7 +72,7 @@ export function RegistrationModal(props: {
         nickname,
         turnstileToken: token,
       });
-      props.onRegistered(response.player);
+      props.onRegistered(response);
     } catch (caught) {
       if (caught instanceof ApiError) {
         const hint = caught.envelope.hint;

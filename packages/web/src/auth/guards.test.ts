@@ -12,6 +12,7 @@ const ADDRESS = account.addr.toString();
 const NONCE = "abc123";
 
 type TxnTweaks = {
+  readonly sender?: string;
   readonly receiver?: string;
   readonly amount?: number;
   readonly fee?: number;
@@ -27,7 +28,7 @@ type TxnTweaks = {
 
 function fallbackTxnB64(tweaks: TxnTweaks = {}): string {
   const txn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
-    sender: ADDRESS,
+    sender: tweaks.sender ?? ADDRESS,
     receiver: tweaks.receiver ?? ADDRESS,
     amount: tweaks.amount ?? 0,
     note: new TextEncoder().encode(tweaks.note ?? `osc-auth:${NONCE}`),
@@ -85,6 +86,11 @@ describe("fallback-txn pre-sign guard matrix (F-W2)", () => {
 
   const rejections: readonly [string, TxnTweaks, string][] = [
     [
+      "sender differs from the connected address",
+      { sender: other.addr.toString() },
+      "sender",
+    ],
+    [
       "receiver differs from sender",
       { receiver: other.addr.toString() },
       "receiver",
@@ -93,6 +99,11 @@ describe("fallback-txn pre-sign guard matrix (F-W2)", () => {
     ["non-zero fee", { fee: 1_000 }, "fee"],
     ["wrong note", { note: "osc-auth:othernonce" }, "note"],
     ["live validity window", { firstValid: 10, lastValid: 1_000 }, "validity"],
+    [
+      "wrong genesis hash",
+      { genesisHash: "SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=" },
+      "genesis",
+    ],
     ["close-to set", { closeRemainderTo: other.addr.toString() }, "close"],
     ["rekey set", { rekeyTo: other.addr.toString() }, "rekey"],
     ["lease set", { lease: new Uint8Array(32).fill(3) }, "lease"],
@@ -139,6 +150,44 @@ describe("fallback-txn pre-sign guard matrix (F-W2)", () => {
         field: "decode",
       },
     );
+  });
+
+  it("fallback_auth_guards_every_field_before_wallet_signing", async () => {
+    const meta = { network: { caip2: `algorand:${MAINNET_HASH}` } } as Meta;
+    for (const [label, tweaks, field] of rejections) {
+      const signTransactions = vi.fn();
+      const client = {
+        authChallenge: vi.fn(async () => ({
+          nonce: NONCE,
+          expiresAt: "2026-07-21T15:00:00Z",
+          arc60Payload: {
+            data: "e30=",
+            metadata: { scope: 1, encoding: "base64" },
+          },
+          fallbackTxnB64: fallbackTxnB64(tweaks),
+        })),
+        authVerify: vi.fn(),
+      };
+      const outcome = await loginWithWallet({
+        // biome-ignore lint/suspicious/noExplicitAny: focused auth client double
+        client: client as any,
+        meta,
+        wallet: {
+          address: ADDRESS,
+          walletName: "guard spy",
+          signTransactions,
+        },
+      });
+      expect(outcome, label).toMatchObject({ kind: "error" });
+      expect(
+        signTransactions,
+        `${field} reached the wallet`,
+      ).not.toHaveBeenCalled();
+      expect(
+        client.authVerify,
+        `${field} reached verify`,
+      ).not.toHaveBeenCalled();
+    }
   });
 });
 

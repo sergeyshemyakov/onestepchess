@@ -1,19 +1,37 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ApiClient } from "../api/client.js";
 import type { Meta, PlayerView } from "../api/schemas.js";
 import { ConnectSheet } from "../auth/ConnectSheet.jsx";
 import { AlgorandMark } from "../board/pieces.jsx";
 import { AppShell } from "../components/AppShell.jsx";
+import { readGuestDemo, writeGuestDemo } from "../lib/storage.js";
+import { PlayView } from "../play/PlayView.jsx";
+import { usePlayFlow } from "../play/usePlayFlow.js";
 
-/** Release-1 landing: the wallet door only. The full two-door onboarding,
- * guest demo, and replay strip are Release 2 (W7/F-W4a) — no dead controls
- * implying support (release plan §2.8). */
 export function Landing(props: {
   readonly client: ApiClient;
   readonly meta: Meta;
-  readonly onSignedIn: (player: PlayerView) => void;
+  readonly onSignedIn: (player: PlayerView, linkedGuestClaims?: number) => void;
 }) {
   const [connecting, setConnecting] = useState(false);
+  const [guestDemo, setGuestDemo] = useState(readGuestDemo);
+  const flow = usePlayFlow({
+    client: props.client,
+    meta: props.meta,
+    address: null,
+    enabled: true,
+    guest: true,
+  });
+
+  useEffect(() => {
+    if (flow.state.phase === "RECEIPT" && flow.state.guest === true) {
+      writeGuestDemo("played");
+      setGuestDemo("played");
+    } else if (flow.state.phase === "EXPIRED" && flow.state.guest === true) {
+      writeGuestDemo("expired");
+      setGuestDemo("expired");
+    }
+  }, [flow.state.phase, flow.state.guest]);
 
   return (
     <AppShell>
@@ -37,6 +55,28 @@ export function Landing(props: {
                 connect &amp; sign — one free signature, nothing is broadcast
               </span>
             </button>
+            <a className="bigplay" href="/start">
+              <span className="bp-title">I DON'T HAVE ONE YET →</span>
+              <span className="bp-sub">set up a wallet, USDC and gas</span>
+            </a>
+            {guestDemo === null ? (
+              <button
+                type="button"
+                className="bigplay demo"
+                onClick={() =>
+                  flow.send({ type: "PLAY", demo: true, guest: true })
+                }
+              >
+                <span className="bp-title">PLAY A DEMO GAME</span>
+                <span className="bp-sub">
+                  $0 · no wallet needed · you make one real move
+                </span>
+              </button>
+            ) : (
+              <p className="console" data-testid="guest-demo-nudge">
+                &gt; you have a demo game waiting — log in to see how it ends
+              </p>
+            )}
           </div>
           <p className="faintt" style={{ marginTop: 14, fontSize: 12 }}>
             internal playtest — mock settlement, no real USDC.
@@ -67,6 +107,13 @@ export function Landing(props: {
         </span>
         <span>· built for the x402 global challenge</span>
       </div>
+      {flow.state.phase !== "IDLE" ? (
+        <PlayView
+          flow={flow}
+          meta={props.meta}
+          onWalletIntent={() => setConnecting(true)}
+        />
+      ) : null}
       {connecting ? (
         <ConnectSheet
           client={props.client}

@@ -4,6 +4,7 @@ import type { ApiClient } from "./api/client.js";
 import { SessionProvider, useSession } from "./auth/SessionContext.jsx";
 import { AppShell } from "./components/AppShell.jsx";
 import { ToastProvider, useToasts } from "./components/Toasts.jsx";
+import { clearRef, writeGuestDemo } from "./lib/storage.js";
 import { MetaProvider, useMeta } from "./meta/MetaContext.jsx";
 import { Hub } from "./routes/Hub.jsx";
 import { Landing } from "./routes/Landing.jsx";
@@ -41,10 +42,26 @@ function BootSkeleton() {
 function Home(props: { readonly client: ApiClient }) {
   const { session, signedIn } = useSession();
   const { meta } = useMeta();
+  const { push } = useToasts();
 
   if (meta === null || session.status === "probing") return <BootSkeleton />;
   if (session.status === "out") {
-    return <Landing client={props.client} meta={meta} onSignedIn={signedIn} />;
+    return (
+      <Landing
+        client={props.client}
+        meta={meta}
+        onSignedIn={(player, linkedGuestClaims) => {
+          writeGuestDemo(null);
+          clearRef();
+          signedIn(player);
+          if ((linkedGuestClaims ?? 0) > 0) {
+            push(
+              "your demo game is linked — the outcome will land in your finished pane",
+            );
+          }
+        }}
+      />
+    );
   }
   return <Hub client={props.client} meta={meta} player={session.player} />;
 }

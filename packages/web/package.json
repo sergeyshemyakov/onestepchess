@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "vitest run",
+    "test": "pnpm --dir ../.. exec vitest run --project @onestepchess/web",
     "typecheck": "tsc --noEmit",
     "generate:test-mnemonics": "node scripts/generate-test-mnemonics.mjs"
   },

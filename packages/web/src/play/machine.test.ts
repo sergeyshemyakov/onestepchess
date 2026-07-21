@@ -132,6 +132,60 @@ describe("focus and confirm (§5.5)", () => {
 });
 
 describe("signing and settling error branches (F-W10 rows)", () => {
+  it("wallet_rejection_and_payment_errors_preserve_claim_and_move", () => {
+    const walletRejected = playReducer(signing, { type: "WALLET_REJECTED" });
+    expect(walletRejected).toMatchObject({
+      phase: "CONFIRM",
+      claim,
+      chosenMove: move,
+    });
+
+    const paymentFailed = playReducer(settling, {
+      type: "PAYMENT_FAILED",
+      envelope,
+    });
+    expect(paymentFailed).toMatchObject({
+      phase: "CONFIRM",
+      claim,
+      chosenMove: move,
+      error: envelope,
+    });
+    for (const event of [
+      { type: "PAYMENT_PENDING" as const, retryAfterSeconds: 5 },
+      { type: "PAYMENT_IN_FLIGHT" as const },
+    ]) {
+      expect(playReducer(settling, event)).toMatchObject({
+        phase: "SETTLING",
+        claim,
+        chosenMove: move,
+        settlePoll: true,
+        paymentHeader: "hdr",
+      });
+    }
+    expect(
+      playReducer(settling, {
+        type: "PAYMENT_UNAVAILABLE",
+        retryAfterSeconds: 7,
+      }),
+    ).toMatchObject({
+      phase: "CONFIRM",
+      claim,
+      chosenMove: move,
+      retryAfterSeconds: 7,
+    });
+
+    const refreshed = { ...claim, legalMoves: [{ uci: "d2d4", san: "d4" }] };
+    for (const _desync of ["ILLEGAL_MOVE", "AMBIGUOUS_MOVE"]) {
+      expect(
+        playReducer(confirm, { type: "CLAIM_REFRESHED", claim: refreshed }),
+      ).toMatchObject({ phase: "FOCUS", claim: refreshed });
+    }
+    expect(playReducer(confirm, { type: "CLAIM_EXPIRED" })).toMatchObject({
+      phase: "EXPIRED",
+      demo: false,
+    });
+  });
+
   it("wallet-reject returns to CONFIRM with move preserved and claim live", () => {
     const next = playReducer(signing, { type: "WALLET_REJECTED" });
     expect(next).toMatchObject({ phase: "CONFIRM", chosenMove: move, claim });
