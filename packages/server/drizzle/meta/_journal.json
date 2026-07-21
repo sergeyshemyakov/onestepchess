@@ -15,6 +15,13 @@
       "when": 1784300000000,
       "tag": "0001_release2_human_reads",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1784400000000,
+      "tag": "0002_release2_incentives",
+      "breakpoints": true
     }
   ]
 }

@@ -232,3 +232,94 @@ describe("claim issuance (F3/F5)", () => {
     expect((await claim(stack, "alice")).claim).toBeNull();
   });
 });
+
+describe("referral award through the settled move path (F15 step 4)", () => {
+  it("credits the referrer once when the referred human's qualifying move settles", async () => {
+    const stack = setup({ GAME_POOL_TARGET: 4 });
+    const now = Date.now();
+    stack.database.sqlite
+      .prepare(
+        "INSERT INTO players(address, kind, nickname, created_at, banned) VALUES ('referrer', 'human', 'referrer', ?, false)",
+      )
+      .run(now);
+    stack.database.sqlite
+      .prepare(
+        "INSERT INTO players(address, kind, nickname, created_at, banned, referred_by) VALUES ('referee', 'human', 'referee', ?, false, 'referrer')",
+      )
+      .run(now);
+    await stack.coordinator.dispatch({ type: "PoolTick", payload: {} });
+    await stack.coordinator.onIdle();
+
+    // Two qualifying staked moves already banked in a prior finished game.
+    stack.database.sqlite
+      .prepare(
+        "INSERT INTO games(id, name, status, fen, rules_json, ply, last_ply_at, created_at, result, finished_at) VALUES ('gm_prior', 'prior', 'finished', 'fen', '{}', 2, ?, ?, 'white', ?)",
+      )
+      .run(now, now, now);
+    for (const n of [1, 2]) {
+      stack.database.sqlite
+        .prepare(
+          "INSERT INTO claims(id, game_id, player, side, demo, stake_microusdc, status, created_at, deadline, moved_ply) VALUES (?, 'gm_prior', 'referee', 'white', false, 1000, 'moved', ?, ?, ?)",
+        )
+        .run(`clm_prior_${n}`, now, now, n);
+      stack.database.sqlite
+        .prepare(
+          "INSERT INTO stake_entries(id, game_id, claim_id, player, side, kind, amount, pay_txid, ply, created_at) VALUES (?, 'gm_prior', ?, 'referee', 'white', 'human', 1000, ?, ?, ?)",
+        )
+        .run(`se_prior_${n}`, `clm_prior_${n}`, `tx_prior_${n}`, n, now);
+    }
+
+    const settleMove = async (
+      claimId: string,
+      gameId: string,
+      txid: string,
+    ) => {
+      stack.database.sqlite
+        .prepare(
+          "INSERT INTO claims(id, game_id, player, side, demo, stake_microusdc, status, created_at, deadline) VALUES (?, ?, 'referee', 'white', false, 1000, 'open', ?, ?)",
+        )
+        .run(claimId, gameId, now, now + 60_000);
+      await stack.coordinator.dispatch({
+        type: "MoveSettled",
+        payload: {
+          claimId,
+          player: "referee",
+          move: { uci: "e2e4", san: "e4" },
+          clientTxid: `ct_${txid}`,
+          txid,
+          response: "resp",
+        },
+      });
+    };
+    const activeGames = stack.database.sqlite
+      .prepare("SELECT id FROM games WHERE status = 'active'")
+      .all() as { id: string }[];
+    const [first, second] = activeGames;
+    if (first === undefined || second === undefined)
+      throw new Error("expected active pool games");
+
+    // The qualifying (3rd) staked move fires exactly one referral award.
+    await settleMove("clm_live_1", first.id, "tx_live_1");
+    const referrer = () =>
+      stack.database.sqlite
+        .prepare("SELECT points, ref_qualified FROM players WHERE address = ?")
+        .get("referrer") as { points: number; ref_qualified: number };
+    expect(referrer()).toEqual({ points: 50, ref_qualified: 1 });
+    expect(
+      stack.database.sqlite
+        .prepare("SELECT referral_awarded_at FROM players WHERE address = ?")
+        .get("referee"),
+    ).not.toEqual({ referral_awarded_at: null });
+
+    // A later staked move never re-awards.
+    await settleMove("clm_live_2", second.id, "tx_live_2");
+    expect(referrer()).toEqual({ points: 50, ref_qualified: 1 });
+    expect(
+      stack.database.sqlite
+        .prepare(
+          "SELECT count(*) AS n FROM point_awards WHERE reason = 'referral'",
+        )
+        .get(),
+    ).toEqual({ n: 1 });
+  });
+});

@@ -12,6 +12,7 @@ import type { ServerConfig } from "../config.js";
 import type { Db } from "../db/open.js";
 import { schema } from "../db/open.js";
 import { newId } from "../ids.js";
+import { maybeAwardReferral } from "../incentives/points.js";
 import type { ChessAdapterRegistry } from "./chess-registry.js";
 import type { LifecycleApi } from "./lifecycle.js";
 import type { Coordinator } from "./queue.js";
@@ -29,6 +30,7 @@ export type ClaimDeps = {
   readonly rail: PaymentRail;
   readonly now: () => number;
   readonly rng: () => number;
+  readonly publicStats?: { recordStakedMoveSettled(isHuman: boolean): void };
 };
 
 export type ClaimRecord = typeof schema.claims.$inferSelect;
@@ -393,7 +395,10 @@ export function registerClaimCommands(deps: ClaimDeps): void {
         player: string;
         kind: "human" | "agent" | "guest";
         demo: boolean;
-        createGuest?: { turnstileVerifiedAt: number };
+        createGuest?: {
+          turnstileVerifiedAt: number;
+          referredBy: string | null;
+        };
       },
     ) => {
       const existingId = deps.views.openClaimByPlayer.get(payload.player);
@@ -536,6 +541,9 @@ export function registerClaimCommands(deps: ClaimDeps): void {
             nickname: null,
             createdAt: ctx.now,
             turnstileVerifiedAt: payload.createGuest.turnstileVerifiedAt,
+            // Guests carry referred_by too, so link-on-login can propagate it
+            // into a fresh registration (F15 step 3).
+            referredBy: payload.createGuest.referredBy,
           })
           .run();
       }
@@ -689,11 +697,37 @@ export function registerClaimCommands(deps: ClaimDeps): void {
         })
         .where(eq(schema.paymentIntents.clientTxid, payload.clientTxid))
         .run();
-      return moveClaim(deps, ctx, {
+      const receipt = moveClaim(deps, ctx, {
         claim,
         move: payload.move,
         txid: payload.txid,
       });
+      // A referral is credited once, on the referred human's qualifying staked
+      // move (F15 step 4) — after moveClaim has written this move's stake entry,
+      // so the count includes it. Same transaction; never touches payouts (I11).
+      const cfg = deps.config();
+      maybeAwardReferral(
+        deps.db,
+        ctx.now,
+        {
+          referralQualifyMoves: cfg.REFERRAL_QUALIFY_MOVES,
+          referralPoints: cfg.REFERRAL_POINTS,
+        },
+        payload.player,
+      );
+      if (deps.publicStats !== undefined) {
+        // Public stats (F16): every settled staked move; human ones also count
+        // toward humanMoves. The player-row kind is authoritative.
+        const kind = deps.db
+          .select({ kind: schema.players.kind })
+          .from(schema.players)
+          .where(eq(schema.players.address, payload.player))
+          .get()?.kind;
+        ctx.afterCommit(() =>
+          deps.publicStats?.recordStakedMoveSettled(kind === "human"),
+        );
+      }
+      return receipt;
     },
   );
   deps.coordinator.register(

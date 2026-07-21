@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import type { Hono } from "hono";
 import type { CoordinatorViews } from "../../coordinator/views.js";
 import { schema } from "../../db/open.js";
+import type { PublicStats } from "../../incentives/stats.js";
 import { type AppEnv, AppError } from "../app.js";
 import { type AuthRouteDeps, sessionAuth } from "./auth.js";
 
@@ -13,6 +14,7 @@ export type DiscoveryDeps = Pick<
   readonly mode: () => "running" | "paused";
   readonly rail: { readonly treasuryAddress: string };
   readonly publicBaseUrl: string;
+  readonly publicStats?: PublicStats;
 };
 
 export function registerDiscoveryRoutes(
@@ -72,6 +74,11 @@ export function registerDiscoveryRoutes(
       },
       status: { mode: deps.mode(), banner: state?.banner ?? null },
       turnstileSiteKey: config.TURNSTILE_SITE_KEY,
+      // The stats strip ships dark; present only when PUBLIC_STATS_ENABLED and
+      // the boot-rebuilt counters are wired (F16 step 4).
+      ...(config.PUBLIC_STATS_ENABLED && deps.publicStats !== undefined
+        ? { stats: deps.publicStats.snapshot() }
+        : {}),
       rules:
         "One move at a time. Your position and legal moves are private until the game resolves.",
       docs: {

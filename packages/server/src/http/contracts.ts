@@ -155,6 +155,15 @@ const profile = playerView.extend({
     .optional(),
   quotas: z.object({ staked: quota, demo: quota }),
   deprioritizedUntil: isoTimestamp.nullable(),
+  // Humans-only incentive fields (F15) — absent for agents.
+  points: z.number().int().nonnegative().optional(),
+  refCode: z.string().nullable().optional(),
+  referrals: z
+    .object({
+      joined: z.number().int().nonnegative(),
+      qualified: z.number().int().nonnegative(),
+    })
+    .optional(),
 });
 
 const gameCardCommon = z.object({
@@ -286,6 +295,15 @@ const metaResponse = z.object({
     banner: z.string().nullable(),
   }),
   turnstileSiteKey: z.string(),
+  // Present only when PUBLIC_STATS_ENABLED (F16 step 4).
+  stats: z
+    .object({
+      humanMoves: z.number().int().nonnegative(),
+      playersRegistered: z.number().int().nonnegative(),
+      gamesFinished: z.number().int().nonnegative(),
+      movesSettled: z.number().int().nonnegative(),
+    })
+    .optional(),
   rules: z.string(),
   docs: z.object({
     llms: z.url(),

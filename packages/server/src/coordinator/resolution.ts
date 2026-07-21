@@ -5,10 +5,12 @@ import {
   toPgn,
 } from "@onestepchess/core";
 import { and, eq, inArray, sql } from "drizzle-orm";
+import type { ServerConfig } from "../config.js";
 import { bumpLedgerBalance } from "../db/ledger.js";
 import type { Db } from "../db/open.js";
 import { schema } from "../db/open.js";
 import { newId } from "../ids.js";
+import { awardResolutionPoints } from "../incentives/points.js";
 import type { Logger } from "../logger.js";
 import type { CommandContext, Coordinator } from "./queue.js";
 import { parseGameRules } from "./timers.js";
@@ -17,10 +19,12 @@ export type ResolutionDeps = {
   readonly coordinator: Coordinator;
   readonly db: Db;
   readonly logger: Logger;
+  readonly config?: () => ServerConfig;
   readonly metrics?: {
     recordGameFinished(): void;
     recordPayoutQueued(count?: number): void;
   };
+  readonly publicStats?: { recordGameFinished(): void };
   /** Injectable so a test seam can force an I4 conservation violation; the
    * server re-checks conservation independently of core before writing jobs. */
   readonly resolve?: typeof coreResolve;
@@ -195,6 +199,22 @@ export function registerResolution(deps: ResolutionDeps): void {
       }
 
       materializeReplayAndStats(db, game, stakeRows);
+      // Non-monetary points for staked human participants (F15 step 1); written
+      // in the same transaction, entirely downstream of the payout math above so
+      // it can never influence jobs or ledger rows (I11).
+      const config = deps.config?.();
+      if (config !== undefined) {
+        awardResolutionPoints(
+          db,
+          ctx.now,
+          game.result as GameResult,
+          stakeRows,
+          {
+            pointsMove: config.POINTS_MOVE,
+            pointsWin: config.POINTS_WIN,
+          },
+        );
+      }
       emitGameResolved(db, ctx, game, stakeRows, payoutByEntry);
 
       // resolved_at is written last — the idempotency marker only appears once
@@ -206,6 +226,7 @@ export function registerResolution(deps: ResolutionDeps): void {
 
       ctx.afterCommit(() => {
         deps.metrics?.recordGameFinished();
+        deps.publicStats?.recordGameFinished();
         if (jobByRecipient.size > 0) {
           deps.metrics?.recordPayoutQueued(jobByRecipient.size);
         }

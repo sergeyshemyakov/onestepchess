@@ -36,6 +36,8 @@ import {
   registerHumanRoutes,
 } from "./http/routes/human.js";
 import { jsonCompression, registerStaticRoutes } from "./http/static.js";
+import { backfillPoints } from "./incentives/points.js";
+import { PublicStats } from "./incentives/stats.js";
 import { createLogger } from "./logger.js";
 import { Metrics, registerMetricsRoute } from "./metrics.js";
 import {
@@ -189,6 +191,7 @@ export async function main(): Promise<void> {
     logger,
   });
   const metrics = new Metrics({ now: Date.now });
+  const publicStats = new PublicStats();
   const unsubscribeEvents = coordinator.onEvent((event) => {
     events.publish(event);
   });
@@ -245,9 +248,17 @@ export async function main(): Promise<void> {
     now: Date.now,
     rng: Math.random,
     turnstile,
+    publicStats,
   } as const;
   registerClaimCommands(claimDeps);
-  registerResolution({ coordinator, db, logger, metrics });
+  registerResolution({
+    coordinator,
+    db,
+    logger,
+    config: () => config,
+    metrics,
+    publicStats,
+  });
   const payoutDeps = {
     coordinator,
     db,
@@ -291,6 +302,15 @@ export async function main(): Promise<void> {
   // Resume payout batches and pay out any freshly-recovered resolutions
   // (F1 step 6) before serving.
   await runPayouts();
+  // Deterministic, idempotent points backfill of pre-incentive history (F15
+  // step 6); a no-op once every terminal game already has its award rows.
+  backfillPoints(db, now, {
+    pointsMove: config.POINTS_MOVE,
+    pointsWin: config.POINTS_WIN,
+  });
+  // Public-stats counters are cumulative in memory, seeded from SQL at boot so
+  // a restart converges to ground truth (F16 step 4).
+  publicStats.rebuild(db);
   events.prune(now);
   rearmTimers(db, timers, now, config.TIMER_REVEAL_SECONDS);
   await coordinator.dispatch({ type: "PoolTick", payload: {} });
@@ -374,6 +394,7 @@ export async function main(): Promise<void> {
     now: Date.now,
     rng: Math.random,
     coordinator,
+    publicStats,
   } as const;
   registerAuthRoutes(app, authDeps);
   registerClaimRoutes(app, {
@@ -419,6 +440,7 @@ export async function main(): Promise<void> {
     mode,
     rail,
     publicBaseUrl: loaded.env.PUBLIC_BASE_URL,
+    publicStats,
   });
   registerLlmsRoute(app);
   registerOpenApiRoute(app, { publicBaseUrl: loaded.env.PUBLIC_BASE_URL });
@@ -435,6 +457,7 @@ export async function main(): Promise<void> {
     staticDir: new URL("../../web/dist", import.meta.url).pathname,
     config: () => config,
     publicBaseUrl: loaded.env.PUBLIC_BASE_URL,
+    db,
   });
 
   const server = serve({ fetch: app.fetch, port: loaded.env.PORT }, (info) => {
