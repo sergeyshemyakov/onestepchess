@@ -369,6 +369,7 @@ export function registerAuthRoutes(
     // Captured once: the linking guest drives both ref inheritance (F15 step 3,
     // below) and the LinkGuest command further down.
     const guest = guestIdentity(deps, c);
+    let inheritGuestReferral = false;
 
     if (player === undefined) {
       // Registration path (F2 step 3) — `kind` is immutable forever (D11);
@@ -430,14 +431,13 @@ export function registerAuthRoutes(
       let referredBy: string | null = null;
       if (body.kind === "human") {
         refCode = freeRefCode(deps.db, deps.rng);
-        referredBy = resolveReferrer(deps.db, body.ref, body.address);
-        if (referredBy === null && guest !== null) {
-          referredBy =
-            deps.db
-              .select({ referredBy: schema.players.referredBy })
-              .from(schema.players)
-              .where(eq(schema.players.address, guest))
-              .get()?.referredBy ?? null;
+        // A supplied direct code is authoritative even when invalid: bad/self
+        // codes are ignored, while guest inheritance is reserved for a request
+        // carrying no direct code at all (F15 step 3).
+        if (body.ref !== undefined) {
+          referredBy = resolveReferrer(deps.db, body.ref, body.address);
+        } else {
+          inheritGuestReferral = guest !== null;
         }
         if (referredBy === body.address) referredBy = null;
       }
@@ -469,11 +469,15 @@ export function registerAuthRoutes(
     let linkedGuestClaims: number | undefined;
     if (guest !== null && deps.coordinator !== undefined) {
       const linked = await deps.coordinator.dispatch<
-        { guest: string; player: string },
+        { guest: string; player: string; inheritReferral?: boolean },
         { linked: boolean; claims: number }
       >({
         type: "LinkGuest",
-        payload: { guest, player: player.address },
+        payload: {
+          guest,
+          player: player.address,
+          inheritReferral: inheritGuestReferral,
+        },
         refIds: [guest, player.address],
       });
       if (linked.kind === "ok" && linked.result.linked) {

@@ -10,7 +10,11 @@ import type { Db } from "../../db/open.js";
 import { schema } from "../../db/open.js";
 import { generateName } from "../../names.js";
 import { type AppEnv, AppError } from "../app.js";
-import { gamesQuerySchema, renameBodySchema } from "../contracts.js";
+import {
+  cardQuerySchema,
+  gamesQuerySchema,
+  renameBodySchema,
+} from "../contracts.js";
 import { type AuthRouteDeps, sessionAuth } from "./auth.js";
 
 const DAY_MS = 86_400_000;
@@ -496,16 +500,11 @@ export function registerHumanRoutes(
     if (stored.plies.length === 0)
       throw new AppError("GAME_NOT_FOUND", { hint: "game not found" });
     let plyIndex = stored.plies.length;
-    const plyParam = c.req.query("ply");
-    if (plyParam !== undefined) {
-      const parsed = Number(plyParam);
-      if (
-        !Number.isInteger(parsed) ||
-        parsed < 1 ||
-        parsed > stored.plies.length
-      )
+    const query = parseQuery(cardQuerySchema, { ply: c.req.query("ply") });
+    if (query.ply !== undefined) {
+      if (query.ply > stored.plies.length)
         throw new AppError("INVALID_REQUEST", { hint: "ply out of range" });
-      plyIndex = parsed;
+      plyIndex = query.ply;
     }
     const ply = stored.plies[plyIndex - 1];
     if (ply === undefined)

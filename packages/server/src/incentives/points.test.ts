@@ -399,13 +399,22 @@ describe("points backfill (F15 step 6)", () => {
 
     // Both databases get byte-identical histories (same claim/game ids).
     seq = 0;
-    const dbA = fresh();
+    const databaseA = openDatabase({ path: ":memory:" });
+    databases.push(databaseA);
+    const dbA = databaseA.db;
     seedHistory(dbA);
     backfillPoints(dbA, 42, CONFIG);
     const firstRun = snapshot(dbA);
     // Idempotent: a second pass on the same database changes nothing.
+    const changesBeforeRetry = databaseA.sqlite
+      .prepare("SELECT total_changes() AS n")
+      .get() as { n: number };
     backfillPoints(dbA, 99, CONFIG);
     expect(snapshot(dbA)).toEqual(firstRun);
+    const changesAfterRetry = databaseA.sqlite
+      .prepare("SELECT total_changes() AS n")
+      .get() as { n: number };
+    expect(changesAfterRetry.n).toBe(changesBeforeRetry.n);
 
     // Deterministic: an independent database with the same history matches.
     seq = 0;
@@ -420,5 +429,30 @@ describe("points backfill (F15 step 6)", () => {
     expect(points(dbA, "bob")).toBe(20);
     expect(points(dbA, "bot")).toBe(0);
     expect(points(dbA, "carol")).toBe(0);
+  });
+
+  it("rolls back award facts when a cached-counter update fails", () => {
+    const database = openDatabase({ path: ":memory:" });
+    databases.push(database);
+    seedGame(database.db, {
+      gameId: "gm_atomic_backfill",
+      result: "white",
+      entries: [
+        { player: "alice", kind: "human", side: "white", amount: 1_000 },
+      ],
+    });
+    database.sqlite.exec(`
+      CREATE TRIGGER reject_points_update
+      BEFORE UPDATE OF points ON players
+      BEGIN
+        SELECT RAISE(ABORT, 'counter update rejected');
+      END;
+    `);
+
+    expect(() => backfillPoints(database.db, 42, CONFIG)).toThrow(
+      "counter update rejected",
+    );
+    expect(database.db.select().from(schema.pointAwards).all()).toEqual([]);
+    expect(points(database.db, "alice")).toBe(0);
   });
 });

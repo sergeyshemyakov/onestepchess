@@ -18,6 +18,7 @@ const PUBLIC_HUMAN_ROUTES: ReadonlyArray<readonly [string, string]> = [
   ["patch", "/api/v1/my/profile"],
   ["get", "/api/v1/my/games"],
   ["get", "/api/v1/games/{id}/replay"],
+  ["get", "/api/v1/games/{id}/card.png"],
   ["post", "/api/v1/claims"],
   ["get", "/api/v1/claims/current"],
   ["get", "/api/v1/claims/{id}/status"],

@@ -56,6 +56,12 @@ export const gamesQuerySchema = z
   })
   .strict();
 
+export const cardQuerySchema = z
+  .object({
+    ply: z.coerce.number().int().positive().optional(),
+  })
+  .strict();
+
 const errorEnvelope = z
   .object({
     error: z.string(),
@@ -452,6 +458,23 @@ export const publicApiRoutes = [
     },
   }),
   createRoute({
+    method: "get",
+    path: "/api/v1/games/{id}/card.png",
+    tags: ["human"],
+    summary: "Share-card image for a terminal game",
+    request: { params: idParam, query: cardQuerySchema },
+    responses: {
+      200: {
+        description: "1200 by 630 PNG share card",
+        content: {
+          "image/png": { schema: z.string().meta({ format: "binary" }) },
+        },
+      },
+      400: json("Invalid or out-of-range ply", errorEnvelope),
+      404: json("Game not found or not terminal", errorEnvelope),
+    },
+  }),
+  createRoute({
     method: "post",
     path: "/api/v1/claims",
     tags: ["claims"],
@@ -540,6 +563,7 @@ export const publicApiSchemas = {
   moveBody: moveBodySchema,
   renameBody: renameBodySchema,
   gamesQuery: gamesQuerySchema,
+  cardQuery: cardQuerySchema,
   challengeResponse,
   verifyResponse,
   claimResponse,

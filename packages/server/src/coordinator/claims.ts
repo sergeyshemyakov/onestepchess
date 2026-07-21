@@ -13,6 +13,7 @@ import type { Db } from "../db/open.js";
 import { schema } from "../db/open.js";
 import { newId } from "../ids.js";
 import { maybeAwardReferral } from "../incentives/points.js";
+import { bumpRefJoined } from "../incentives/referrals.js";
 import type { ChessAdapterRegistry } from "./chess-registry.js";
 import type { LifecycleApi } from "./lifecycle.js";
 import type { Coordinator } from "./queue.js";
@@ -568,7 +569,14 @@ export function registerClaimCommands(deps: ClaimDeps): void {
 
   deps.coordinator.register(
     "LinkGuest",
-    (ctx, payload: { guest: string; player: string }) => {
+    (
+      ctx,
+      payload: {
+        guest: string;
+        player: string;
+        inheritReferral?: boolean;
+      },
+    ) => {
       const guest = deps.db
         .select()
         .from(schema.players)
@@ -580,6 +588,38 @@ export function registerClaimCommands(deps: ClaimDeps): void {
         guest.linkedAddress !== null
       )
         return { linked: false as const, claims: 0 };
+
+      if (
+        payload.inheritReferral === true &&
+        guest.referredBy !== null &&
+        guest.referredBy !== payload.player
+      ) {
+        const player = deps.db
+          .select({
+            kind: schema.players.kind,
+            referredBy: schema.players.referredBy,
+          })
+          .from(schema.players)
+          .where(eq(schema.players.address, payload.player))
+          .get();
+        const referrer = deps.db
+          .select({ address: schema.players.address })
+          .from(schema.players)
+          .where(eq(schema.players.address, guest.referredBy))
+          .get();
+        if (
+          player?.kind === "human" &&
+          player.referredBy === null &&
+          referrer !== undefined
+        ) {
+          deps.db
+            .update(schema.players)
+            .set({ referredBy: referrer.address })
+            .where(eq(schema.players.address, payload.player))
+            .run();
+          bumpRefJoined(deps.db, referrer.address);
+        }
+      }
 
       const existingSides = new Map<string, "white" | "black">();
       for (const row of deps.db

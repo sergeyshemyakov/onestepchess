@@ -832,5 +832,60 @@ describe("referral capture (F15 step 3)", () => {
       ref: otherCode,
     });
     expect(playerRow(overrideWallet.address)?.referredBy).toBe(other.address);
+
+    // A supplied but invalid direct code is ignored; it must not silently fall
+    // back to the guest's stored attribution. Guest propagation applies only
+    // when registration carries no direct code at all.
+    stack.setNow(stack.now() + 60_000);
+    await poolTick(stack);
+    const guest3 = await postClaims(stack, {
+      demo: true,
+      turnstileToken: "tok-ref3",
+      ref: refCode,
+    });
+    const invalidOverride = nobleIdentity();
+    await verify(stack, invalidOverride, {
+      nickname: "invalid-override",
+      guestCookie: guestCookieOf(guest3),
+      ref: "no-such-direct-code",
+    });
+    expect(playerRow(invalidOverride.address)?.referredBy).toBeNull();
+    expect(playerRow(referrer.address)?.refJoined).toBe(2);
+
+    // Referral propagation is part of the one successful LinkGuest command.
+    // A second registration racing with the same cookie cannot inherit or bump
+    // the counter after the guest has already been consumed.
+    const raceGuest = "guest_referral_race";
+    stack.database.db
+      .insert(schema.players)
+      .values({
+        address: raceGuest,
+        kind: "guest",
+        nickname: null,
+        createdAt: stack.now(),
+        referredBy: referrer.address,
+      })
+      .run();
+    const raceWallets = ["race_wallet_a", "race_wallet_b"] as const;
+    for (const address of raceWallets) {
+      stack.database.db
+        .insert(schema.players)
+        .values({
+          address,
+          kind: "human",
+          nickname: address,
+          createdAt: stack.now(),
+        })
+        .run();
+    }
+    for (const player of raceWallets) {
+      await stack.coordinator.dispatch({
+        type: "LinkGuest",
+        payload: { guest: raceGuest, player, inheritReferral: true },
+      });
+    }
+    expect(playerRow(raceWallets[0])?.referredBy).toBe(referrer.address);
+    expect(playerRow(raceWallets[1])?.referredBy).toBeNull();
+    expect(playerRow(referrer.address)?.refJoined).toBe(3);
   });
 });

@@ -177,27 +177,72 @@ export function backfillPoints(
   now: number,
   config: MoveWinConfig,
 ): void {
-  const games = db
-    .select()
-    .from(schema.games)
-    .where(inArray(schema.games.status, ["finished", "aborted"]))
-    .all();
-  const touched = new Set<string>();
-  for (const game of games) {
-    if (game.result === null) continue;
-    const stakeRows = db
-      .select()
+  db.transaction(() => {
+    // One indexed query finds only claims whose required historical facts are
+    // absent. Once the migration has converged, later boots perform no writes
+    // and do not walk games with per-game queries.
+    const missing = db
+      .select({
+        player: schema.stakeEntries.player,
+        claimId: schema.stakeEntries.claimId,
+        side: schema.stakeEntries.side,
+        result: schema.games.result,
+      })
       .from(schema.stakeEntries)
-      .where(eq(schema.stakeEntries.gameId, game.id))
+      .innerJoin(schema.games, eq(schema.games.id, schema.stakeEntries.gameId))
+      .innerJoin(
+        schema.players,
+        eq(schema.players.address, schema.stakeEntries.player),
+      )
+      .where(
+        and(
+          inArray(schema.games.status, ["finished", "aborted"]),
+          eq(schema.players.kind, "human"),
+          sql`${schema.games.result} IS NOT NULL`,
+          sql`(
+            NOT EXISTS (
+              SELECT 1 FROM ${schema.pointAwards} AS move_award
+              WHERE move_award.player = ${schema.stakeEntries.player}
+                AND move_award.reason = 'move'
+                AND move_award.ref_id = ${schema.stakeEntries.claimId}
+            )
+            OR (
+              ${schema.games.result} = ${schema.stakeEntries.side}
+              AND NOT EXISTS (
+                SELECT 1 FROM ${schema.pointAwards} AS win_award
+                WHERE win_award.player = ${schema.stakeEntries.player}
+                  AND win_award.reason = 'win'
+                  AND win_award.ref_id = ${schema.stakeEntries.claimId}
+              )
+            )
+          )`,
+        ),
+      )
       .all();
-    for (const player of insertMoveWinAwards(
-      db,
-      now,
-      game.result as GameResult,
-      stakeRows,
-      config,
-    ))
-      touched.add(player);
-  }
-  for (const player of touched) recomputePoints(db, player);
+
+    const touched = new Set<string>();
+    for (const row of missing) {
+      if (row.result === null) continue;
+      const awards: { reason: "move" | "win"; amount: number }[] = [
+        { reason: "move", amount: config.pointsMove },
+      ];
+      if (row.result === row.side) {
+        awards.push({ reason: "win", amount: config.pointsWin });
+      }
+      for (const award of awards) {
+        db.insert(schema.pointAwards)
+          .values({
+            player: row.player,
+            amount: award.amount,
+            reason: award.reason,
+            refId: row.claimId,
+            createdAt: now,
+          })
+          .onConflictDoNothing()
+          .run();
+      }
+      touched.add(row.player);
+    }
+    for (const player of touched) recomputePoints(db, player);
+  });
 }
