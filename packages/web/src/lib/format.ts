@@ -26,6 +26,28 @@ export function formatMicroUsdc(microUsdc: number): string {
   return `${trimmedFixed(microUsdc / MICRO_PER_CENT, 4)} ¢`;
 }
 
+const MICRO_PER_ALGO = 1_000_000;
+
+export function formatMicroAlgo(microAlgo: number): string {
+  return `${trimmedFixed(microAlgo / MICRO_PER_ALGO, 6)} ALGO`;
+}
+
+/** Thinking time (`claimedAt → movedAt`) for quick-view sheets (F-W5). */
+export function formatThinkingTime(
+  claimedAtIso: string,
+  movedAtIso: string,
+): string {
+  const seconds = Math.max(
+    0,
+    Math.round(
+      (new Date(movedAtIso).getTime() - new Date(claimedAtIso).getTime()) /
+        1_000,
+    ),
+  );
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
 /** Wire timestamps are ISO UTC; render in the viewer's local time — HH:MM
  * for same-day, date + time otherwise (§4.5). */
 export function formatLocalTime(iso: string, now: Date = new Date()): string {

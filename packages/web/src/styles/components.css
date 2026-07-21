@@ -889,3 +889,332 @@ svg.pc {
     padding: 5px 12px;
   }
 }
+
+/* ---- R2-07: strips, tabs, panes, archive, replay, popover ---- */
+.promostrip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12.5px;
+  background: color-mix(in oklab, var(--ph) 6%, transparent);
+}
+.statsstrip {
+  text-align: center;
+  padding: 8px 12px;
+  color: var(--ph-dark);
+  font-size: 12.5px;
+  letter-spacing: 0.06em;
+}
+.towerteaser {
+  text-align: center;
+  font-size: 12px;
+  color: var(--ph-dark);
+  padding: 4px 12px;
+}
+.tabrow {
+  display: flex;
+  gap: 6px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 10px;
+}
+.tab {
+  background: none;
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  color: var(--ph-dark);
+  font: inherit;
+  padding: 5px 14px;
+  cursor: pointer;
+}
+.tab.active {
+  color: var(--ph);
+  background: color-mix(in oklab, var(--ph) 8%, transparent);
+}
+.howitworks,
+.replaystrip,
+.guide,
+.archive,
+.replaypage {
+  padding: 18px 30px;
+}
+.rules {
+  white-space: pre-wrap;
+  max-width: 64ch;
+}
+.agenttab .console {
+  white-space: pre-wrap;
+}
+.checklist {
+  display: grid;
+  gap: 12px;
+  max-width: 62ch;
+  padding-left: 20px;
+  margin-top: 14px;
+}
+.warn {
+  color: var(--warn, #d9a326);
+  border: 1px dashed currentColor;
+  padding: 4px 8px;
+  margin-top: 6px;
+  max-width: 52ch;
+}
+.replayer-board {
+  max-width: 360px;
+}
+.replayer-board.own-ply {
+  outline: 2px solid var(--ph);
+}
+.replayer-caption {
+  font-size: 11.5px;
+  color: var(--ph-dark);
+  margin-top: 4px;
+}
+.replayer-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  max-width: 360px;
+}
+.replayer-scrub {
+  flex: 1;
+  accent-color: var(--ph);
+}
+.replayer-pos {
+  font-size: 12px;
+  color: var(--ph-dark);
+}
+.digestloop .replayer-board {
+  max-width: 240px;
+}
+.boardloop {
+  position: relative;
+  max-width: 240px;
+}
+.boardloop-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.boardloop-piece {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 12.5%;
+  height: 12.5%;
+  display: grid;
+  place-items: center;
+  transition: transform 1.2s ease-in-out;
+  will-change: transform;
+}
+.boardloop-burn {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 12.5%;
+  height: 12.5%;
+  background: radial-gradient(
+    circle,
+    color-mix(in oklab, var(--ph) 60%, transparent),
+    transparent 70%
+  );
+  opacity: 0.8;
+}
+@media (prefers-reduced-motion: reduce) {
+  .boardloop-piece {
+    transition: none;
+  }
+}
+.panes {
+  margin-top: 20px;
+  max-width: 760px;
+}
+.herocard {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) 1fr;
+  gap: 16px;
+  border: 1px solid var(--line);
+  padding: 12px;
+}
+.minicards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.minicard {
+  border: 1px solid var(--line);
+  padding: 6px 10px;
+  font-size: 12.5px;
+  color: var(--ph-dim, var(--ph));
+}
+.qv-fields {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 3px 14px;
+  font-size: 13px;
+  margin: 8px 0;
+}
+.qv-fields dt {
+  color: var(--ph-dark);
+}
+.qv-fields dd {
+  margin: 0;
+}
+.activelist {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.activerow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: baseline;
+  border: 1px solid var(--line);
+  padding: 6px 10px;
+}
+.finishedgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+.fincard {
+  display: grid;
+  gap: 4px;
+  background: none;
+  border: 1px solid var(--line);
+  color: var(--ph);
+  font: inherit;
+  padding: 8px;
+  cursor: pointer;
+  text-align: left;
+}
+.fincard .thumb {
+  pointer-events: none;
+}
+.fincard:hover {
+  background: color-mix(in oklab, var(--ph) 8%, transparent);
+}
+.pager {
+  margin-top: 10px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.replaymain {
+  display: grid;
+  grid-template-columns: minmax(280px, 400px) 1fr;
+  gap: 20px;
+}
+.movelist {
+  display: grid;
+  gap: 2px;
+  align-content: start;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+.plyrow {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  background: none;
+  border: 0;
+  color: var(--ph);
+  font: inherit;
+  padding: 2px 6px;
+  cursor: pointer;
+  text-align: left;
+  position: relative;
+}
+.plyrow.cur {
+  background: color-mix(in oklab, var(--ph) 12%, transparent);
+}
+.plyrow.own {
+  outline: 1px dashed var(--ph);
+}
+.endspiel-divider {
+  color: var(--ph-dark);
+  text-align: center;
+  letter-spacing: 0.12em;
+  padding: 4px 0;
+}
+.winrate-pop {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 3;
+  background: var(--bg, #000);
+  border: 1px solid var(--ph);
+  padding: 3px 8px;
+  font-size: 11.5px;
+}
+.replayfoot {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+.popover {
+  position: absolute;
+  top: 42px;
+  right: 12px;
+  z-index: 30;
+  background: var(--bg, #000);
+  border: 1px solid var(--ph);
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+  max-width: min(92vw, 440px);
+}
+.poprow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12.5px;
+}
+.popaddr {
+  word-break: break-all;
+  font-size: 11px;
+}
+.input.mini {
+  background: none;
+  border: 1px solid var(--line);
+  color: var(--ph);
+  font: inherit;
+  padding: 3px 6px;
+}
+.sharecard {
+  max-width: 100%;
+  border: 1px solid var(--line);
+}
+.shareurl {
+  word-break: break-all;
+  font-size: 11.5px;
+}
+@media (max-width: 768px) {
+  .herocard,
+  .replaymain {
+    grid-template-columns: 1fr;
+  }
+  .howitworks,
+  .replaystrip,
+  .guide,
+  .archive,
+  .replaypage {
+    padding: 14px 14px;
+  }
+}
+.plyjump,
+.author {
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+}

@@ -57,6 +57,15 @@ export const metaSchema = z.object({
     banner: z.string().nullable(),
   }),
   turnstileSiteKey: z.string(),
+  // Present only when the server enables public stats (F-W13 strip gating).
+  stats: z
+    .object({
+      humanMoves: z.number(),
+      playersRegistered: z.number(),
+      gamesFinished: z.number(),
+      movesSettled: z.number(),
+    })
+    .optional(),
   rules: z.string(),
   docs: z.object({
     llms: z.string(),
@@ -75,6 +84,132 @@ export const playerSchema = z.object({
   createdAt: z.string(),
 });
 export type PlayerView = z.infer<typeof playerSchema>;
+
+const quotaWindowSchema = z.object({
+  limit: z.number(),
+  remaining: z.number(),
+  resetsAt: z.string().nullable(),
+});
+
+/** Full `/my/profile` payload (server §6.3). `balances` appears only when
+ * requested with `?include=balances` (F-W9 — popover-only). Points and
+ * referral fields are humans-only. `netPnlMicroUsdc` is decoded but never
+ * rendered (non-goal: no net-PnL display). */
+export const profileSchema = playerSchema.extend({
+  stats: z.object({
+    moves: z.number(),
+    wins: z.number(),
+    draws: z.number(),
+    losses: z.number(),
+    winratePct: z.number().nullable(),
+  }),
+  netPnlMicroUsdc: z.number(),
+  balances: z
+    .object({ usdcMicroUsdc: z.number(), algoMicroAlgo: z.number() })
+    .optional(),
+  quotas: z.object({
+    staked: quotaWindowSchema,
+    demo: quotaWindowSchema,
+  }),
+  deprioritizedUntil: z.string().nullable(),
+  points: z.number().optional(),
+  refCode: z.string().nullable().optional(),
+  referrals: z.object({ joined: z.number(), qualified: z.number() }).optional(),
+});
+export type ProfileView = z.infer<typeof profileSchema>;
+
+export const gameResultSchema = z.enum(["white", "black", "draw", "aborted"]);
+export type GameResult = z.infer<typeof gameResultSchema>;
+
+const gameItemCommonSchema = z.object({
+  yourMove: moveSchema,
+  yourSide: z.enum(["white", "black"]),
+  demo: z.boolean(),
+  stakeMicroUsdc: z.number(),
+  claimedAt: z.string(),
+  movedAt: z.string(),
+});
+
+/** Ongoing entries never carry game identity (I7 — CA-W2). */
+export const ongoingGameItemSchema = gameItemCommonSchema.extend({
+  payTxid: z.string().nullable(),
+});
+export type OngoingGameItem = z.infer<typeof ongoingGameItemSchema>;
+
+export const finishedDemoItemSchema = gameItemCommonSchema.extend({
+  result: gameResultSchema,
+  termination: z.string(),
+  payoutMicroUsdc: z.number(),
+  payoutStatus: z.null(),
+  statsCounted: z.literal(false),
+  finishedAt: z.string(),
+});
+export type FinishedDemoItem = z.infer<typeof finishedDemoItemSchema>;
+
+export const finishedStakedItemSchema = gameItemCommonSchema.extend({
+  gameId: z.string(),
+  gameName: z.string(),
+  finalFen: z.string(),
+  result: gameResultSchema,
+  termination: z.string(),
+  yourPly: z.number(),
+  payTxid: z.string().nullable(),
+  payoutMicroUsdc: z.number(),
+  payoutTxid: z.string().nullable(),
+  payoutStatus: z.enum(["none", "queued", "confirmed", "failed"]),
+  statsCounted: z.literal(true),
+  finishedAt: z.string(),
+});
+export type FinishedStakedItem = z.infer<typeof finishedStakedItemSchema>;
+
+export const finishedGameItemSchema = z.union([
+  finishedStakedItemSchema,
+  finishedDemoItemSchema,
+]);
+export type FinishedGameItem = z.infer<typeof finishedGameItemSchema>;
+
+export function gamesPageSchema<T extends z.ZodType>(item: T) {
+  return z.object({
+    items: z.array(item),
+    page: z.number(),
+    pageCount: z.number(),
+    total: z.number(),
+  });
+}
+export type GamesPage<T> = {
+  readonly items: readonly T[];
+  readonly page: number;
+  readonly pageCount: number;
+  readonly total: number;
+};
+
+export const replayPlySchema = z.object({
+  ply: z.number(),
+  side: z.enum(["white", "black"]),
+  move: moveSchema,
+  fenAfter: z.string(),
+  stakeMicroUsdc: z.number(),
+  demo: z.boolean(),
+  author: z.object({
+    nickname: z.string(),
+    kind: z.enum(["human", "agent", "guest"]),
+    winratePct: z.number().nullable(),
+  }),
+});
+export type ReplayPly = z.infer<typeof replayPlySchema>;
+
+export const replayViewSchema = z.object({
+  gameId: z.string(),
+  name: z.string(),
+  result: gameResultSchema,
+  termination: z.string(),
+  endspielPly: z.number().nullable(),
+  createdAt: z.string(),
+  finishedAt: z.string(),
+  plies: z.array(replayPlySchema),
+  pgn: z.string(),
+});
+export type ReplayView = z.infer<typeof replayViewSchema>;
 
 export const challengeResponseSchema = z.object({
   nonce: z.string(),

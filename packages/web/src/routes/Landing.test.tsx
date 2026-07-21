@@ -81,19 +81,87 @@ function renderLanding(
   );
 }
 
-async function reachConfirm(view: ReturnType<typeof render>) {
+async function reachConfirm(_view: ReturnType<typeof render>) {
   fireEvent.click(
     await screen.findByRole("button", { name: /PLAY A DEMO GAME/ }),
   );
   await screen.findByText(/YOU PLAY WHITE/);
-  fireEvent.click(
-    view.container.querySelector('[data-square="e2"]') as Element,
-  );
-  fireEvent.click(
-    view.container.querySelector('[data-square="e4"]') as Element,
-  );
+  // The landing renders the bundled Deep Blue board too — scope square
+  // taps to the play surface.
+  const surface = screen.getByTestId("play-surface");
+  fireEvent.click(surface.querySelector('[data-square="e2"]') as Element);
+  fireEvent.click(surface.querySelector('[data-square="e4"]') as Element);
   await screen.findByText("FINAL MOVE?");
 }
+
+it("landing_uses_only_meta_and_session_probe_before_interaction", async () => {
+  // -- API count: exactly /meta + the session boot probe, nothing else.
+  const client = guestClient();
+  const view = renderLanding(client);
+  await screen.findByRole("button", { name: /I HAVE AN ALGORAND WALLET/ });
+  expect(client.getMeta).toHaveBeenCalledTimes(1);
+  expect(client.probeProfile).toHaveBeenCalledTimes(1);
+  expect(client.createClaim).not.toHaveBeenCalled();
+  expect(client.getReplay).not.toHaveBeenCalled();
+  expect(client.getProfile).not.toHaveBeenCalled();
+  expect(client.getOngoingGames).not.toHaveBeenCalled();
+  expect(client.getFinishedGames).not.toHaveBeenCalled();
+
+  // -- Bundled replay: the Deep Blue strip renders a board with no fetch.
+  const strip = screen.getByTestId("deepblue-strip");
+  expect(strip.querySelector('[data-square="e4"]')).not.toBeNull();
+  expect(
+    screen.getByText(/deep blue – kasparov · game 6 · 1997/),
+  ).not.toBeNull();
+
+  // -- Lazy wallet/Turnstile code: neither loads before interaction.
+  expect(moduleSpies.createWalletModule).not.toHaveBeenCalled();
+  expect(document.querySelector('script[src*="turnstile"]')).toBeNull();
+
+  // -- CTA/nudge swap follows osc.guestDemo.
+  expect(
+    screen.getByRole("button", { name: /PLAY A DEMO GAME/ }),
+  ).not.toBeNull();
+  expect(screen.queryByTestId("guest-demo-nudge")).toBeNull();
+  // -- Rules render verbatim from /meta; the agent tab links come from
+  //    /meta.docs, not hardcoded URLs.
+  expect(screen.getByTestId("rules-verbatim").textContent).toBe(
+    metaFixture.rules,
+  );
+  fireEvent.click(screen.getByRole("tab", { name: "FOR AGENTS" }));
+  const agentTab = screen.getByTestId("agent-tab");
+  expect(
+    agentTab.querySelector(`a[href="${metaFixture.docs.llms}"]`),
+  ).not.toBeNull();
+  expect(
+    agentTab.querySelector(`a[href="${metaFixture.docs.repo}"]`),
+  ).not.toBeNull();
+  // -- Config-gated content: promo strip present (not dismissed), stats
+  //    strip absent without meta.stats.
+  expect(screen.getByTestId("champ-promo")).not.toBeNull();
+  expect(screen.queryByTestId("stats-strip")).toBeNull();
+  view.unmount();
+
+  // -- Nudge variant + gated variants flip on state/config.
+  localStorage.setItem("osc.guestDemo", "played");
+  localStorage.setItem("osc.champNotice", "dismissed");
+  const statsMeta = {
+    ...metaFixture,
+    stats: {
+      humanMoves: 41,
+      playersRegistered: 7,
+      gamesFinished: 5,
+      movesSettled: 44,
+    },
+  };
+  renderLanding(guestClient(), statsMeta);
+  await screen.findByTestId("guest-demo-nudge");
+  expect(screen.queryByRole("button", { name: /PLAY A DEMO GAME/ })).toBeNull();
+  expect(screen.queryByTestId("champ-promo")).toBeNull();
+  expect(screen.getByTestId("stats-strip").textContent).toContain(
+    "41 human moves · 7 wallets · 5 games settled · 44 payments",
+  );
+});
 
 it("anonymous_demo_never_loads_wallet_or_x402_code", async () => {
   const client = guestClient();
@@ -140,12 +208,9 @@ it("guest_demo_receipt_and_expiry_render_only_login_wall_data", async () => {
     expect(screen.getByTestId("play-surface").dataset.phase).toBe("FOCUS");
   });
   assertNoGameIdentity(receiptView.container, identitySeeds);
-  fireEvent.click(
-    receiptView.container.querySelector('[data-square="e2"]') as Element,
-  );
-  fireEvent.click(
-    receiptView.container.querySelector('[data-square="e4"]') as Element,
-  );
+  const surface = screen.getByTestId("play-surface");
+  fireEvent.click(surface.querySelector('[data-square="e2"]') as Element);
+  fireEvent.click(surface.querySelector('[data-square="e4"]') as Element);
   await screen.findByText("FINAL MOVE?");
   assertNoGameIdentity(receiptView.container, identitySeeds);
   fireEvent.click(screen.getByRole("button", { name: /Y — make it so/ }));

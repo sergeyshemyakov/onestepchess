@@ -8,12 +8,22 @@ import {
   claimViewSchema,
   type ErrorEnvelope,
   errorEnvelopeSchema,
+  type FinishedGameItem,
+  finishedGameItemSchema,
+  type GamesPage,
+  gamesPageSchema,
   type Meta,
   type MoveReceipt,
   metaSchema,
   moveReceiptSchema,
+  type OngoingGameItem,
+  ongoingGameItemSchema,
   type PlayerView,
+  type ProfileView,
   playerSchema,
+  profileSchema,
+  type ReplayView,
+  replayViewSchema,
   type VerifyResponse,
   verifyResponseSchema,
 } from "./schemas.js";
@@ -205,6 +215,44 @@ export function createApiClient(options: ApiClientOptions = {}) {
         if (error instanceof ApiError && error.status === 401) return null;
         throw error;
       }
+    },
+
+    /** Full profile; `balances: true` only ever from the wallet popover
+     * (F-W9 — the only surface that requests chain balances). */
+    async getProfile(options?: {
+      readonly balances?: boolean;
+    }): Promise<ProfileView> {
+      const suffix = options?.balances === true ? "?include=balances" : "";
+      return json(await request(`/my/profile${suffix}`), profileSchema);
+    },
+
+    async renameProfile(nickname: string): Promise<PlayerView> {
+      const parsed = await json(
+        await request("/my/profile", { method: "PATCH", body: { nickname } }),
+        z.object({ player: playerSchema }),
+      );
+      return parsed.player;
+    },
+
+    async getOngoingGames(page: number): Promise<GamesPage<OngoingGameItem>> {
+      return json(
+        await request(`/my/games?status=ongoing&page=${page}`),
+        gamesPageSchema(ongoingGameItemSchema),
+      );
+    },
+
+    async getFinishedGames(page: number): Promise<GamesPage<FinishedGameItem>> {
+      return json(
+        await request(`/my/games?status=finished&page=${page}`),
+        gamesPageSchema(finishedGameItemSchema),
+      );
+    },
+
+    /** Public — no cookie needed; 404 (unknown or non-terminal) surfaces as
+     * an ApiError for the NotFound page. Callers go through the replay
+     * cache (§5.1), not this method directly. */
+    async getReplay(gameId: string): Promise<ReplayView> {
+      return json(await request(`/games/${gameId}/replay`), replayViewSchema);
     },
 
     async createClaim(body: {

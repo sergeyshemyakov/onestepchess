@@ -16,6 +16,8 @@ const DRAFT_KEY = "osc.claimDraft";
 const COACH_KEY = "osc.coach";
 const GUEST_DEMO_KEY = "osc.guestDemo";
 const REF_KEY = "osc.ref";
+const CHAMP_KEY = "osc.champNotice";
+const LAST_SEEN_FINISHED_KEY = "osc.lastSeenFinishedAt";
 
 function safeGet(store: Storage, key: string): string | null {
   try {
@@ -103,6 +105,29 @@ export function readRef(): string | null {
   return safeGet(localStorage, REF_KEY);
 }
 
+/** First touch wins — an existing code is never overwritten (F-W13). */
+export function writeRefFirstTouch(code: string): void {
+  if (safeGet(localStorage, REF_KEY) === null) {
+    safeSet(localStorage, REF_KEY, code);
+  }
+}
+
 export function clearRef(): void {
   safeSet(localStorage, REF_KEY, null);
+}
+
+export function champNoticeDismissed(): boolean {
+  return safeGet(localStorage, CHAMP_KEY) === "dismissed";
+}
+
+export function dismissChampNotice(): void {
+  safeSet(localStorage, CHAMP_KEY, "dismissed");
+}
+
+export function readLastSeenFinishedAt(): string | null {
+  return safeGet(localStorage, LAST_SEEN_FINISHED_KEY);
+}
+
+export function writeLastSeenFinishedAt(iso: string): void {
+  safeSet(localStorage, LAST_SEEN_FINISHED_KEY, iso);
 }

@@ -1,12 +1,71 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router";
 import type { ApiClient } from "../api/client.js";
 import type { Meta, PlayerView } from "../api/schemas.js";
 import { ConnectSheet } from "../auth/ConnectSheet.jsx";
 import { AlgorandMark } from "../board/pieces.jsx";
 import { AppShell } from "../components/AppShell.jsx";
+import { PromoStrip } from "../components/PromoStrip.jsx";
+import { StatsStrip } from "../components/StatsStrip.jsx";
+import { DEEP_BLUE_GAME6 } from "../lib/deepblue-game6.js";
 import { readGuestDemo, writeGuestDemo } from "../lib/storage.js";
 import { PlayView } from "../play/PlayView.jsx";
 import { usePlayFlow } from "../play/usePlayFlow.js";
+import { Replayer } from "../replay/Replayer.jsx";
+
+function HowItWorks(props: { readonly meta: Meta }) {
+  const [tab, setTab] = useState<"human" | "agent">("human");
+  const docs = props.meta.docs;
+  return (
+    <section className="howitworks" id="rules" data-testid="how-it-works">
+      <div className="tabrow" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "human"}
+          className={tab === "human" ? "tab active" : "tab"}
+          onClick={() => setTab("human")}
+        >
+          FOR HUMANS
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "agent"}
+          className={tab === "agent" ? "tab active" : "tab"}
+          onClick={() => setTab("agent")}
+        >
+          FOR AGENTS
+        </button>
+      </div>
+      {tab === "human" ? (
+        // `/meta.rules` renders verbatim — the web never paraphrases (§8.4).
+        <p className="rules console" data-testid="rules-verbatim">
+          {props.meta.rules}
+        </p>
+      ) : (
+        <div className="agenttab" data-testid="agent-tab">
+          <p className="console">
+            &gt; npx -y {docs.mcpPackage}
+            {"\n"}&gt; # or speak x402 directly:
+            {"\n"}&gt; curl -X POST /api/v1/claims # → claim + legal moves
+            {"\n"}&gt; curl -X POST /api/v1/claims/:id/move # → 402
+            PAYMENT-REQUIRED
+            {"\n"}&gt; # sign the group, retry with PAYMENT-SIGNATURE → receipt
+          </p>
+          <p>
+            <a href={docs.llms}>llms.txt</a> ·{" "}
+            <a href={docs.openapi}>openapi</a> · {docs.mcpPackage} ·{" "}
+            {docs.agentKitPackage} ·{" "}
+            <a href={docs.repo} target="_blank" rel="noopener noreferrer">
+              repo ↗
+            </a>
+          </p>
+        </div>
+      )}
+    </section>
+  );
+}
 
 export function Landing(props: {
   readonly client: ApiClient;
@@ -34,7 +93,7 @@ export function Landing(props: {
   }, [flow.state.phase, flow.state.guest]);
 
   return (
-    <AppShell>
+    <AppShell belowBar={<PromoStrip />}>
       <div className="hero2">
         <div style={{ maxWidth: 520 }}>
           <h1 style={{ fontSize: 62 }}>
@@ -55,10 +114,10 @@ export function Landing(props: {
                 connect &amp; sign — one free signature, nothing is broadcast
               </span>
             </button>
-            <a className="bigplay" href="/start">
+            <Link className="bigplay" to="/start">
               <span className="bp-title">I DON'T HAVE ONE YET →</span>
               <span className="bp-sub">set up a wallet, USDC and gas</span>
-            </a>
+            </Link>
             {guestDemo === null ? (
               <button
                 type="button"
@@ -89,6 +148,32 @@ export function Landing(props: {
           </span>
         </div>
       </div>
+
+      <HowItWorks meta={props.meta} />
+
+      <section className="replaystrip" data-testid="deepblue-strip">
+        <Replayer
+          plies={DEEP_BLUE_GAME6.plies}
+          autoPlay
+          loop
+          caption="deep blue – kasparov · game 6 · 1997 · 1-0"
+        />
+      </section>
+
+      <StatsStrip meta={props.meta} />
+
+      <p className="towerteaser" data-testid="tower-teaser">
+        coming soon: integration with{" "}
+        {/* announcement URL is CA-14 — text + link only, no brand assets (R13) */}
+        <a
+          href="https://worldchess.com"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          the tower, world chess's arena on algorand ↗
+        </a>
+      </p>
+
       <div
         className="landfoot"
         style={{
@@ -106,6 +191,14 @@ export function Landing(props: {
           <AlgorandMark /> RUNS ON ALGORAND
         </span>
         <span>· built for the x402 global challenge</span>
+        <a
+          href={props.meta.docs.repo}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          · GitHub ↗
+        </a>
+        <a href="#rules">· rules</a>
       </div>
       {flow.state.phase !== "IDLE" ? (
         <PlayView
