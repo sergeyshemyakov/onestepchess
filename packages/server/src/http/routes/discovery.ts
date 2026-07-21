@@ -1,5 +1,3 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { join, normalize, resolve } from "node:path";
 import { eq } from "drizzle-orm";
 import type { Hono } from "hono";
 import type { CoordinatorViews } from "../../coordinator/views.js";
@@ -15,16 +13,7 @@ export type DiscoveryDeps = Pick<
   readonly mode: () => "running" | "paused";
   readonly rail: { readonly treasuryAddress: string };
   readonly publicBaseUrl: string;
-  readonly staticDir?: string;
 };
-
-function contentType(path: string): string {
-  if (path.endsWith(".js")) return "text/javascript; charset=utf-8";
-  if (path.endsWith(".css")) return "text/css; charset=utf-8";
-  if (path.endsWith(".svg")) return "image/svg+xml";
-  if (path.endsWith(".json")) return "application/json; charset=utf-8";
-  return "application/octet-stream";
-}
 
 export function registerDiscoveryRoutes(
   app: Hono<AppEnv>,
@@ -113,35 +102,4 @@ export function registerDiscoveryRoutes(
       });
     },
   );
-  app.get("*", (c) => {
-    if (
-      deps.staticDir === undefined ||
-      c.req.path.startsWith("/api/") ||
-      c.req.path === "/healthz"
-    )
-      return c.notFound();
-    const root = resolve(deps.staticDir);
-    const relative = normalize(c.req.path.replace(/^\//, ""));
-    const candidate = resolve(root, relative);
-    if (
-      candidate.startsWith(root) &&
-      existsSync(candidate) &&
-      statSync(candidate).isFile()
-    ) {
-      const immutable =
-        relative.startsWith("assets/") && /-[A-Za-z0-9_-]{6,}\./.test(relative);
-      return c.body(readFileSync(candidate), 200, {
-        "Content-Type": contentType(candidate),
-        "Cache-Control": immutable
-          ? "public, max-age=31536000, immutable"
-          : "no-cache",
-      });
-    }
-    const index = join(root, "index.html");
-    if (!existsSync(index)) return c.notFound();
-    return c.body(readFileSync(index, "utf8"), 200, {
-      "Content-Type": "text/html; charset=utf-8",
-      "Cache-Control": "no-cache",
-    });
-  });
 }

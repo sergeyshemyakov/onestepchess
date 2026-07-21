@@ -17,6 +17,9 @@ build/
 *.sqlite-*
 *.db
 
+# Backup snapshots (server spec §4) live on the persistent volume, never in git
+backups/
+
 # Logs & coverage
 *.log
 coverage/

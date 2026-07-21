@@ -17,6 +17,10 @@ export type ResolutionDeps = {
   readonly coordinator: Coordinator;
   readonly db: Db;
   readonly logger: Logger;
+  readonly metrics?: {
+    recordGameFinished(): void;
+    recordPayoutQueued(count?: number): void;
+  };
   /** Injectable so a test seam can force an I4 conservation violation; the
    * server re-checks conservation independently of core before writing jobs. */
   readonly resolve?: typeof coreResolve;
@@ -199,6 +203,13 @@ export function registerResolution(deps: ResolutionDeps): void {
         .set({ resolvedAt: ctx.now })
         .where(eq(schema.games.id, game.id))
         .run();
+
+      ctx.afterCommit(() => {
+        deps.metrics?.recordGameFinished();
+        if (jobByRecipient.size > 0) {
+          deps.metrics?.recordPayoutQueued(jobByRecipient.size);
+        }
+      });
 
       return { resolved: true as const, jobs: jobByRecipient.size };
     },

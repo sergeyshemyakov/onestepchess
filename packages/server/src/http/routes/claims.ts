@@ -1,7 +1,7 @@
 import { renderAscii } from "@onestepchess/core";
 import { and, eq, inArray } from "drizzle-orm";
 import type { Hono } from "hono";
-import { z } from "zod";
+import type { z } from "zod";
 import type {
   ClaimDeps,
   ClaimRecord,
@@ -11,6 +11,7 @@ import { legalMove, receiptFor } from "../../coordinator/claims.js";
 import { schema } from "../../db/open.js";
 import { newId } from "../../ids.js";
 import { type AppEnv, AppError } from "../app.js";
+import { claimBodySchema, moveBodySchema } from "../contracts.js";
 import { clientIp } from "../middleware/client-ip.js";
 import { createTokenBucket } from "../middleware/ratelimit.js";
 import {
@@ -20,19 +21,15 @@ import {
   setGuestCookie,
 } from "./auth.js";
 
-const claimBody = z
-  .object({
-    demo: z.boolean().optional().default(false),
-    turnstileToken: z.string().min(1).optional(),
-    ref: z.string().optional(),
-  })
-  .strict();
-const moveBody = z.object({ move: z.string().min(1).max(32) }).strict();
-
 export type ClaimRouteDeps = ClaimDeps &
   Pick<AuthRouteDeps, "jwtSecret" | "trustProxyHops" | "turnstile"> & {
     readonly publicBaseUrl: string;
     readonly mode: () => "running" | "paused";
+    readonly metrics?: {
+      recordClaimCreated(): void;
+      recordMoveSettled(latencyMs: number): void;
+      recordFacilitatorError(): void;
+    };
   };
 
 function parseBody<T>(
@@ -149,7 +146,7 @@ async function normalizeRequestedMove(
   claim: ClaimRecord,
   request: { json(): Promise<unknown> },
 ): Promise<MoveReceipt["move"]> {
-  const body = await parseBody(moveBody, request);
+  const body = await parseBody(moveBodySchema, request);
   const normalized = legalMove(deps, claim, body.move);
   if (!normalized.ok)
     throw new AppError(
@@ -181,7 +178,7 @@ export function registerClaimRoutes(
         hint: "too many claim requests",
         retryAfterSeconds: decision.retryAfterSeconds,
       });
-    const body = await parseBody(claimBody, c.req);
+    const body = await parseBody(claimBodySchema, c.req);
     let session = c.get("session");
     let createGuest: { turnstileVerifiedAt: number } | undefined;
     if (session === undefined) {
@@ -278,6 +275,7 @@ export function registerClaimRoutes(
       });
     }
     if (createGuest !== undefined) setGuestCookie(c, deps, session.address);
+    if (data.created) deps.metrics?.recordClaimCreated();
     return c.json(
       {
         claim: claimView(deps, data.claim, c.req.query("include") === "ascii"),
@@ -495,8 +493,16 @@ export function registerClaimRoutes(
         202,
         { "Retry-After": "5" },
       );
-    const verification = await deps.rail.verify(signature, required.required);
+    const settlementStartedAt = deps.now();
+    let verification: Awaited<ReturnType<typeof deps.rail.verify>>;
+    try {
+      verification = await deps.rail.verify(signature, required.required);
+    } catch (error) {
+      deps.metrics?.recordFacilitatorError();
+      throw error;
+    }
     if (!verification.ok) {
+      deps.metrics?.recordFacilitatorError();
       await deps.coordinator.dispatch({
         type: "IntentFailed",
         payload: {
@@ -513,8 +519,15 @@ export function registerClaimRoutes(
       type: "IntentMarkedSettling",
       payload: { clientTxid: decoded.payment.clientTxId },
     });
-    const settled = await deps.rail.settle(signature, required.required);
+    let settled: Awaited<ReturnType<typeof deps.rail.settle>>;
+    try {
+      settled = await deps.rail.settle(signature, required.required);
+    } catch (error) {
+      deps.metrics?.recordFacilitatorError();
+      throw error;
+    }
     if (!settled.ok) {
+      deps.metrics?.recordFacilitatorError();
       if (settled.reason === "unavailable")
         return c.json(
           {
@@ -547,6 +560,7 @@ export function registerClaimRoutes(
     });
     if (committed.kind === "deprioritized")
       throw new Error("internal command deprioritized");
+    deps.metrics?.recordMoveSettled(deps.now() - settlementStartedAt);
     return c.json(committed.result as MoveReceipt, 200, {
       "PAYMENT-RESPONSE": settled.paymentResponseHeader,
     });

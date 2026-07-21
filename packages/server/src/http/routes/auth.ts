@@ -4,7 +4,6 @@ import algosdk from "algosdk";
 import { eq, sql } from "drizzle-orm";
 import type { Hono, MiddlewareHandler } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import { z } from "zod";
 import {
   consumeChallenge,
   createChallenge,
@@ -20,6 +19,7 @@ import type { Db } from "../../db/open.js";
 import { schema } from "../../db/open.js";
 import { generateName } from "../../names.js";
 import { type AppEnv, AppError } from "../app.js";
+import { challengeBodySchema, verifyBodySchema } from "../contracts.js";
 import { clientIp } from "../middleware/client-ip.js";
 import { createTokenBucket } from "../middleware/ratelimit.js";
 
@@ -39,28 +39,6 @@ export type AuthRouteDeps = {
 const NICKNAME_PATTERN = /^[a-zA-Z0-9_-]{3,24}$/;
 const SESSION_COOKIE = "osc_session";
 const GUEST_COOKIE = "osc_guest";
-
-const challengeBodySchema = z.object({ address: z.string().min(1) });
-
-const verifyBodySchema = z.intersection(
-  z.object({
-    address: z.string().min(1),
-    nickname: z.string().optional(),
-    kind: z.enum(["human", "agent"]).optional(),
-    turnstileToken: z.string().optional(),
-    ref: z.string().optional(),
-  }),
-  z.discriminatedUnion("method", [
-    z.object({
-      method: z.literal("arc60"),
-      proof: z.object({
-        signatureB64: z.string().min(1),
-        authenticatorDataB64: z.string().min(1),
-      }),
-    }),
-    z.object({ method: z.literal("txn"), signedTxnB64: z.string().min(1) }),
-  ]),
-);
 
 function throwVerifyFailure(outcome: VerifyOutcome & { ok: false }): never {
   switch (outcome.code) {
