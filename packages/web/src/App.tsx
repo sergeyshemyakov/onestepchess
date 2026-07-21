@@ -1,36 +1,35 @@
-import { useEffect } from "react";
-import { BrowserRouter, Route, Routes } from "react-router";
+import { lazy, Suspense, useEffect } from "react";
+import { BrowserRouter, Route, Routes, useLocation } from "react-router";
 import type { ApiClient } from "./api/client.js";
-import { SessionProvider, useSession } from "./auth/SessionContext.jsx";
+import type { AuthHandlers } from "./ContextualApp.jsx";
 import { AppShell } from "./components/AppShell.jsx";
-import { ToastProvider, useToasts } from "./components/Toasts.jsx";
-import { clearRef, writeGuestDemo } from "./lib/storage.js";
-import { MetaProvider, useMeta } from "./meta/MetaContext.jsx";
-import { Hub } from "./routes/Hub.jsx";
-import { Landing } from "./routes/Landing.jsx";
-import { NotFound } from "./routes/NotFound.jsx";
+import { captureRefFromUrl } from "./lib/refCapture.js";
 
-export type AuthHandlers = { onUnauthorized: () => void };
+const ContextualApp = lazy(() =>
+  import("./ContextualApp.jsx").then((module) => ({
+    default: module.ContextualApp,
+  })),
+);
+const Replay = lazy(() =>
+  import("./routes/Replay.jsx").then((module) => ({ default: module.Replay })),
+);
 
-/** 401 anywhere mid-session lands on the landing with a quiet toast (§5.2). */
-function AuthBridge(props: { readonly handlers: AuthHandlers }) {
-  const { droppedByServer } = useSession();
-  const { push } = useToasts();
+export type { AuthHandlers } from "./ContextualApp.jsx";
+
+/** F-W13 first-touch `?ref=` capture on any route, URL cleaned without a
+ * reload. Runs again on in-app navigation — capture stays idempotent. */
+function RefCapture() {
+  const location = useLocation();
+  // biome-ignore lint/correctness/useExhaustiveDependencies(location): re-runs on every navigation by design — ?ref= can arrive on any route
   useEffect(() => {
-    props.handlers.onUnauthorized = () => {
-      droppedByServer();
-      push("signed out");
-    };
-    return () => {
-      props.handlers.onUnauthorized = () => undefined;
-    };
-  }, [props.handlers, droppedByServer, push]);
+    captureRefFromUrl();
+  }, [location]);
   return null;
 }
 
 function BootSkeleton() {
   return (
-    <AppShell>
+    <AppShell showSystemBanner={false}>
       <p className="console" style={{ padding: "40px 22px" }}>
         &gt; connecting<span className="blink">▊</span>
       </p>
@@ -38,51 +37,34 @@ function BootSkeleton() {
   );
 }
 
-/** `/` is one route: Landing without a session, Hub with one (§4.1). */
-function Home(props: { readonly client: ApiClient }) {
-  const { session, signedIn } = useSession();
-  const { meta } = useMeta();
-  const { push } = useToasts();
-
-  if (meta === null || session.status === "probing") return <BootSkeleton />;
-  if (session.status === "out") {
-    return (
-      <Landing
-        client={props.client}
-        meta={meta}
-        onSignedIn={(player, linkedGuestClaims) => {
-          writeGuestDemo(null);
-          clearRef();
-          signedIn(player);
-          if ((linkedGuestClaims ?? 0) > 0) {
-            push(
-              "your demo game is linked — the outcome will land in your finished pane",
-            );
-          }
-        }}
-      />
-    );
-  }
-  return <Hub client={props.client} meta={meta} player={session.player} />;
-}
-
 export function App(props: {
   readonly client: ApiClient;
   readonly authHandlers: AuthHandlers;
 }) {
   return (
-    <ToastProvider>
-      <MetaProvider client={props.client}>
-        <SessionProvider client={props.client}>
-          <AuthBridge handlers={props.authHandlers} />
-          <BrowserRouter>
-            <Routes>
-              <Route path="/" element={<Home client={props.client} />} />
-              <Route path="*" element={<NotFound />} />
-            </Routes>
-          </BrowserRouter>
-        </SessionProvider>
-      </MetaProvider>
-    </ToastProvider>
+    <BrowserRouter>
+      <RefCapture />
+      <Routes>
+        <Route
+          path="/replay/:gameId"
+          element={
+            <Suspense fallback={<BootSkeleton />}>
+              <Replay client={props.client} />
+            </Suspense>
+          }
+        />
+        <Route
+          path="*"
+          element={
+            <Suspense fallback={<BootSkeleton />}>
+              <ContextualApp
+                client={props.client}
+                authHandlers={props.authHandlers}
+              />
+            </Suspense>
+          }
+        />
+      </Routes>
+    </BrowserRouter>
   );
 }

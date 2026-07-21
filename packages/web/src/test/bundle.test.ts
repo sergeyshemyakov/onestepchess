@@ -15,7 +15,16 @@ const FORBIDDEN_PACKAGES = [
   /^@x402-avm\//,
   /^@perawallet\//,
 ];
-const FORBIDDEN_FILES = ["wallet/provider"];
+const FORBIDDEN_FILES = [
+  "wallet/provider",
+  "ContextualApp",
+  "routes/Landing",
+  "routes/Hub",
+  "routes/Start",
+  "routes/Archive",
+  "routes/Championship",
+  "routes/Replay",
+];
 
 const STATIC_IMPORT =
   /(?:^|\n)\s*(?:import|export)\s+(?!type[\s{])[^;'"]*?from\s+["']([^"']+)["']|(?:^|\n)\s*import\s+["']([^"']+)["']/g;
@@ -86,11 +95,11 @@ describe("root bundle static import graph (§5.6)", () => {
   it("still reaches the app itself (sanity check on the walker)", () => {
     const names = [...graph.files].map((file) => file.replaceAll("\\", "/"));
     expect(names.some((name) => name.endsWith("App.tsx"))).toBe(true);
+    // Routes cross a dynamic boundary; staked confirmation crosses another
+    // one inside the play chunk only on demand.
     expect(names.some((name) => name.endsWith("play/usePlayFlow.ts"))).toBe(
-      true,
+      false,
     );
-    // Guest/demo rendering reaches the flow hook without pulling x402 in;
-    // staked confirmation crosses that dynamic boundary only on demand.
     expect(names.some((name) => name.endsWith("wallet/x402.ts"))).toBe(false);
   });
 });

@@ -1,7 +1,13 @@
 import type { ReactNode } from "react";
+import { MemoryRouter } from "react-router";
 import { vi } from "vitest";
 import type { ApiClient } from "../api/client.js";
-import type { ClaimView, Meta, PlayerView } from "../api/schemas.js";
+import type {
+  ClaimView,
+  Meta,
+  PlayerView,
+  ProfileView,
+} from "../api/schemas.js";
 import { SessionProvider } from "../auth/SessionContext.jsx";
 import { ToastProvider } from "../components/Toasts.jsx";
 import { MetaProvider } from "../meta/MetaContext.jsx";
@@ -69,6 +75,123 @@ export function claimFixture(overrides: Partial<ClaimView> = {}): ClaimView {
   };
 }
 
+export function profileFixture(
+  overrides: Partial<ProfileView> = {},
+): ProfileView {
+  return {
+    ...playerFixture,
+    stats: { moves: 24, wins: 12, draws: 3, losses: 9, winratePct: 50 },
+    netPnlMicroUsdc: 0,
+    quotas: {
+      staked: { limit: 10, remaining: 8, resetsAt: null },
+      demo: { limit: 10, remaining: 10, resetsAt: null },
+    },
+    deprioritizedUntil: null,
+    points: 120,
+    refCode: "gentle-rook-042",
+    referrals: { joined: 2, qualified: 1 },
+    ...overrides,
+  };
+}
+
+export const emptyGamesPage = { items: [], page: 1, pageCount: 0, total: 0 };
+
+export function ongoingItemFixture(
+  overrides: Partial<import("../api/schemas.js").OngoingGameItem> = {},
+): import("../api/schemas.js").OngoingGameItem {
+  return {
+    yourMove: { uci: "e2e4", san: "e4" },
+    yourSide: "white",
+    demo: false,
+    stakeMicroUsdc: 10_000,
+    claimedAt: "2026-07-20T10:00:00Z",
+    movedAt: "2026-07-20T10:01:00Z",
+    payTxid: "STAKETX1",
+    ...overrides,
+  };
+}
+
+export function finishedStakedFixture(
+  overrides: Partial<import("../api/schemas.js").FinishedStakedItem> = {},
+): import("../api/schemas.js").FinishedStakedItem {
+  return {
+    yourMove: { uci: "g1f3", san: "Nf3" },
+    yourSide: "white",
+    demo: false,
+    stakeMicroUsdc: 10_000,
+    claimedAt: "2026-07-19T10:00:00Z",
+    movedAt: "2026-07-19T10:02:30Z",
+    gameId: "gm_fin_ok",
+    gameName: "crimson-rook-217",
+    finalFen: "8/8/8/8/3k4/8/3K4/3Q4 b - - 0 61",
+    result: "white",
+    termination: "checkmate",
+    yourPly: 5,
+    payTxid: "STAKETX2",
+    payoutMicroUsdc: 20_000,
+    payoutTxid: "PAYOUTTX1",
+    payoutStatus: "confirmed",
+    statsCounted: true,
+    finishedAt: "2026-07-19T11:00:00Z",
+    ...overrides,
+  };
+}
+
+export function finishedDemoFixture(
+  overrides: Partial<import("../api/schemas.js").FinishedDemoItem> = {},
+): import("../api/schemas.js").FinishedDemoItem {
+  return {
+    yourMove: { uci: "b8c6", san: "Nc6" },
+    yourSide: "black",
+    demo: true,
+    stakeMicroUsdc: 0,
+    claimedAt: "2026-07-18T10:00:00Z",
+    movedAt: "2026-07-18T10:01:00Z",
+    result: "white",
+    termination: "checkmate",
+    payoutMicroUsdc: 0,
+    payoutStatus: null,
+    statsCounted: false,
+    finishedAt: "2026-07-18T11:00:00Z",
+    ...overrides,
+  };
+}
+
+export function replayFixture(
+  gameId: string,
+  plyCount = 4,
+): import("../api/schemas.js").ReplayView {
+  const plies = Array.from({ length: plyCount }, (_, index) => {
+    const ply = index + 1;
+    const file = index % 8;
+    const rank8 = file === 0 ? "Q7" : file === 7 ? "7Q" : `${file}Q${7 - file}`;
+    return {
+      ply,
+      side: (ply % 2 === 1 ? "white" : "black") as "white" | "black",
+      move: { uci: "e2e4", san: `M${ply}` },
+      fenAfter: `${rank8}/8/8/8/8/8/8/4K2k ${ply % 2 === 1 ? "b" : "w"} - - 0 ${ply}`,
+      stakeMicroUsdc: 10_000,
+      demo: false,
+      author: {
+        nickname: `author-${ply}`,
+        kind: "human" as const,
+        winratePct: 50,
+      },
+    };
+  });
+  return {
+    gameId,
+    name: "crimson-rook-217",
+    result: "white",
+    termination: "checkmate",
+    endspielPly: null,
+    createdAt: "2026-07-19T10:00:00Z",
+    finishedAt: "2026-07-19T11:00:00Z",
+    plies,
+    pgn: '[Event "One Step Chess"]\n\n1. e4 e5 2. Nf3 Nc6 1-0\n',
+  };
+}
+
 export function mockClient(overrides: Partial<ApiClient> = {}): ApiClient {
   const base = {
     getMeta: vi.fn(async () => metaFixture),
@@ -77,6 +200,13 @@ export function mockClient(overrides: Partial<ApiClient> = {}): ApiClient {
     authLogout: vi.fn(async () => undefined),
     suggestNickname: vi.fn(async () => "gentle-rook-042"),
     probeProfile: vi.fn(async () => playerFixture),
+    getProfile: vi.fn(async () => profileFixture()),
+    renameProfile: vi.fn(async () => playerFixture),
+    getOngoingGames: vi.fn(async () => emptyGamesPage),
+    getFinishedGames: vi.fn(async () => emptyGamesPage),
+    getReplay: vi.fn(async () => {
+      throw new Error("no replay fixture");
+    }),
     createClaim: vi.fn(async () => ({
       kind: "claim" as const,
       claim: claimFixture(),
@@ -94,12 +224,14 @@ export function Providers(props: {
   readonly children: ReactNode;
 }) {
   return (
-    <ToastProvider>
-      <MetaProvider client={props.client}>
-        <SessionProvider client={props.client}>
-          {props.children}
-        </SessionProvider>
-      </MetaProvider>
-    </ToastProvider>
+    <MemoryRouter>
+      <ToastProvider>
+        <MetaProvider client={props.client}>
+          <SessionProvider client={props.client}>
+            {props.children}
+          </SessionProvider>
+        </MetaProvider>
+      </ToastProvider>
+    </MemoryRouter>
   );
 }

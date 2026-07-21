@@ -2,9 +2,9 @@ import { Link } from "react-router";
 import { AppShell } from "../components/AppShell.jsx";
 
 /** One component reused for every unknown surface (§4.1). */
-export function NotFound() {
+export function NotFound(props: { readonly standalone?: boolean }) {
   return (
-    <AppShell>
+    <AppShell showSystemBanner={props.standalone !== true}>
       <div
         style={{ padding: "60px 22px", display: "grid", placeItems: "center" }}
       >
