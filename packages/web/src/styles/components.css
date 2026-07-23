@@ -973,11 +973,42 @@ svg.pc {
   font-size: 12.5px;
   letter-spacing: 0.06em;
 }
-.towerteaser {
-  text-align: center;
-  font-size: 12px;
+.towerstrip {
   color: var(--ph-dark);
-  padding: 4px 12px;
+}
+
+/* ---- landing split: functional pane | decorative deep-blue pane ---- */
+.landsplit {
+  display: grid;
+  grid-template-columns: minmax(340px, 560px) minmax(280px, 1fr);
+  gap: 30px;
+  align-items: start;
+  padding: 26px 30px 8px;
+}
+.landfn .howitworks {
+  padding: 12px 0;
+}
+.landdeco .replaystrip {
+  padding: 26px 0 0;
+}
+.ctas {
+  display: grid;
+  grid-auto-rows: 1fr;
+  gap: 12px;
+  margin-top: 16px;
+}
+.ctas .bigplay {
+  width: 100%;
+  min-width: 0;
+}
+@media (max-width: 768px) {
+  .landsplit {
+    grid-template-columns: 1fr;
+    padding: 16px 14px 4px;
+  }
+  .landdeco .replaystrip {
+    padding: 10px 0 0;
+  }
 }
 .tabrow {
   display: flex;

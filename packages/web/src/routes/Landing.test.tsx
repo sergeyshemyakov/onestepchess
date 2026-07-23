@@ -4,6 +4,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { MoveReceipt } from "../api/schemas.js";
@@ -245,4 +246,20 @@ it("guest_demo_receipt_and_expiry_render_only_login_wall_data", async () => {
   await waitFor(() => {
     expect(localStorage.getItem("osc.guestDemo")).toBe("expired");
   });
+});
+
+it("splits the landing into functional + decorative panes with a tower banner strip", async () => {
+  renderLanding(guestClient());
+  await screen.findByRole("button", { name: /I HAVE AN ALGORAND WALLET/ });
+  expect(screen.queryByText(/strangers and machines share/)).toBeNull();
+  const split = screen.getByTestId("landing-split");
+  expect(within(split).getByTestId("how-it-works")).not.toBeNull();
+  expect(within(split).getByTestId("deepblue-strip")).not.toBeNull();
+  expect(
+    within(split).getByRole("heading", { name: /ONLY ONE MOVE/ }),
+  ).not.toBeNull();
+  const tower = screen.getByTestId("tower-teaser");
+  expect(tower.className).toContain("promostrip");
+  const ctas = split.querySelector(".ctas");
+  expect(ctas?.querySelectorAll(".bigplay").length).toBe(3);
 });

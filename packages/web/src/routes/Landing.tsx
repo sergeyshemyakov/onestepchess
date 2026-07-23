@@ -93,17 +93,31 @@ export function Landing(props: {
   }, [flow.state.phase, flow.state.guest]);
 
   return (
-    <AppShell belowBar={<PromoStrip />}>
-      <div className="hero2">
-        <div style={{ maxWidth: 520 }}>
+    <AppShell
+      belowBar={
+        <>
+          <PromoStrip />
+          <div className="promostrip towerstrip" data-testid="tower-teaser">
+            coming soon: integration with{" "}
+            {/* announcement URL is CA-14 — text + link only, no brand assets (R13) */}
+            <a
+              href="https://worldchess.com"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              the tower, world chess's arena on algorand ↗
+            </a>
+          </div>
+        </>
+      }
+    >
+      <div className="landsplit" data-testid="landing-split">
+        <div className="landfn">
           <h1 style={{ fontSize: 62 }}>
             ONLY ONE MOVE.<span className="blink">▊</span>
           </h1>
-          <p className="dim" style={{ marginTop: 8 }}>
-            strangers and machines share a chess game — you play exactly one of
-            its moves. if your side goes on to win, your cent becomes two.
-          </p>
-          <div className="ctas" style={{ marginTop: 16 }}>
+          <HowItWorks meta={props.meta} />
+          <div className="ctas">
             <button
               type="button"
               className="bigplay"
@@ -111,7 +125,7 @@ export function Landing(props: {
             >
               <span className="bp-title">▸ I HAVE AN ALGORAND WALLET</span>
               <span className="bp-sub">
-                connect &amp; sign — one free signature, nothing is broadcast
+                connect &amp; sign a zero transfer to log in
               </span>
             </button>
             <Link className="bigplay" to="/start">
@@ -141,38 +155,19 @@ export function Landing(props: {
             internal playtest — mock settlement, no real USDC.
           </p>
         </div>
-        <div className="algohero">
-          <AlgorandMark size={110} />
-          <span className="vt" style={{ fontSize: 30, letterSpacing: ".24em" }}>
-            ALGORAND
-          </span>
+        <div className="landdeco">
+          <section className="replaystrip" data-testid="deepblue-strip">
+            <Replayer
+              plies={DEEP_BLUE_GAME6.plies}
+              autoPlay
+              loop
+              caption="deep blue – kasparov · game 6 · 1997 · 1-0"
+            />
+          </section>
         </div>
       </div>
 
-      <HowItWorks meta={props.meta} />
-
-      <section className="replaystrip" data-testid="deepblue-strip">
-        <Replayer
-          plies={DEEP_BLUE_GAME6.plies}
-          autoPlay
-          loop
-          caption="deep blue – kasparov · game 6 · 1997 · 1-0"
-        />
-      </section>
-
       <StatsStrip meta={props.meta} />
-
-      <p className="towerteaser" data-testid="tower-teaser">
-        coming soon: integration with{" "}
-        {/* announcement URL is CA-14 — text + link only, no brand assets (R13) */}
-        <a
-          href="https://worldchess.com"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          the tower, world chess's arena on algorand ↗
-        </a>
-      </p>
 
       <div
         className="landfoot"
