@@ -267,6 +267,15 @@
   aspect-ratio: 1;
   border: 1px solid var(--line);
   user-select: none;
+  /* D13 floor for play/replay surfaces; small-board contexts (loops,
+   * digests, archive thumbs) opt out — an oversized board there breaks
+   * overlay-to-square alignment. */
+  min-width: 320px;
+}
+.boardloop .board,
+.digestloop .board,
+.fincard .board {
+  min-width: 0;
 }
 .board.commitflash {
   animation: commit 0.22s;
@@ -1112,6 +1121,10 @@ svg.pc {
   place-items: center;
   transition: transform 1.2s ease-in-out;
   will-change: transform;
+}
+/* reset frame: teleport back without a reverse glide */
+.boardloop-piece.noanim {
+  transition: none;
 }
 .boardloop-burn {
   position: absolute;

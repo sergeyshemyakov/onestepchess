@@ -23,7 +23,12 @@ import {
   formatMicroUsdc,
   nextAtLabel,
 } from "../lib/format.js";
-import { coachMarksSeen, markCoachMarksSeen, readRef } from "../lib/storage.js";
+import {
+  coachMarksSeen,
+  markCoachMarksSeen,
+  readRef,
+  writeMoveContext,
+} from "../lib/storage.js";
 import { Timer } from "./Timer.jsx";
 import type { PlayFlow } from "./usePlayFlow.js";
 
@@ -73,7 +78,9 @@ export function PlayView(props: {
   }, [state.phase, coach]);
 
   // The committed move plays with the scanline type-in FX behind the
-  // settle morph.
+  // settle morph, and its claim position is cached so the hub's active
+  // loop can replay the move over the real board (ongoing items stay
+  // redacted server-side — I7).
   useEffect(() => {
     if (state.phase !== "RECEIPT" || state.receipt === undefined) return;
     const { from, to } = parseUci(state.receipt.move.uci);
@@ -84,7 +91,17 @@ export function PlayView(props: {
       capture: state.receipt.move.san.includes("x"),
       seq: Date.now(),
     });
-  }, [state.phase, state.receipt]);
+    if (state.claim !== undefined) {
+      writeMoveContext({
+        uci: state.receipt.move.uci,
+        san: state.receipt.move.san,
+        side: state.claim.yourSide,
+        demo: state.claim.demo,
+        fen: state.claim.fen,
+        at: new Date().toISOString(),
+      });
+    }
+  }, [state.phase, state.receipt, state.claim]);
 
   const claim = state.claim;
   const selectable = useMemo(

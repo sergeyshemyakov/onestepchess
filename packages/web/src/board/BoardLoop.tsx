@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  fenWithoutSquare,
   type Piece,
   type PieceType,
   parseFenBoard,
@@ -11,7 +12,9 @@ import { Board } from "./Board.jsx";
 import { PieceGlyph } from "./pieces.jsx";
 
 const EMPTY_FEN = "8/8/8/8/8/8/8/8 w - - 0 1";
-const LOOP_MS = 1_800;
+/** Glide (1.2s) + hold, then a suppressed-transition reset frame. */
+const LOOP_MS = 2_600;
+const RESET_MS = 150;
 
 /** SAN letter → piece; anything unrecognised is a pawn. */
 function pieceFromSan(san: string, side: Side): Piece {
@@ -23,11 +26,13 @@ function pieceFromSan(san: string, side: Side): Piece {
 }
 
 /** F-W3/F-W4 shared board loop: one move gliding from → to forever, with a
- * capture burn when the SAN says so. With a `fen` it renders the real
- * position (CONFIRM morph); without one it renders a redacted empty board —
- * the ongoing hero derives everything from the item's own fields (I7), so
- * it replays identically after a reload. `prefers-reduced-motion` renders
- * the final frame statically. */
+ * capture burn when the SAN says so. With a `fen` (the cached claim
+ * position) it renders the real board minus the mover, so every other piece
+ * stays put while the mover loops; without one it renders the redacted
+ * empty board — ongoing items carry no position on purpose (I7).
+ * The reset teleports (transition suppressed) so the glide always starts
+ * cleanly from the source square. `prefers-reduced-motion` renders the
+ * final frame statically. */
 export function BoardLoop(props: {
   readonly from: string;
   readonly to: string;
@@ -37,7 +42,7 @@ export function BoardLoop(props: {
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const live = useLoopGate(hostRef);
-  const [atTarget, setAtTarget] = useState(false);
+  const [phase, setPhase] = useState<"rest" | "glide">("rest");
   const reduced =
     typeof matchMedia === "function" &&
     matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -45,16 +50,16 @@ export function BoardLoop(props: {
 
   useEffect(() => {
     if (!live || reduced) return;
-    setAtTarget(false);
-    let flip: ReturnType<typeof setTimeout> | undefined;
-    const loop = setInterval(() => {
-      setAtTarget(false);
-      flip = setTimeout(() => setAtTarget(true), 150);
-    }, LOOP_MS);
-    flip = setTimeout(() => setAtTarget(true), 150);
+    let step: ReturnType<typeof setTimeout> | undefined;
+    const cycle = () => {
+      setPhase("rest");
+      step = setTimeout(() => setPhase("glide"), RESET_MS);
+    };
+    cycle();
+    const loop = setInterval(cycle, LOOP_MS);
     return () => {
       clearInterval(loop);
-      if (flip !== undefined) clearTimeout(flip);
+      if (step !== undefined) clearTimeout(step);
     };
   }, [live, reduced]);
 
@@ -63,16 +68,19 @@ export function BoardLoop(props: {
       ? pieceFromSan(props.san, props.side)
       : (parseFenBoard(props.fen)[squareIndex(props.from)] ??
         pieceFromSan(props.san, props.side));
+  const boardFen =
+    props.fen === undefined ? EMPTY_FEN : fenWithoutSquare(props.fen, props.from);
   const position = (square: string) => {
     const index = squareIndex(square);
     return { x: (index % 8) * 100, y: Math.floor(index / 8) * 100 };
   };
-  const at = position(reduced ? props.to : atTarget ? props.to : props.from);
+  const atTarget = reduced || phase === "glide";
+  const at = position(atTarget ? props.to : props.from);
 
   return (
     <div className="boardloop" ref={hostRef} data-testid="board-loop">
       <Board
-        fen={props.fen ?? EMPTY_FEN}
+        fen={boardFen}
         lastMove={{ from: props.from, to: props.to }}
       />
       <div className="boardloop-layer" aria-hidden="true">
@@ -85,7 +93,11 @@ export function BoardLoop(props: {
           />
         ) : null}
         <span
-          className="boardloop-piece"
+          className={
+            phase === "rest" && !reduced
+              ? "boardloop-piece noanim"
+              : "boardloop-piece"
+          }
           style={{ transform: `translate(${at.x}%, ${at.y}%)` }}
         >
           <PieceGlyph type={piece.type} side={piece.side} />

@@ -269,12 +269,7 @@ export function Board(props: BoardProps) {
   const lastMove = props.lastMove ?? null;
 
   return (
-    <div
-      className="board"
-      ref={hostRef}
-      style={{ minWidth: MIN_BOARD_PX }}
-      data-testid="board"
-    >
+    <div className="board" ref={hostRef} data-testid="board">
       {pieces.map((piece, index) => {
         const name = squareName(index);
         return (

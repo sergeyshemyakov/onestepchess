@@ -41,6 +41,33 @@ export function parseFenBoard(fen: string): readonly (Piece | null)[] {
   return board;
 }
 
+/** FEN with one square emptied — the board loop renders the claim position
+ * minus the mover so the overlay piece never duplicates it. */
+export function fenWithoutSquare(fen: string, square: string): string {
+  const board = [...parseFenBoard(fen)];
+  board[squareIndex(square)] = null;
+  const rows: string[] = [];
+  for (let rank = 0; rank < 8; rank += 1) {
+    let row = "";
+    let empty = 0;
+    for (let file = 0; file < 8; file += 1) {
+      const piece = board[rank * 8 + file];
+      if (piece === null || piece === undefined) {
+        empty += 1;
+        continue;
+      }
+      if (empty > 0) {
+        row += String(empty);
+        empty = 0;
+      }
+      row += piece.side === "white" ? piece.type.toUpperCase() : piece.type;
+    }
+    if (empty > 0) row += String(empty);
+    rows.push(row);
+  }
+  return [rows.join("/"), ...fen.split(" ").slice(1)].join(" ");
+}
+
 export function sideToMove(fen: string): Side {
   return fen.split(" ")[1] === "b" ? "black" : "white";
 }

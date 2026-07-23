@@ -8,11 +8,12 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PostMoveResult } from "../api/client.js";
 import type { MoveReceipt } from "../api/schemas.js";
-import { writeClaimDraft } from "../lib/storage.js";
+import { writeClaimDraft, writeMoveContext } from "../lib/storage.js";
 import {
   claimFixture,
   metaFixture,
   mockClient,
+  ongoingItemFixture,
   Providers,
   playerFixture,
 } from "../test/fixtures.jsx";
@@ -541,5 +542,51 @@ describe("hub panes chrome (playtest UI fixes)", () => {
     expect(css).toMatch(
       /\.panes \{[\s\S]*?width: min\(760px, calc\(100% - 32px\)\)/,
     );
+  });
+});
+
+describe("active-pane board loop context (playtest UI fixes)", () => {
+  afterEach(() => {
+    localStorage.clear();
+  });
+
+  const startFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+  const ongoingPage = {
+    items: [ongoingItemFixture()],
+    page: 1,
+    pageCount: 1,
+    total: 1,
+  };
+
+  it("loops the move over the cached claim position when one matches", async () => {
+    writeMoveContext({
+      uci: "e2e4",
+      san: "e4",
+      side: "white",
+      demo: false,
+      fen: startFen,
+      at: "2026-07-20T10:00:30Z",
+    });
+    const client = mockClient({
+      getOngoingGames: vi.fn(async () => ongoingPage),
+    } as never);
+    const { view } = renderHub(client);
+    const loop = await screen.findByTestId("board-loop");
+    // Real position renders around the mover…
+    expect(loop.querySelector('[data-square="d8"] svg.pc')).not.toBeNull();
+    // …but the mover's source square is empty on the base board (the
+    // overlay piece is the only e2 pawn).
+    expect(loop.querySelector('[data-square="e2"] svg.pc')).toBeNull();
+    expect(view.container.querySelector(".boardloop-piece")).not.toBeNull();
+  });
+
+  it("falls back to the redacted empty board without a cached context", async () => {
+    const client = mockClient({
+      getOngoingGames: vi.fn(async () => ongoingPage),
+    } as never);
+    renderHub(client);
+    const loop = await screen.findByTestId("board-loop");
+    expect(loop.querySelector('[data-square="d8"] svg.pc')).toBeNull();
+    expect(loop.querySelector(".boardloop-piece")).not.toBeNull();
   });
 });
