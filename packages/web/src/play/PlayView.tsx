@@ -72,12 +72,13 @@ export function PlayView(props: {
     if (state.phase === "FOCUS" && coach) markCoachMarksSeen();
   }, [state.phase, coach]);
 
-  // The committed move plays with trail FX behind the settle morph.
+  // The committed move plays with the scanline type-in FX behind the
+  // settle morph.
   useEffect(() => {
     if (state.phase !== "RECEIPT" || state.receipt === undefined) return;
     const { from, to } = parseUci(state.receipt.move.uci);
     setFx({
-      kind: "trail",
+      kind: "type",
       from,
       to,
       capture: state.receipt.move.san.includes("x"),

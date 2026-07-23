@@ -23,7 +23,8 @@ export function boardPxForViewport(viewportWidth: number): number {
 }
 
 export type BoardFx = {
-  readonly kind: "trail" | "glide";
+  /** Scanline type-in: source erases, a beam sweeps, target types in. */
+  readonly kind: "type";
   readonly from: string;
   readonly to: string;
   readonly capture?: boolean;
@@ -163,9 +164,8 @@ function playFx(layer: HTMLDivElement, fx: BoardFx): () => void {
   });
   const from = at(fromIndex);
   const to = at(toIndex);
-  const clones: HTMLElement[] = [];
+  const actors: HTMLElement[] = [];
   const timers: Array<ReturnType<typeof setTimeout>> = [];
-  const frames: number[] = [];
   const clone = (x: number, y: number, className: string): HTMLElement => {
     const holder = document.createElement("div");
     holder.className = `fxpc ${className}`;
@@ -174,63 +174,51 @@ function playFx(layer: HTMLDivElement, fx: BoardFx): () => void {
     holder.style.transform = `translate(${x}%, ${y}%)`;
     holder.appendChild(glyph.cloneNode(true));
     layer.appendChild(holder);
-    clones.push(holder);
+    actors.push(holder);
     return holder;
   };
   if (fx.capture === true) {
     clone(to.x, to.y, "fx-burn");
   }
-  if (fx.kind === "trail") {
-    for (let step = 1; step <= 5; step += 1) {
-      const ghost = clone(
-        from.x + ((to.x - from.x) * step) / 6,
-        from.y + ((to.y - from.y) * step) / 6,
-        "fx-ghost",
-      );
-      ghost.style.animationDelay = `${step * 45}ms`;
-    }
-  }
-  const mover = clone(from.x, from.y, `fx-mover ${fx.kind}`);
+  const eraser = clone(from.x, from.y, "fx-erase");
+  const sweep = document.createElement("div");
+  sweep.className = "fx-sweep";
+  layer.appendChild(sweep);
+  actors.push(sweep);
   const target = board?.querySelector<HTMLElement>(`[data-square="${fx.to}"]`);
-  const targetGlyph = target?.querySelector<SVGElement>("svg.pc");
-  if (targetGlyph !== null && targetGlyph !== undefined) {
-    targetGlyph.style.visibility = "hidden";
-  }
-  frames.push(
-    requestAnimationFrame(() => {
-      frames.push(
-        requestAnimationFrame(() => {
-          mover.style.transform = `translate(${to.x}%, ${to.y}%)`;
-        }),
-      );
-    }),
-  );
+  glyph.style.visibility = "hidden";
+  const caret = document.createElement("span");
+  caret.className = "fx-caret";
+  caret.textContent = "▊";
   timers.push(
-    setTimeout(
-      () => {
-        for (const node of clones) node.remove();
-        if (targetGlyph !== null && targetGlyph !== undefined) {
-          targetGlyph.style.visibility = "";
-        }
-        target?.classList.add("flash");
-        board?.classList.add("commitflash");
-        timers.push(
-          setTimeout(() => {
-            target?.classList.remove("flash");
-            board?.classList.remove("commitflash");
-          }, 320),
-        );
-      },
-      fx.kind === "trail" ? 480 : 340,
-    ),
+    setTimeout(() => {
+      eraser.remove();
+      glyph.style.visibility = "";
+      glyph.classList.add("fx-typein");
+      target?.appendChild(caret);
+      timers.push(
+        setTimeout(() => {
+          caret.remove();
+          glyph.classList.remove("fx-typein");
+          for (const node of actors) node.remove();
+          target?.classList.add("flash");
+          board?.classList.add("commitflash");
+          timers.push(
+            setTimeout(() => {
+              target?.classList.remove("flash");
+              board?.classList.remove("commitflash");
+            }, 320),
+          );
+        }, 380),
+      );
+    }, 200),
   );
   return () => {
-    for (const frame of frames) cancelAnimationFrame(frame);
     for (const timer of timers) clearTimeout(timer);
-    for (const node of clones) node.remove();
-    if (targetGlyph !== null && targetGlyph !== undefined) {
-      targetGlyph.style.visibility = "";
-    }
+    for (const node of actors) node.remove();
+    caret.remove();
+    glyph.style.visibility = "";
+    glyph.classList.remove("fx-typein");
     target?.classList.remove("flash");
     board?.classList.remove("commitflash");
   };

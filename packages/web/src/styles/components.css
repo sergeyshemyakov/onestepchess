@@ -398,8 +398,10 @@ svg.pc {
   }
 }
 
-/* ---- move FX: transform/opacity only (compositor-friendly) ----
- * trail = your committed move · glide = replays/minis · burn = captures. */
+/* ---- move FX: transform/opacity/clip-path only (compositor-friendly) ----
+ * scanline type-in = every committed move · burn = captures.
+ * The source erases top-down, a beam sweeps the board, the piece types in
+ * on the target under a blinking caret (UI suggestions "type" mode). */
 .fxlayer {
   position: absolute;
   inset: 0;
@@ -415,20 +417,53 @@ svg.pc {
   left: 0;
   top: 0;
 }
-.fx-mover {
-  transition: transform 0.3s cubic-bezier(0.2, 0.85, 0.25, 1);
+.fx-erase {
+  animation: fxerase 0.18s steps(6) forwards;
 }
-.fx-mover.glide {
-  transition-duration: 0.24s;
-}
-.fx-ghost {
-  opacity: 0.45;
-  animation: fxghost 0.55s forwards;
-}
-@keyframes fxghost {
+@keyframes fxerase {
+  from {
+    clip-path: inset(0);
+  }
   to {
+    clip-path: inset(100% 0 0 0);
+  }
+}
+.fx-typein {
+  animation: fxtypein 0.26s steps(8);
+}
+@keyframes fxtypein {
+  from {
+    clip-path: inset(0 0 100% 0);
+  }
+  to {
+    clip-path: inset(0);
+  }
+}
+.fx-sweep {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -2px;
+  height: 2px;
+  background: var(--ph);
+  opacity: 0.5;
+  box-shadow: 0 0 14px var(--ph);
+  animation: fxsweep 0.3s linear forwards;
+}
+@keyframes fxsweep {
+  to {
+    transform: translateY(calc(var(--sq) * 8 + 2px));
     opacity: 0;
   }
+}
+.fx-caret {
+  position: absolute;
+  right: 12%;
+  bottom: 8%;
+  font-size: calc(var(--sq) * 0.35);
+  color: var(--ph);
+  z-index: 6;
+  animation: blink 0.5s steps(1) infinite;
 }
 .fx-burn {
   animation: fxburn 0.42s steps(6) forwards;
@@ -465,17 +500,17 @@ svg.pc {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .fx-mover,
-  .fx-mover.glide {
-    transition: none;
-  }
-  .fx-ghost,
+  .fx-erase,
+  .fx-typein,
+  .fx-sweep,
+  .fx-caret,
   .fx-burn,
   .sq.flash,
   .board.commitflash {
     animation: none;
   }
-  .fx-ghost,
+  .fx-erase,
+  .fx-sweep,
   .fx-burn {
     opacity: 0;
   }

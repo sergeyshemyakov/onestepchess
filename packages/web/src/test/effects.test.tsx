@@ -51,7 +51,7 @@ it("web_effects_idle_and_cleanup_without_orphaned_work", () => {
       />
       <Board
         fen="rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"
-        fx={{ kind: "trail", from: "e2", to: "e4", seq: 1 }}
+        fx={{ kind: "type", from: "e2", to: "e4", seq: 1 }}
       />
     </>,
   );

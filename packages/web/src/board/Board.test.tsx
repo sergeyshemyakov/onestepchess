@@ -171,27 +171,36 @@ describe("move FX (§8.2)", () => {
       );
       expect(declarations.length).toBeGreaterThan(0);
       for (const property of declarations) {
-        expect(["transform", "opacity"]).toContain(property);
+        // clip-path is the accepted scanline exception — it composites
+        // without layout, matching the type-in treatment in the mockups.
+        expect(["transform", "opacity", "clip-path"]).toContain(property);
       }
     }
   });
 
-  it("plays trail clones on a new fx seq and cleans them up", () => {
+  it("plays the scanline type-in FX: erase, sweep, type-in, then cleans up", () => {
     vi.useFakeTimers();
     try {
       const view = render(<Board fen={AFTER_E4} />);
       view.rerender(
         <Board
           fen={AFTER_E4}
-          fx={{ kind: "trail", from: "e2", to: "e4", seq: 1 }}
+          fx={{ kind: "type", from: "e2", to: "e4", seq: 1 }}
         />,
       );
       const layer = view.container.querySelector(".fxlayer");
       if (layer === null) throw new Error("fx layer missing");
-      expect(layer.querySelectorAll(".fx-ghost").length).toBe(5);
-      expect(layer.querySelectorAll(".fx-mover").length).toBe(1);
-      vi.advanceTimersByTime(1_000);
+      expect(layer.querySelectorAll(".fx-erase").length).toBe(1);
+      expect(layer.querySelectorAll(".fx-sweep").length).toBe(1);
+      const glyph = view.container.querySelector('[data-square="e4"] svg.pc');
+      expect(glyph).not.toBeNull();
+      vi.advanceTimersByTime(220);
+      expect(glyph?.classList.contains("fx-typein")).toBe(true);
+      expect(view.container.querySelector(".fx-caret")).not.toBeNull();
+      vi.advanceTimersByTime(800);
       expect(layer.children.length).toBe(0);
+      expect(view.container.querySelector(".fx-caret")).toBeNull();
+      expect(glyph?.classList.contains("fx-typein")).toBe(false);
     } finally {
       vi.useRealTimers();
     }
