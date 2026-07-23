@@ -9,14 +9,12 @@ import type {
   OngoingGameItem,
   PlayerView,
 } from "../api/schemas.js";
-import { useSession } from "../auth/SessionContext.jsx";
 import { BoardLoop } from "../board/BoardLoop.jsx";
 import { AppShell } from "../components/AppShell.jsx";
+import { PlayerStatus } from "../components/PlayerStatus.jsx";
 import { PromoStrip } from "../components/PromoStrip.jsx";
-import { WalletPopover } from "../components/WalletPopover.jsx";
 import { outcomeFor, outcomeGlyph } from "../games/outcome.js";
 import { payoutChip } from "../games/QuickView.jsx";
-import { shortenAddress } from "../lib/address.js";
 import { explorerTxUrl } from "../lib/explorer.js";
 import { parseUci } from "../lib/fen.js";
 import { formatLocalTime, formatMicroUsdc } from "../lib/format.js";
@@ -236,11 +234,9 @@ export function Hub(props: {
   readonly meta: Meta;
   readonly player: PlayerView;
 }) {
-  const { logout, signedIn } = useSession();
   const live = useLive();
   const { profile, ongoing, finished } = live;
   const [pane, setPane] = useState<"active" | "finished">("active");
-  const [popover, setPopover] = useState(false);
   const handledLiveSeq = useRef(0);
   const flow = usePlayFlow({
     client: props.client,
@@ -350,41 +346,10 @@ export function Hub(props: {
   );
 
   const surfaceVisible = state.phase !== "IDLE";
-  const stats = profile?.stats;
-
   return (
     <AppShell
       belowBar={<PromoStrip />}
-      topRight={
-        <>
-          {stats !== undefined ? (
-            <span className="chip" data-testid="stats-chip">
-              W {stats.wins} · D {stats.draws} · L {stats.losses}
-              {stats.winratePct !== null
-                ? ` · ${Math.round(stats.winratePct)}%`
-                : ""}
-            </span>
-          ) : null}
-          <button
-            type="button"
-            className="chip click"
-            title={props.player.address}
-            onClick={() => setPopover((open) => !open)}
-          >
-            {props.player.nickname ?? "anonymous"} ·{" "}
-            {shortenAddress(props.player.address)}
-          </button>
-          {popover ? (
-            <WalletPopover
-              client={client}
-              player={props.player}
-              onRenamed={(player) => signedIn(player)}
-              onLogout={() => void logout()}
-              onClose={() => setPopover(false)}
-            />
-          ) : null}
-        </>
-      }
+      topRight={<PlayerStatus client={client} player={props.player} />}
     >
       <div className={surfaceVisible && claimOpen ? "focus-dim" : ""}>
         {!claimOpen ? (

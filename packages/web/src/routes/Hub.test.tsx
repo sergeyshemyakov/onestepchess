@@ -235,7 +235,7 @@ describe("I7 leak tests (#31)", () => {
 });
 
 describe("edge states (#31, F-W10 rows)", () => {
-  it("NO_BOARDS auto-retry countdown loops from Retry-After", async () => {
+  it("NO_BOARDS auto-retry countdown loops from the five-second backoff", async () => {
     const createClaim = vi.fn(async () => ({
       kind: "none" as const,
       retryAfterSeconds: 1,
@@ -243,15 +243,15 @@ describe("edge states (#31, F-W10 rows)", () => {
     const client = mockClient({ createClaim } as never);
     renderHub(client);
     fireEvent.click(await screen.findByRole("button", { name: /▸ PLAY/ }));
-    await screen.findByText(/NO BOARDS FREE :: retrying in/);
+    await screen.findByText("NO BOARDS FREE :: retrying in 00:05");
     // The countdown reaches zero and automatically re-claims.
     await waitFor(
       () => {
         expect(createClaim.mock.calls.length).toBeGreaterThanOrEqual(2);
       },
-      { timeout: 4_000 },
+      { timeout: 7_000 },
     );
-  });
+  }, 10_000);
 
   it("QUOTA_OUT renders next-at from Retry-After", async () => {
     const client = mockClient({

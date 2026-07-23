@@ -7,6 +7,7 @@ import { AlgorandMark } from "../board/pieces.jsx";
 import { AppShell } from "../components/AppShell.jsx";
 import { PromoStrip } from "../components/PromoStrip.jsx";
 import { StatsStrip } from "../components/StatsStrip.jsx";
+import { TowerTeaser } from "../components/TowerTeaser.jsx";
 import { DEEP_BLUE_GAME6 } from "../lib/deepblue-game6.js";
 import { readGuestDemo, writeGuestDemo } from "../lib/storage.js";
 import { PlayView } from "../play/PlayView.jsx";
@@ -97,17 +98,7 @@ export function Landing(props: {
       belowBar={
         <>
           <PromoStrip />
-          <div className="promostrip towerstrip" data-testid="tower-teaser">
-            coming soon: integration with{" "}
-            {/* announcement URL is CA-14 — text + link only, no brand assets (R13) */}
-            <a
-              href="https://worldchess.com"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              the tower, world chess's arena on algorand ↗
-            </a>
-          </div>
+          <TowerTeaser />
         </>
       }
     >
@@ -182,9 +173,15 @@ export function Landing(props: {
           color: "var(--ph-dark)",
         }}
       >
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+        <a
+          href="https://algorand.co/"
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="Algorand website"
+          style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
+        >
           <AlgorandMark /> RUNS ON ALGORAND
-        </span>
+        </a>
         <span>· built for the x402 global challenge</span>
         <a
           href={props.meta.docs.repo}

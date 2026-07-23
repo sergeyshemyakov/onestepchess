@@ -13,6 +13,19 @@ import type { AppEnv } from "./app.js";
  * §6.6). Unlike the algod and WalletConnect origins it is not configurable. */
 const TURNSTILE_ORIGIN = "https://challenges.cloudflare.com";
 
+// Pera and Defly discover a WalletConnect v1 shard before opening the socket.
+// Exact sources keep the CSP closed while allowing their certified SDK flow.
+const WALLET_PROVIDER_CONNECT_ORIGINS = [
+  "https://wc.perawallet.app",
+  "https://static.defly.app",
+  "https://bridge.walletconnect.org",
+  "wss://bridge.walletconnect.org",
+  ...["a", "b", "c", "d", "e", "f", "g", "h"].flatMap((shard) => [
+    `https://wallet-connect-${shard}.perawallet.app`,
+    `wss://wallet-connect-${shard}.perawallet.app`,
+  ]),
+];
+
 const IMMUTABLE_CACHE = "public, max-age=31536000, immutable";
 
 export type StaticDeps = {
@@ -106,7 +119,13 @@ export function securityHeaders(deps: {
 }): Record<string, string> {
   const algod = safeOrigin(deps.config.ALGOD_URL);
   const walletconnect = safeOrigin(deps.config.WALLETCONNECT_RELAY_URL);
-  const connect = ["'self'", algod, walletconnect, TURNSTILE_ORIGIN]
+  const connect = [
+    "'self'",
+    algod,
+    walletconnect,
+    TURNSTILE_ORIGIN,
+    ...WALLET_PROVIDER_CONNECT_ORIGINS,
+  ]
     .filter((origin): origin is string => origin !== null)
     .join(" ");
   const csp = [

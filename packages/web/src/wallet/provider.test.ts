@@ -11,6 +11,16 @@ afterEach(() => {
 });
 
 describe("Release 1 wallet surface", () => {
+  it("installs every configured production wallet provider SDK", () => {
+    for (const provider of [
+      "@perawallet/connect",
+      "@blockshake/defly-connect",
+      "lute-connect",
+    ]) {
+      expect(import.meta.resolve(provider)).toContain(provider);
+    }
+  });
+
   it("keeps the development mnemonic provider available in dev builds", () => {
     expect(
       createWalletModule({

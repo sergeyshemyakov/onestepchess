@@ -20,9 +20,11 @@ const COACH_KEY = "osc.coach";
 const GUEST_DEMO_KEY = "osc.guestDemo";
 const REF_KEY = "osc.ref";
 const CHAMP_KEY = "osc.champNotice";
+const TOWER_TEASER_KEY = "osc.towerTeaserDismissedAt";
 const LAST_SEEN_FINISHED_KEY = "osc.lastSeenFinishedAt";
 const MOVE_CONTEXTS_KEY = "osc.moveContexts";
 const MOVE_CONTEXTS_CAP = 20;
+export const TOWER_TEASER_COOLDOWN_MS = 24 * 60 * 60 * 1_000;
 
 function safeGet(store: Storage, key: string): string | null {
   try {
@@ -127,6 +129,22 @@ export function champNoticeDismissed(): boolean {
 
 export function dismissChampNotice(): void {
   safeSet(localStorage, CHAMP_KEY, "dismissed");
+}
+
+export function towerTeaserDismissed(now = Date.now()): boolean {
+  const raw = safeGet(localStorage, TOWER_TEASER_KEY);
+  if (raw === null) return false;
+  const dismissedAt = Number(raw);
+  const elapsed = now - dismissedAt;
+  if (!Number.isFinite(dismissedAt) || elapsed < 0) {
+    safeSet(localStorage, TOWER_TEASER_KEY, null);
+    return false;
+  }
+  return elapsed < TOWER_TEASER_COOLDOWN_MS;
+}
+
+export function dismissTowerTeaser(now = Date.now()): void {
+  safeSet(localStorage, TOWER_TEASER_KEY, String(now));
 }
 
 /** The claim position the player already saw when committing a move. The

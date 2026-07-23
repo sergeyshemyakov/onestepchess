@@ -29,6 +29,7 @@ import {
   readRef,
   writeMoveContext,
 } from "../lib/storage.js";
+import { INITIAL_NO_BOARDS_RETRY_SECONDS } from "./machine.js";
 import { Timer } from "./Timer.jsx";
 import type { PlayFlow } from "./usePlayFlow.js";
 
@@ -202,7 +203,12 @@ export function PlayView(props: {
             <h3>NO BOARDS</h3>
             <p className="mv">
               <CountdownLine
-                seconds={Math.max(1, Math.ceil(state.retryAfterSeconds ?? 5))}
+                seconds={Math.max(
+                  1,
+                  Math.ceil(
+                    state.retryAfterSeconds ?? INITIAL_NO_BOARDS_RETRY_SECONDS,
+                  ),
+                )}
                 onDone={() => send({ type: "RETRY" })}
                 render={(left) =>
                   `NO BOARDS FREE :: retrying in ${formatCountdown(left)}`

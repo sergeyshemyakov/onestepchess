@@ -12,9 +12,17 @@ import { Board } from "./Board.jsx";
 import { PieceGlyph } from "./pieces.jsx";
 
 const EMPTY_FEN = "8/8/8/8/8/8/8/8 w - - 0 1";
-/** Glide (1.2s) + hold, then a suppressed-transition reset frame. */
-const LOOP_MS = 2_600;
-const RESET_MS = 150;
+
+type Phase = "rest" | "erase" | "type" | "hold";
+
+/** One scanline cycle: the claim position at rest, the mover erases while
+ * the beam sweeps, types in on the target, holds — then teleports back. */
+const PHASES: ReadonlyArray<readonly [Phase, number]> = [
+  ["rest", 900],
+  ["erase", 200],
+  ["type", 380],
+  ["hold", 1_100],
+];
 
 /** SAN letter → piece; anything unrecognised is a pawn. */
 function pieceFromSan(san: string, side: Side): Piece {
@@ -25,14 +33,12 @@ function pieceFromSan(san: string, side: Side): Piece {
   return { type, side };
 }
 
-/** F-W3/F-W4 shared board loop: one move gliding from → to forever, with a
- * capture burn when the SAN says so. With a `fen` (the cached claim
- * position) it renders the real board minus the mover, so every other piece
- * stays put while the mover loops; without one it renders the redacted
- * empty board — ongoing items carry no position on purpose (I7).
- * The reset teleports (transition suppressed) so the glide always starts
- * cleanly from the source square. `prefers-reduced-motion` renders the
- * final frame statically. */
+/** F-W3 active-game board loop: the user's move replayed forever with the
+ * scanline type-in FX (UI suggestions "type" mode). With a `fen` (the cached
+ * claim position) the base board renders the real position minus the actors
+ * the overlay animates — every other piece stays put; without one it renders
+ * the redacted empty board, since ongoing items carry no position on
+ * purpose (I7). `prefers-reduced-motion` renders the final frame statically. */
 export function BoardLoop(props: {
   readonly from: string;
   readonly to: string;
@@ -42,64 +48,100 @@ export function BoardLoop(props: {
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const live = useLoopGate(hostRef);
-  const [phase, setPhase] = useState<"rest" | "glide">("rest");
+  const [phase, setPhase] = useState<Phase>("rest");
   const reduced =
     typeof matchMedia === "function" &&
     matchMedia("(prefers-reduced-motion: reduce)").matches;
   const capture = props.san.includes("x");
 
+  // Overlay glyphs size off --sq like real squares do, but the layer sits
+  // outside the Board (which only sets --sq on itself) — the host has to
+  // carry the variable or glyphs fall back to the 60px root default.
+  useEffect(() => {
+    const host = hostRef.current;
+    if (host === null || typeof ResizeObserver !== "function") return;
+    const refit = () =>
+      host.style.setProperty("--sq", `${host.clientWidth / 8}px`);
+    refit();
+    const observer = new ResizeObserver(refit);
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, []);
+
   useEffect(() => {
     if (!live || reduced) return;
-    let step: ReturnType<typeof setTimeout> | undefined;
-    const cycle = () => {
-      setPhase("rest");
-      step = setTimeout(() => setPhase("glide"), RESET_MS);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let index = 0;
+    const step = () => {
+      const entry = PHASES[index];
+      if (entry === undefined) return;
+      setPhase(entry[0]);
+      timer = setTimeout(step, entry[1]);
+      index = (index + 1) % PHASES.length;
     };
-    cycle();
-    const loop = setInterval(cycle, LOOP_MS);
+    step();
     return () => {
-      clearInterval(loop);
-      if (step !== undefined) clearTimeout(step);
+      if (timer !== undefined) clearTimeout(timer);
     };
   }, [live, reduced]);
 
-  const piece =
-    props.fen === undefined
-      ? pieceFromSan(props.san, props.side)
-      : (parseFenBoard(props.fen)[squareIndex(props.from)] ??
-        pieceFromSan(props.san, props.side));
-  const boardFen =
+  const board = props.fen === undefined ? null : parseFenBoard(props.fen);
+  const mover =
+    board?.[squareIndex(props.from)] ?? pieceFromSan(props.san, props.side);
+  const victim = capture ? (board?.[squareIndex(props.to)] ?? null) : null;
+  const baseFen =
     props.fen === undefined
       ? EMPTY_FEN
-      : fenWithoutSquare(props.fen, props.from);
+      : fenWithoutSquare(
+          capture ? fenWithoutSquare(props.fen, props.to) : props.fen,
+          props.from,
+        );
   const position = (square: string) => {
     const index = squareIndex(square);
-    return { x: (index % 8) * 100, y: Math.floor(index / 8) * 100 };
+    return `translate(${(index % 8) * 100}%, ${Math.floor(index / 8) * 100}%)`;
   };
-  const atTarget = reduced || phase === "glide";
-  const at = position(atTarget ? props.to : props.from);
+  const atTarget = reduced || phase === "type" || phase === "hold";
 
   return (
     <div className="boardloop" ref={hostRef} data-testid="board-loop">
-      <Board fen={boardFen} lastMove={{ from: props.from, to: props.to }} />
+      <Board fen={baseFen} lastMove={{ from: props.from, to: props.to }} />
       <div className="boardloop-layer" aria-hidden="true">
-        {capture && atTarget ? (
+        {victim !== null && !atTarget ? (
+          <span
+            className="boardloop-piece"
+            style={{ transform: position(props.to) }}
+          >
+            <PieceGlyph type={victim.type} side={victim.side} />
+          </span>
+        ) : null}
+        {capture && phase === "type" && !reduced ? (
           <span
             className="boardloop-burn"
-            style={{
-              transform: `translate(${position(props.to).x}%, ${position(props.to).y}%)`,
-            }}
+            style={{ transform: position(props.to) }}
           />
         ) : null}
+        {(phase === "erase" || phase === "type") && !reduced ? (
+          <span className="boardloop-sweep" />
+        ) : null}
+        {phase === "type" && !reduced ? (
+          <span
+            className="boardloop-piece"
+            style={{ transform: position(props.to) }}
+          >
+            <i className="boardloop-caret">▊</i>
+          </span>
+        ) : null}
         <span
-          className={
-            phase === "rest" && !reduced
-              ? "boardloop-piece noanim"
-              : "boardloop-piece"
-          }
-          style={{ transform: `translate(${at.x}%, ${at.y}%)` }}
+          className={[
+            "boardloop-piece",
+            phase === "erase" && !reduced ? "erasing" : "",
+            phase === "type" && !reduced ? "typing" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+          style={{ transform: position(atTarget ? props.to : props.from) }}
         >
-          <PieceGlyph type={piece.type} side={piece.side} />
+          <PieceGlyph type={mover.type} side={mover.side} />
         </span>
       </div>
     </div>

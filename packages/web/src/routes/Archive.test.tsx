@@ -10,11 +10,13 @@ import { afterEach, expect, it, vi } from "vitest";
 import { clearReplayCacheForTests } from "../api/replayCache.js";
 import { SessionProvider } from "../auth/SessionContext.jsx";
 import { ToastProvider } from "../components/Toasts.jsx";
+import { LiveProvider } from "../live/LiveContext.jsx";
 import { MetaProvider } from "../meta/MetaContext.jsx";
 import {
   finishedStakedFixture,
   metaFixture,
   mockClient,
+  playerFixture,
   replayFixture,
 } from "../test/fixtures.jsx";
 import { Archive } from "./Archive.jsx";
@@ -54,7 +56,13 @@ function renderArchive(
       <ToastProvider>
         <MetaProvider client={client}>
           <SessionProvider client={client}>
-            <Archive client={client} meta={metaFixture} />
+            <LiveProvider client={client}>
+              <Archive
+                client={client}
+                meta={metaFixture}
+                player={playerFixture}
+              />
+            </LiveProvider>
           </SessionProvider>
         </MetaProvider>
       </ToastProvider>
@@ -110,5 +118,21 @@ it("renders ACTIVE and FINISHED as two side-by-side panes", async () => {
   await screen.findByRole("heading", { name: "ACTIVE" });
   expect(view.container.querySelectorAll(".archive > .archpane").length).toBe(
     2,
+  );
+});
+
+it("archive_omits_the_removed_anonymity_caption", () => {
+  renderArchive(pagedClient());
+  expect(screen.queryByText(/two of these could be the same game/i)).toBeNull();
+});
+
+it("archive_keeps_player_identity_and_wdl_stats_in_the_shared_header", async () => {
+  renderArchive(pagedClient());
+
+  expect(
+    await screen.findByRole("button", { name: /night-owl/ }),
+  ).not.toBeNull();
+  expect((await screen.findByTestId("stats-chip")).textContent).toContain(
+    "W 12 · D 3 · L 9 · 50%",
   );
 });

@@ -1,8 +1,26 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { findMoveContextFen, writeMoveContext } from "./storage.js";
+import {
+  dismissTowerTeaser,
+  findMoveContextFen,
+  TOWER_TEASER_COOLDOWN_MS,
+  towerTeaserDismissed,
+  writeMoveContext,
+} from "./storage.js";
 
 afterEach(() => {
   localStorage.clear();
+});
+
+it("shows the Tower teaser again after a 24-hour dismissal cooldown", () => {
+  const dismissedAt = Date.UTC(2026, 6, 23, 12);
+  dismissTowerTeaser(dismissedAt);
+
+  expect(towerTeaserDismissed(dismissedAt + TOWER_TEASER_COOLDOWN_MS - 1)).toBe(
+    true,
+  );
+  expect(towerTeaserDismissed(dismissedAt + TOWER_TEASER_COOLDOWN_MS)).toBe(
+    false,
+  );
 });
 
 describe("move contexts (playtest UI fixes — active loop over claim position)", () => {

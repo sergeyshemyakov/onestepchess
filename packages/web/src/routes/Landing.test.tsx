@@ -166,6 +166,22 @@ it("landing_uses_only_meta_and_session_probe_before_interaction", async () => {
   );
 });
 
+it("tower_teaser_can_be_closed_and_stays_hidden_during_its_cooldown", async () => {
+  const first = renderLanding(guestClient());
+  const teaser = await screen.findByTestId("tower-teaser");
+  fireEvent.click(
+    within(teaser).getByRole("button", {
+      name: "dismiss Tower integration notice",
+    }),
+  );
+  expect(screen.queryByTestId("tower-teaser")).toBeNull();
+  first.unmount();
+
+  renderLanding(guestClient());
+  await screen.findByRole("button", { name: /I HAVE AN ALGORAND WALLET/ });
+  expect(screen.queryByTestId("tower-teaser")).toBeNull();
+});
+
 it("guest_claim_rehydrates_only_when_this_tab_has_a_draft", async () => {
   const claim = claimFixture({ demo: true, stakeMicroUsdc: 0 });
   writeClaimDraft({

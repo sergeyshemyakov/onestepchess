@@ -50,6 +50,18 @@ describe("shell + router (#27)", () => {
     expect(
       screen.getByText(/built for the x402 global challenge/),
     ).not.toBeNull();
+    expect(
+      screen
+        .getByRole("link", { name: "ONE STEP CHESS home" })
+        .getAttribute("href"),
+    ).toBe("/");
+    const algorandLinks = screen.getAllByRole("link", {
+      name: "Algorand website",
+    });
+    expect(algorandLinks).toHaveLength(2);
+    for (const link of algorandLinks) {
+      expect(link.getAttribute("href")).toBe("https://algorand.co/");
+    }
     await screen.findByRole("button", { name: /I HAVE AN ALGORAND WALLET/ });
     view.unmount();
 

@@ -4,6 +4,12 @@
  * video (never a new color), reduced motion always has a static state. */
 
 /* ---- buttons ---- */
+button:not(.sq),
+a.btn,
+a.chip.click {
+  border-radius: 3px;
+}
+
 .btn {
   font: inherit;
   background: none;
@@ -1119,12 +1125,39 @@ svg.pc {
   height: 12.5%;
   display: grid;
   place-items: center;
-  transition: transform 1.2s ease-in-out;
-  will-change: transform;
 }
-/* reset frame: teleport back without a reverse glide */
-.boardloop-piece.noanim {
-  transition: none;
+/* scanline cycle: reuses the committed-move fxerase/fxtypein keyframes */
+.boardloop-piece.erasing {
+  animation: fxerase 0.18s steps(6) forwards;
+}
+.boardloop-piece.typing {
+  animation: fxtypein 0.26s steps(8);
+}
+.boardloop-sweep {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  background: var(--ph);
+  opacity: 0.5;
+  box-shadow: 0 0 14px var(--ph);
+  animation: blsweep 0.55s linear forwards;
+}
+@keyframes blsweep {
+  to {
+    top: 100%;
+    opacity: 0;
+  }
+}
+.boardloop-caret {
+  position: absolute;
+  right: 12%;
+  bottom: 8%;
+  font-style: normal;
+  font-size: calc(var(--sq) * 0.35);
+  color: var(--ph);
+  animation: blink 0.5s steps(1) infinite;
 }
 .boardloop-burn {
   position: absolute;
@@ -1137,11 +1170,23 @@ svg.pc {
     color-mix(in oklab, var(--ph) 60%, transparent),
     transparent 70%
   );
-  opacity: 0.8;
+  animation: blburn 0.38s steps(6) forwards;
+}
+@keyframes blburn {
+  from {
+    opacity: 0.85;
+  }
+  to {
+    opacity: 0;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
-  .boardloop-piece {
-    transition: none;
+  .boardloop-piece.erasing,
+  .boardloop-piece.typing,
+  .boardloop-sweep,
+  .boardloop-caret,
+  .boardloop-burn {
+    animation: none;
   }
 }
 /* Fixed width (not max-width): the tab row and panel edges must not move
