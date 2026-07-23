@@ -1036,6 +1036,13 @@ svg.pc {
 .replaypage {
   padding: 18px 30px;
 }
+/* ---- archive: active | finished side-by-side ---- */
+.archive {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 26px;
+  align-items: start;
+}
 .rules {
   white-space: pre-wrap;
   max-width: 64ch;
@@ -1300,7 +1307,8 @@ svg.pc {
 }
 @media (max-width: 768px) {
   .herocard,
-  .replaymain {
+  .replaymain,
+  .archive {
     grid-template-columns: 1fr;
   }
   .howitworks,

@@ -115,7 +115,7 @@ export function Archive(props: {
   return (
     <AppShell>
       <div className="archive">
-        <section aria-label="active moves">
+        <section className="archpane" aria-label="active moves">
           <h2>ACTIVE</h2>
           <p className="faintt">
             two of these could be the same game and you'd never know (that's the
@@ -173,7 +173,7 @@ export function Archive(props: {
           ) : null}
         </section>
 
-        <section aria-label="finished games">
+        <section className="archpane" aria-label="finished games">
           <h2>FINISHED</h2>
           {finished === null ? (
             <p className="console">&gt; loading…</p>

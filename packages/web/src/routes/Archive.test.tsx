@@ -104,3 +104,11 @@ it("archive_uses_final_fen_without_replay_until_quick_view", async () => {
   await screen.findByTestId("replayer");
   expect(client3.getReplay).toHaveBeenCalledTimes(1);
 });
+
+it("renders ACTIVE and FINISHED as two side-by-side panes", async () => {
+  const view = renderArchive(pagedClient());
+  await screen.findByRole("heading", { name: "ACTIVE" });
+  expect(view.container.querySelectorAll(".archive > .archpane").length).toBe(
+    2,
+  );
+});
