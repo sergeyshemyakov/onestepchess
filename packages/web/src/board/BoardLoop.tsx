@@ -69,7 +69,9 @@ export function BoardLoop(props: {
       : (parseFenBoard(props.fen)[squareIndex(props.from)] ??
         pieceFromSan(props.san, props.side));
   const boardFen =
-    props.fen === undefined ? EMPTY_FEN : fenWithoutSquare(props.fen, props.from);
+    props.fen === undefined
+      ? EMPTY_FEN
+      : fenWithoutSquare(props.fen, props.from);
   const position = (square: string) => {
     const index = squareIndex(square);
     return { x: (index % 8) * 100, y: Math.floor(index / 8) * 100 };
@@ -79,10 +81,7 @@ export function BoardLoop(props: {
 
   return (
     <div className="boardloop" ref={hostRef} data-testid="board-loop">
-      <Board
-        fen={boardFen}
-        lastMove={{ from: props.from, to: props.to }}
-      />
+      <Board fen={boardFen} lastMove={{ from: props.from, to: props.to }} />
       <div className="boardloop-layer" aria-hidden="true">
         {capture && atTarget ? (
           <span

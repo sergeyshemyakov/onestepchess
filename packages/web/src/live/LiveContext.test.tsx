@@ -223,7 +223,9 @@ describe("Release 2 live human surfaces", () => {
     expect(client.getFinishedGames).toHaveBeenCalled();
     expect(client.getMeta).toHaveBeenCalled();
     fireEvent.click(screen.getByRole("link", { name: "BOARDS" }));
-    const finishedTab = await screen.findByRole("tab", { name: "LAST FINISHED" });
+    const finishedTab = await screen.findByRole("tab", {
+      name: "LAST FINISHED",
+    });
     expect(finishedTab.textContent).toContain("· NEW");
   });
 
