@@ -1058,9 +1058,15 @@ svg.pc {
     transition: none;
   }
 }
+/* Fixed width (not max-width): the tab row and panel edges must not move
+ * when switching between a populated and an empty pane. */
 .panes {
   margin-top: 20px;
-  max-width: 760px;
+  width: min(760px, calc(100% - 32px));
+}
+.archivelink {
+  font-size: 12.5px;
+  margin-top: 8px;
 }
 .herocard {
   display: grid;

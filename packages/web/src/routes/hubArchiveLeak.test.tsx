@@ -87,7 +87,7 @@ it("hub_and_archive_never_correlate_ongoing_or_demo_games", async () => {
 
   // -- Hub finished pane: the staked hero may name its game; the demo
   //    minicard must not — and must not link anywhere.
-  fireEvent.click(screen.getByRole("tab", { name: "FINISHED" }));
+  fireEvent.click(screen.getByRole("tab", { name: "LAST FINISHED" }));
   await screen.findByTestId("finished-hero");
   expect(screen.getByText("crimson-rook-217")).not.toBeNull();
   const demoCard = await screen.findByTestId("finished-demo-minicard");

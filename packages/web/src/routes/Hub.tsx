@@ -422,7 +422,7 @@ export function Hub(props: {
                   className={pane === "active" ? "tab active" : "tab"}
                   onClick={() => setPane("active")}
                 >
-                  ACTIVE
+                  LAST ACTIVE
                 </button>
                 <button
                   type="button"
@@ -431,7 +431,7 @@ export function Hub(props: {
                   className={pane === "finished" ? "tab active" : "tab"}
                   onClick={showFinished}
                 >
-                  FINISHED
+                  LAST FINISHED
                   {unseenFinished ? (
                     <span aria-hidden="true"> · NEW</span>
                   ) : null}
@@ -453,6 +453,9 @@ export function Hub(props: {
                 />
               )}
             </div>
+            <p className="archivelink">
+              <Link to="/archive">full archive ▸</Link>
+            </p>
           </div>
         ) : null}
       </div>

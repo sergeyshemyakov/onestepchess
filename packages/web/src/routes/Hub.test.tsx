@@ -520,3 +520,26 @@ describe("responsive treatment (#31)", () => {
     );
   });
 });
+
+describe("hub panes chrome (playtest UI fixes)", () => {
+  it("renames the tabs and links to the archive below the panel", async () => {
+    renderHub();
+    expect(
+      await screen.findByRole("tab", { name: /LAST ACTIVE/ }),
+    ).not.toBeNull();
+    expect(screen.getByRole("tab", { name: /LAST FINISHED/ })).not.toBeNull();
+    const link = screen.getByRole("link", { name: /full archive/ });
+    expect(link.getAttribute("href")).toBe("/archive");
+  });
+
+  it("pins the panes to a fixed width so tab switches cannot reflow", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join, dirname } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const dir = dirname(fileURLToPath(import.meta.url));
+    const css = readFileSync(join(dir, "../styles/components.css"), "utf8");
+    expect(css).toMatch(
+      /\.panes \{[\s\S]*?width: min\(760px, calc\(100% - 32px\)\)/,
+    );
+  });
+});
