@@ -344,7 +344,8 @@ export function registerHumanRoutes(
       if (
         claim.moveUci === null ||
         claim.moveSan === null ||
-        claim.movedAt === null
+        claim.movedAt === null ||
+        claim.fenBefore === null
       )
         throw new Error(`moved claim ${claim.id} lacks move data`);
       const entry = entryByClaim.get(claim.id);
@@ -357,7 +358,11 @@ export function registerHumanRoutes(
         movedAt: new Date(claim.movedAt).toISOString(),
       };
       if (query.status === "ongoing")
-        return { ...common, payTxid: entry?.payTxid ?? null };
+        return {
+          ...common,
+          fenBeforeYourMove: claim.fenBefore,
+          payTxid: entry?.payTxid ?? null,
+        };
       if (
         game.result === null ||
         game.termination === null ||
@@ -446,6 +451,21 @@ export function registerHumanRoutes(
     const playerByAddress = new Map(
       players.map((player) => [player.address, player]),
     );
+    // Same "moves" definition as /my/profile: staked entries only.
+    const movesByAddress = new Map(
+      (addresses.length === 0
+        ? []
+        : deps.db
+            .select({
+              player: schema.stakeEntries.player,
+              count: sql<number>`count(*)`,
+            })
+            .from(schema.stakeEntries)
+            .where(inArray(schema.stakeEntries.player, addresses))
+            .groupBy(schema.stakeEntries.player)
+            .all()
+      ).map((row) => [row.player, row.count]),
+    );
     return c.json({
       gameId: game.id,
       name: game.name,
@@ -465,6 +485,7 @@ export function registerHumanRoutes(
             kind: author.kind,
             winratePct:
               decisions === 0 ? null : (author.wins / decisions) * 100,
+            movesTotal: movesByAddress.get(authorAddress) ?? 0,
           },
         };
       }),
@@ -523,12 +544,11 @@ export function registerHumanRoutes(
           ? "DRAW"
           : "LOST";
     const svg = buildCardSvg({
-      gameName: game.name,
+      gameId: game.id,
       authorNickname: author?.nickname ?? null,
       outcome,
       fen: ply.fenAfter,
       moveUci: ply.move.uci,
-      side: ply.side,
     });
     const png = await cardCache.render(`${game.id}:${plyIndex}`, svg);
     // Copy into a plain Uint8Array so the body type is exact (Hono rejects the

@@ -116,6 +116,28 @@ afterEach(() => {
 });
 
 describe("claim issuance (F3/F5)", () => {
+  it("persists the exact board position presented by the claim", async () => {
+    const stack = setup({ GAME_POOL_TARGET: 1 });
+    await player(stack, "alice");
+    const game = [...stack.views.games.values()][0];
+    if (game === undefined) throw new Error("game unavailable");
+    const positionAfterE4 =
+      "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
+    game.fen = positionAfterE4;
+    game.ply = 1;
+    stack.database.sqlite
+      .prepare("UPDATE games SET fen = ?, ply = 1 WHERE id = ?")
+      .run(positionAfterE4, game.id);
+
+    const opened = await claim(stack, "alice");
+
+    expect(
+      stack.database.sqlite
+        .prepare("SELECT fen_before FROM claims WHERE id = ?")
+        .get(opened.claim?.id),
+    ).toEqual({ fen_before: positionAfterE4 });
+  });
+
   it("get-or-create returns the same open claim even when demo changes", async () => {
     const stack = setup({ GAME_POOL_TARGET: 1 });
     await player(stack, "alice");

@@ -221,12 +221,14 @@ function release1Database(): string {
              ('r1-bot', 'agent', 'r1-bot', 100, 0, 0, 1);
     INSERT INTO games (id, name, status, fen, history_json, rules_json, result,
                        termination, last_ply_at, created_at, finished_at, resolved_at)
-      VALUES ('gm_r1', 'release-one-game', 'finished', 'final-fen', '["e2e4"]',
+      VALUES ('gm_r1', 'release-one-game', 'finished', 'final-fen', '["e2e4","e7e5"]',
               '{}', 'white', 'checkmate', 200, 100, 300, 400);
     INSERT INTO claims (id, game_id, player, side, demo, stake_microusdc, status,
                         created_at, deadline, moved_at, moved_ply, move_uci, move_san, fen_after)
       VALUES ('clm_r1', 'gm_r1', 'r1-alice', 'white', 0, 1000, 'moved',
-              100, 700, 200, 1, 'e2e4', 'e4', 'final-fen');
+              100, 700, 200, 1, 'e2e4', 'e4', 'after-e4'),
+             ('clm_r1_bot', 'gm_r1', 'r1-bot', 'black', 1, 0, 'moved',
+              101, 701, 201, 2, 'e7e5', 'e5', 'final-fen');
     INSERT INTO stake_entries (id, game_id, claim_id, player, side, kind, amount,
                                pay_txid, ply, payout_amount, created_at)
       VALUES ('se_r1', 'gm_r1', 'clm_r1', 'r1-alice', 'white', 'human', 1000,
@@ -278,9 +280,21 @@ describe("release-2 migration (0001_release2_human_reads)", () => {
     // Existing rows survive unchanged; the new columns backfill as NULL.
     const after = dumpTables(database.sqlite, RELEASE1_TABLES);
     for (const table of RELEASE1_TABLES) {
-      if (table === "players") continue;
+      if (table === "players" || table === "claims") continue;
       expect(after[table]).toEqual(snapshot[table]);
     }
+    expect(
+      after.claims?.map((row) => {
+        const { fen_before, ...rest } = row as Record<string, unknown>;
+        return rest;
+      }),
+    ).toEqual(snapshot.claims);
+    expect(
+      after.claims?.map((row) => (row as Record<string, unknown>).fen_before),
+    ).toEqual([
+      "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+      "after-e4",
+    ]);
     expect(
       after.players?.map((row) => {
         const {

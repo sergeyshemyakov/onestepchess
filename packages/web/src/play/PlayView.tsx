@@ -18,12 +18,7 @@ import {
   formatMicroUsdc,
   nextAtLabel,
 } from "../lib/format.js";
-import {
-  coachMarksSeen,
-  markCoachMarksSeen,
-  readRef,
-  writeMoveContext,
-} from "../lib/storage.js";
+import { coachMarksSeen, markCoachMarksSeen, readRef } from "../lib/storage.js";
 import { INITIAL_NO_BOARDS_RETRY_SECONDS } from "./machine.js";
 import { Timer } from "./Timer.jsx";
 import type { PlayFlow } from "./usePlayFlow.js";
@@ -74,9 +69,7 @@ export function PlayView(props: {
   }, [state.phase, coach]);
 
   // The committed move plays with the scanline type-in FX behind the
-  // settle morph, and its claim position is cached so the hub's active
-  // loop can replay the move over the real board (ongoing items stay
-  // redacted server-side — I7).
+  // settle morph.
   useEffect(() => {
     if (state.phase !== "RECEIPT" || state.receipt === undefined) return;
     const { from, to } = parseUci(state.receipt.move.uci);
@@ -87,17 +80,7 @@ export function PlayView(props: {
       capture: state.receipt.move.san.includes("x"),
       seq: Date.now(),
     });
-    if (state.claim !== undefined) {
-      writeMoveContext({
-        uci: state.receipt.move.uci,
-        san: state.receipt.move.san,
-        side: state.claim.yourSide,
-        demo: state.claim.demo,
-        fen: state.claim.fen,
-        at: new Date().toISOString(),
-      });
-    }
-  }, [state.phase, state.receipt, state.claim]);
+  }, [state.phase, state.receipt]);
 
   const claim = state.claim;
   const selectable = useMemo(
@@ -340,9 +323,15 @@ export function PlayView(props: {
                   {state.selected === null || state.selected === undefined
                     ? "> tap a piece, then a target"
                     : `> ${state.selected} :: pick a target`}
-                  {epTargets.length > 0
-                    ? "\n> en passant available — the dashed pawn can be taken"
-                    : ""}
+                  {epTargets.length > 0 ? (
+                    <span className="epline">
+                      {
+                        "\n> en passant available — the dashed pawn can be taken"
+                      }
+                    </span>
+                  ) : (
+                    ""
+                  )}
                 </p>
               ) : null}
               <p style={{ marginTop: 6 }}>

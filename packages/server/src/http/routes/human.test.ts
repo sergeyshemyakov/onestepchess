@@ -155,6 +155,7 @@ function seedGame(
     })
     .run();
   const claimIds = new Map<string, string>();
+  let fenBefore = STARTING_FEN;
   for (const move of args.moves) {
     seedCounter += 1;
     const claimId = `clm_h_${seedCounter}`;
@@ -171,6 +172,7 @@ function seedGame(
         status,
         createdAt: (args.createdAt ?? 0) + move.ply,
         deadline: (args.createdAt ?? 0) + move.ply + 600_000,
+        fenBefore,
         ...(status === "moved"
           ? {
               movedAt: (args.createdAt ?? 0) + move.ply + 1,
@@ -182,6 +184,7 @@ function seedGame(
           : {}),
       })
       .run();
+    if (status === "moved") fenBefore = move.fenAfter;
     if (!move.demo && status === "moved") {
       db.insert(schema.stakeEntries)
         .values({
@@ -579,12 +582,14 @@ describe("profile, game history, and public replay reads (§6.3)", () => {
       expect(Object.keys(card).sort()).toEqual([
         "claimedAt",
         "demo",
+        "fenBeforeYourMove",
         "movedAt",
         "payTxid",
         "stakeMicroUsdc",
         "yourMove",
         "yourSide",
       ]);
+      expect(card.fenBeforeYourMove).toBe(STARTING_FEN);
     }
     expect(ongoingStaked.payTxid).toMatch(/^ptx_/);
     expect(ongoingDemo.payTxid).toBeNull();
@@ -846,6 +851,7 @@ describe("profile, game history, and public replay reads (§6.3)", () => {
     for (const ply of body.plies) {
       expect(Object.keys(ply.author).sort()).toEqual([
         "kind",
+        "movesTotal",
         "nickname",
         "winratePct",
       ]);
@@ -929,12 +935,11 @@ describe("profile, game history, and public replay reads (§6.3)", () => {
 
     // Every dynamic value is XML-escaped and no address ever reaches the SVG.
     const svg = buildCardSvg({
-      gameName: `<script>"drop"&'go'`,
+      gameId: `gm_<script>"drop"&'go'`,
       authorNickname: "<b>nick</b>",
       outcome: "WON",
       fen: FEN_AFTER_E5,
       moveUci: "e7e5",
-      side: "black",
     });
     expect(svg).not.toContain("<script>");
     expect(svg).toContain("&lt;script&gt;");
@@ -948,12 +953,11 @@ describe("profile, game history, and public replay reads (§6.3)", () => {
       await cache.render(
         key,
         buildCardSvg({
-          gameName: key,
+          gameId: key,
           authorNickname: null,
           outcome: "DRAW",
           fen: STARTING_FEN,
           moveUci: "e2e4",
-          side: "white",
         }),
       );
     }

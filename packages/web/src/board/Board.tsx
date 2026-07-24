@@ -23,8 +23,9 @@ export function boardPxForViewport(viewportWidth: number): number {
 }
 
 export type BoardFx = {
-  /** Scanline type-in: source erases, a beam sweeps, target types in. */
-  readonly kind: "type";
+  /** "type": scanline type-in — source erases, a beam sweeps, target types
+   * in. "glide": the piece slides source → target (UI suggestions). */
+  readonly kind: "type" | "glide";
   readonly from: string;
   readonly to: string;
   readonly capture?: boolean;
@@ -180,12 +181,48 @@ function playFx(layer: HTMLDivElement, fx: BoardFx): () => void {
   if (fx.capture === true) {
     clone(to.x, to.y, "fx-burn");
   }
+  const target = board?.querySelector<HTMLElement>(`[data-square="${fx.to}"]`);
+  const commitFlash = () => {
+    target?.classList.add("flash");
+    board?.classList.add("commitflash");
+    timers.push(
+      setTimeout(() => {
+        target?.classList.remove("flash");
+        board?.classList.remove("commitflash");
+      }, 320),
+    );
+  };
+  if (fx.kind === "glide") {
+    const glider = clone(from.x, from.y, "fx-glide");
+    glyph.style.visibility = "hidden";
+    // Double rAF: the clone's start position must be committed before the
+    // transition begins, otherwise the glide gets skipped (UI suggestions).
+    let raf = requestAnimationFrame(() => {
+      raf = requestAnimationFrame(() => {
+        glider.style.transform = `translate(${to.x}%, ${to.y}%)`;
+      });
+    });
+    timers.push(
+      setTimeout(() => {
+        glyph.style.visibility = "";
+        for (const node of actors) node.remove();
+        commitFlash();
+      }, 340),
+    );
+    return () => {
+      cancelAnimationFrame(raf);
+      for (const timer of timers) clearTimeout(timer);
+      for (const node of actors) node.remove();
+      glyph.style.visibility = "";
+      target?.classList.remove("flash");
+      board?.classList.remove("commitflash");
+    };
+  }
   const eraser = clone(from.x, from.y, "fx-erase");
   const sweep = document.createElement("div");
   sweep.className = "fx-sweep";
   layer.appendChild(sweep);
   actors.push(sweep);
-  const target = board?.querySelector<HTMLElement>(`[data-square="${fx.to}"]`);
   glyph.style.visibility = "hidden";
   const caret = document.createElement("span");
   caret.className = "fx-caret";
@@ -201,14 +238,7 @@ function playFx(layer: HTMLDivElement, fx: BoardFx): () => void {
           caret.remove();
           glyph.classList.remove("fx-typein");
           for (const node of actors) node.remove();
-          target?.classList.add("flash");
-          board?.classList.add("commitflash");
-          timers.push(
-            setTimeout(() => {
-              target?.classList.remove("flash");
-              board?.classList.remove("commitflash");
-            }, 320),
-          );
+          commitFlash();
         }, 380),
       );
     }, 200),

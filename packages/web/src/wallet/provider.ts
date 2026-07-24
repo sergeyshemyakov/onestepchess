@@ -160,6 +160,9 @@ export function createWalletModule(
     async connect(id) {
       const wallet = manager.wallets.find((candidate) => candidate.id === id);
       if (wallet === undefined) throw new Error(`unknown wallet: ${id}`);
+      await manager.setActiveNetwork(
+        id === WalletId.MNEMONIC ? NetworkId.LOCALNET : NetworkId.MAINNET,
+      );
       const accounts = await wallet.connect();
       const address = wallet.activeAccount?.address ?? accounts[0]?.address;
       if (address === undefined) throw new Error("wallet connected no account");

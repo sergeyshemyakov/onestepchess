@@ -9,7 +9,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PostMoveResult } from "../api/client.js";
 import type { MoveReceipt } from "../api/schemas.js";
-import { writeClaimDraft, writeMoveContext } from "../lib/storage.js";
+import { writeClaimDraft } from "../lib/storage.js";
 import {
   claimFixture,
   metaFixture,
@@ -568,27 +568,15 @@ describe("hub panes chrome (playtest UI fixes)", () => {
 });
 
 describe("active-pane board loop context (playtest UI fixes)", () => {
-  afterEach(() => {
-    localStorage.clear();
-  });
-
   const startFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
   const ongoingPage = {
-    items: [ongoingItemFixture()],
+    items: [ongoingItemFixture({ fenBeforeYourMove: startFen })],
     page: 1,
     pageCount: 1,
     total: 1,
   };
 
-  it("loops the move over the cached claim position when one matches", async () => {
-    writeMoveContext({
-      uci: "e2e4",
-      san: "e4",
-      side: "white",
-      demo: false,
-      fen: startFen,
-      at: "2026-07-20T10:00:30Z",
-    });
+  it("loops the move over the pre-move position from the ongoing payload", async () => {
     const client = mockClient({
       getOngoingGames: vi.fn(async () => ongoingPage),
     } as never);
@@ -602,13 +590,14 @@ describe("active-pane board loop context (playtest UI fixes)", () => {
     expect(view.container.querySelector(".boardloop-piece")).not.toBeNull();
   });
 
-  it("falls back to the redacted empty board without a cached context", async () => {
+  it("uses the payload after a fresh render with no browser move cache", async () => {
+    localStorage.clear();
     const client = mockClient({
       getOngoingGames: vi.fn(async () => ongoingPage),
     } as never);
     renderHub(client);
     const loop = await screen.findByTestId("board-loop");
-    expect(loop.querySelector('[data-square="d8"] svg.pc')).toBeNull();
+    expect(loop.querySelector('[data-square="d8"] svg.pc')).not.toBeNull();
     expect(loop.querySelector(".boardloop-piece")).not.toBeNull();
   });
 });

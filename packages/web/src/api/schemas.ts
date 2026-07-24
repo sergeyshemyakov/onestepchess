@@ -152,6 +152,7 @@ const gameItemCommonSchema = z.object({
 
 /** Ongoing entries never carry game identity (I7 — CA-W2). */
 export const ongoingGameItemSchema = gameItemCommonSchema.extend({
+  fenBeforeYourMove: z.string(),
   payTxid: z.string().nullable(),
 });
 export type OngoingGameItem = z.infer<typeof ongoingGameItemSchema>;
@@ -216,6 +217,7 @@ export const replayPlySchema = z.object({
     nickname: z.string().nullable(),
     kind: z.enum(["human", "agent", "guest"]),
     winratePct: z.number().min(0).max(100).nullable(),
+    movesTotal: nonNegativeIntegerSchema,
   }),
 });
 export type ReplayPly = z.infer<typeof replayPlySchema>;

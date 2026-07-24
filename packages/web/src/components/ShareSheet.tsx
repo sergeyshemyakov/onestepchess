@@ -58,12 +58,21 @@ export function ShareSheet(props: {
             your win card — one move that held up
           </p>
         ) : (
-          <img
-            className="sharecard"
-            src={cardSrc}
-            alt="your win card — one move that held up"
-            onError={() => setImageFailed(true)}
-          />
+          <>
+            <img
+              className="sharecard"
+              src={cardSrc}
+              alt="your win card — one move that held up"
+              onError={() => setImageFailed(true)}
+            />
+            <a
+              className="btn pri sharedownload"
+              href={cardSrc}
+              download={`one-step-chess-win-${props.gameId}.png`}
+            >
+              download image to share ⇩
+            </a>
+          </>
         )}
         <p className="sub sharetext">{SHARE_TEXT}</p>
         <p className="console shareurl" data-testid="share-url">
@@ -89,7 +98,7 @@ export function ShareSheet(props: {
                 className="btn pri mini"
                 onClick={() => {
                   navigator.clipboard
-                    ?.writeText(`${SHARE_TEXT} ${url}`)
+                    ?.writeText(url)
                     .then(() => setCopied(true))
                     .catch(() => undefined);
                 }}

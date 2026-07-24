@@ -2,8 +2,6 @@
 // deviation). Nothing else in the app touches Web Storage; signed payment
 // headers and JWTs are never stored anywhere.
 
-import type { Side } from "./fen.js";
-
 export type Theme = "green" | "amber" | "ice";
 
 export type ClaimDraft = {
@@ -22,8 +20,6 @@ const REF_KEY = "osc.ref";
 const CHAMP_KEY = "osc.champNotice";
 const TOWER_TEASER_KEY = "osc.towerTeaserDismissedAt";
 const LAST_SEEN_FINISHED_KEY = "osc.lastSeenFinishedAt";
-const MOVE_CONTEXTS_KEY = "osc.moveContexts";
-const MOVE_CONTEXTS_CAP = 20;
 export const TOWER_TEASER_COOLDOWN_MS = 24 * 60 * 60 * 1_000;
 
 function safeGet(store: Storage, key: string): string | null {
@@ -145,75 +141,6 @@ export function towerTeaserDismissed(now = Date.now()): boolean {
 
 export function dismissTowerTeaser(now = Date.now()): void {
   safeSet(localStorage, TOWER_TEASER_KEY, String(now));
-}
-
-/** The claim position the player already saw when committing a move. The
- * server keeps ongoing games redacted (I7); this is a client-side cache of
- * the player's own view, so the active-pane board loop can replay the move
- * over the real position instead of an empty board. */
-export type MoveContext = {
-  readonly uci: string;
-  readonly san: string;
-  readonly side: Side;
-  readonly demo: boolean;
-  /** Claim position BEFORE the move. */
-  readonly fen: string;
-  /** ISO commit time — matched against the ongoing item's movedAt. */
-  readonly at: string;
-};
-
-function readMoveContexts(): readonly MoveContext[] {
-  const raw = safeGet(localStorage, MOVE_CONTEXTS_KEY);
-  if (raw === null) return [];
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (Array.isArray(parsed)) {
-      return parsed.filter(
-        (entry): entry is MoveContext =>
-          typeof entry === "object" &&
-          entry !== null &&
-          typeof (entry as MoveContext).uci === "string" &&
-          typeof (entry as MoveContext).fen === "string" &&
-          typeof (entry as MoveContext).at === "string",
-      );
-    }
-  } catch {
-    // corrupt cache — treat as empty, next write repairs it
-  }
-  return [];
-}
-
-export function writeMoveContext(context: MoveContext): void {
-  const next = [context, ...readMoveContexts()].slice(0, MOVE_CONTEXTS_CAP);
-  safeSet(localStorage, MOVE_CONTEXTS_KEY, JSON.stringify(next));
-}
-
-/** Ongoing items carry no identity (I7), so the lookup is heuristic:
- * same move + side + demo flag, nearest commit time to movedAt. */
-export function findMoveContextFen(query: {
-  readonly uci: string;
-  readonly side: Side;
-  readonly demo: boolean;
-  readonly movedAt: string;
-}): string | null {
-  const movedAtMs = Date.parse(query.movedAt);
-  let best: MoveContext | null = null;
-  let bestDistance = Number.POSITIVE_INFINITY;
-  for (const entry of readMoveContexts()) {
-    if (
-      entry.uci !== query.uci ||
-      entry.side !== query.side ||
-      entry.demo !== query.demo
-    ) {
-      continue;
-    }
-    const distance = Math.abs(Date.parse(entry.at) - movedAtMs);
-    if (distance < bestDistance) {
-      best = entry;
-      bestDistance = distance;
-    }
-  }
-  return best?.fen ?? null;
 }
 
 export function readLastSeenFinishedAt(): string | null {

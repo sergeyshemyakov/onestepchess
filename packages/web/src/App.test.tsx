@@ -246,7 +246,7 @@ describe("wallet auth flow (#28)", () => {
     expect(probeProfile).toHaveBeenCalledTimes(1);
   });
 
-  it("unexpected wallet sign-in failure stays open and re-arms mnemonic entry", async () => {
+  it("unexpected wallet sign-in failure stays open for another attempt", async () => {
     const module = walletModule({
       address: account.addr.toString(),
       walletName: "dev",

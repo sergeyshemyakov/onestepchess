@@ -193,27 +193,17 @@ it("landing_uses_only_meta_and_session_probe_before_interaction", async () => {
   );
 });
 
-it("deep_blue_piece_movement_uses_scanline_type_in", () => {
+it("deep_blue_piece_movement_uses_glide", () => {
   vi.useFakeTimers();
   const view = renderLanding(guestClient());
   const strip = screen.getByTestId("deepblue-strip");
 
   act(() => vi.advanceTimersByTime(670));
-  expect(strip.querySelector(".fx-erase")).not.toBeNull();
-  expect(strip.querySelector(".fx-sweep")).not.toBeNull();
-
-  act(() => vi.advanceTimersByTime(220));
-  expect(
-    strip
-      .querySelector('[data-square="e4"] svg.pc')
-      ?.classList.contains("fx-typein"),
-  ).toBe(true);
-  expect(strip.querySelector(".fx-caret")).not.toBeNull();
+  expect(strip.querySelector(".fx-glide")).not.toBeNull();
+  expect(strip.querySelector(".fx-erase")).toBeNull();
 
   act(() => vi.advanceTimersByTime(400));
-  expect(strip.querySelector(".fx-erase")).toBeNull();
-  expect(strip.querySelector(".fx-sweep")).toBeNull();
-  expect(strip.querySelector(".fx-caret")).toBeNull();
+  expect(strip.querySelector(".fx-glide")).toBeNull();
   view.unmount();
 });
 

@@ -6,14 +6,13 @@
 export type CardOutcome = "WON" | "LOST" | "DRAW";
 
 export type CardData = {
-  readonly gameName: string;
+  readonly gameId: string;
   readonly authorNickname: string | null;
   readonly outcome: CardOutcome;
   /** fenAfter of the rendered ply. */
   readonly fen: string;
   /** UCI of the rendered ply, for the move arrow. */
   readonly moveUci: string;
-  readonly side: "white" | "black";
 };
 
 const WIDTH = 1200;
@@ -29,7 +28,6 @@ const LIGHT = "#20361f";
 const DARK = "#0f1c0f";
 const PHOSPHOR = "#35e07a";
 const INK_LIGHT = "#eafff0";
-const INK_DARK = "#0b140b";
 
 function xmlEscape(value: string): string {
   return value
@@ -40,14 +38,151 @@ function xmlEscape(value: string): string {
     .replaceAll("'", "&#39;");
 }
 
-const PIECE_LETTER: Record<string, string> = {
-  k: "K",
-  q: "Q",
-  r: "R",
-  b: "B",
-  n: "N",
-  p: "P",
+// Same 16×16 bitmaps as the web boards (web/src/board/pieces.tsx): white
+// renders filled, black hollow — the locked fill-vs-hollow side contrast
+// (§8.2, colorblind-safe). Kept in sync by hand; server cannot import web.
+const PIECE_PIX: Record<string, readonly string[]> = {
+  p: [
+    "................",
+    "................",
+    "................",
+    "......####......",
+    ".....######.....",
+    ".....######.....",
+    ".....######.....",
+    "......####......",
+    "......####......",
+    ".....######.....",
+    ".....######.....",
+    "......####......",
+    "....########....",
+    "...##########...",
+    "...##########...",
+    "................",
+  ],
+  r: [
+    "................",
+    "..##.##..##.##..",
+    "..##.##..##.##..",
+    "..############..",
+    "..############..",
+    "...##########...",
+    "....########....",
+    "....########....",
+    "....########....",
+    "....########....",
+    "....########....",
+    "....########....",
+    "...##########...",
+    "..############..",
+    ".##############.",
+    "................",
+  ],
+  n: [
+    "................",
+    "......####......",
+    ".....######.....",
+    "....########....",
+    "...##########...",
+    "..############..",
+    "..###..#######..",
+    ".###...#######..",
+    ".##....######...",
+    "......#######...",
+    ".....#######....",
+    "....########....",
+    "....#########...",
+    "...##########...",
+    "..############..",
+    "................",
+  ],
+  b: [
+    "................",
+    ".......##.......",
+    "......####......",
+    ".....######.....",
+    ".....###.##.....",
+    ".....##.###.....",
+    "......####......",
+    ".....######.....",
+    ".....######.....",
+    "......####......",
+    "......####......",
+    ".....######.....",
+    "....########....",
+    "...##########...",
+    "...##########...",
+    "................",
+  ],
+  q: [
+    "................",
+    "..#....##....#..",
+    ".###..####..###.",
+    "..#...####...#..",
+    "..##..####..##..",
+    "..############..",
+    "..############..",
+    "...##########...",
+    "....########....",
+    ".....######.....",
+    ".....######.....",
+    "......####......",
+    ".....######.....",
+    "....########....",
+    "..############..",
+    "................",
+  ],
+  k: [
+    ".......##.......",
+    ".....######.....",
+    ".......##.......",
+    ".......##.......",
+    "....########....",
+    "...##########...",
+    "..############..",
+    "..############..",
+    "..############..",
+    "...##########...",
+    "....########....",
+    ".....######.....",
+    ".....######.....",
+    "....########....",
+    "..############..",
+    "................",
+  ],
 };
+
+function bitmapPath(rows: readonly string[], hollow: boolean): string {
+  const on = (r: number, c: number): boolean =>
+    r >= 0 && r < 16 && c >= 0 && c < 16 && rows[r]?.[c] === "#";
+  let d = "";
+  for (let r = 0; r < 16; r += 1) {
+    for (let c = 0; c < 16; c += 1) {
+      if (!on(r, c)) continue;
+      const edge = !(
+        on(r - 1, c) &&
+        on(r + 1, c) &&
+        on(r, c - 1) &&
+        on(r, c + 1)
+      );
+      if (hollow && !edge) continue;
+      d += `M${c} ${r}h1v1h-1z`;
+    }
+  }
+  return d;
+}
+
+const piecePathCache = new Map<string, string>();
+
+function piecePath(type: string, hollow: boolean): string {
+  const key = `${type}|${hollow ? "h" : "f"}`;
+  let d = piecePathCache.get(key);
+  if (d === undefined) {
+    d = bitmapPath(PIECE_PIX[type] as readonly string[], hollow);
+    piecePathCache.set(key, d);
+  }
+  return d;
+}
 
 /** Parse a FEN placement field into 8 ranks (top rank first) of 8 cells. */
 function parseBoard(fen: string): (string | null)[][] {
@@ -58,7 +193,7 @@ function parseBoard(fen: string): (string | null)[][] {
     for (const ch of rankStr) {
       if (ch >= "1" && ch <= "8") {
         for (let i = 0; i < Number(ch); i += 1) rank.push(null);
-      } else if (PIECE_LETTER[ch.toLowerCase()] !== undefined) {
+      } else if (PIECE_PIX[ch.toLowerCase()] !== undefined) {
         rank.push(ch);
       }
     }
@@ -104,8 +239,10 @@ export function buildCardSvg(data: CardData): string {
       const piece = board[r]?.[f];
       if (piece == null) continue;
       const white = piece === piece.toUpperCase();
+      const inset = SQUARE * 0.1;
+      const scale = (SQUARE - inset * 2) / 16;
       pieces.push(
-        `<text x="${x + SQUARE / 2}" y="${y + SQUARE / 2}" font-family="Georgia, 'Times New Roman', serif" font-size="${SQUARE * 0.6}" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="${white ? INK_LIGHT : PHOSPHOR}" stroke="${white ? INK_DARK : "#062011"}" stroke-width="1.5" paint-order="stroke">${PIECE_LETTER[piece.toLowerCase()]}</text>`,
+        `<path transform="translate(${x + inset} ${y + inset}) scale(${scale})" d="${piecePath(piece.toLowerCase(), !white)}" fill="${white ? INK_LIGHT : PHOSPHOR}"/>`,
       );
     }
   }
@@ -136,9 +273,8 @@ export function buildCardSvg(data: CardData): string {
   ${arrow}
   ${pieces.join("\n  ")}
   <text x="${PANEL_X}" y="215" font-family="Menlo, monospace" font-size="34" fill="${PHOSPHOR}" letter-spacing="4">ONE STEP CHESS</text>
-  <text x="${PANEL_X}" y="285" font-family="Georgia, serif" font-size="52" font-weight="700" fill="${INK_LIGHT}">${xmlEscape(data.gameName)}</text>
+  <text x="${PANEL_X}" y="285" font-family="Georgia, serif" font-size="52" font-weight="700" fill="${INK_LIGHT}">${xmlEscape(data.gameId.replace(/^gm_/, ""))}</text>
   ${author}
   <text x="${PANEL_X}" y="440" font-family="Menlo, monospace" font-size="120" font-weight="700" fill="${outcomeColor}">${xmlEscape(data.outcome)}</text>
-  <text x="${PANEL_X}" y="490" font-family="Menlo, monospace" font-size="28" fill="${INK_LIGHT}" opacity="0.6">${data.side === "white" ? "White" : "Black"} — one move, staked in USDC</text>
 </svg>`;
 }
