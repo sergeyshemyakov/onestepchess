@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { copyText } from "../lib/clipboard.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 
 // F-W12 share sheet — wins only; the entry points (win toast, won staked
@@ -97,10 +98,9 @@ export function ShareSheet(props: {
                 type="button"
                 className="btn pri mini"
                 onClick={() => {
-                  navigator.clipboard
-                    ?.writeText(url)
-                    .then(() => setCopied(true))
-                    .catch(() => undefined);
+                  void copyText(url).then((success) => {
+                    if (success) setCopied(true);
+                  });
                 }}
               >
                 {copied ? "copied ✓" : "copy link"}

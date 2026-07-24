@@ -22,7 +22,8 @@ export function ConnectSheet(props: {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<PendingRegistration | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
-  useDialogFocusTrap(dialogRef, props.onClose);
+  const { client, meta, onSignedIn, onClose } = props;
+  useDialogFocusTrap(dialogRef, onClose);
 
   useEffect(() => {
     let cancelled = false;
@@ -49,20 +50,20 @@ export function ConnectSheet(props: {
         const wallet = await module.connect(id);
         const ref = readRef();
         const outcome = await loginWithWallet({
-          client: props.client,
-          meta: props.meta,
+          client,
+          meta,
           wallet,
           ...(ref === null ? {} : { ref }),
         });
         switch (outcome.kind) {
           case "signed-in":
-            props.onSignedIn(outcome.player, outcome.linkedGuestClaims);
+            onSignedIn(outcome.player, outcome.linkedGuestClaims);
             return;
           case "registration-required":
             setPending(outcome.pending);
             return;
           case "rejected":
-            props.onClose();
+            onClose();
             return;
           case "error":
             setError(outcome.message);
@@ -70,7 +71,7 @@ export function ConnectSheet(props: {
         }
       } catch (cause) {
         if (cause instanceof Error && cause.name === "AbortError") {
-          props.onClose();
+          onClose();
           return;
         }
         await module?.disconnect().catch(() => undefined);
@@ -81,19 +82,19 @@ export function ConnectSheet(props: {
         setBusy(false);
       }
     },
-    [busy, props],
+    [busy, client, meta, onClose, onSignedIn],
   );
 
   if (pending !== null) {
     return (
       <RegistrationModal
-        client={props.client}
-        meta={props.meta}
+        client={client}
+        meta={meta}
         pending={pending}
         onRegistered={(response) =>
-          props.onSignedIn(response.player, response.linkedGuestClaims)
+          onSignedIn(response.player, response.linkedGuestClaims)
         }
-        onCancel={props.onClose}
+        onCancel={onClose}
       />
     );
   }
@@ -139,7 +140,7 @@ export function ConnectSheet(props: {
           </p>
         ) : null}
         <div className="modal-actions single">
-          <button type="button" className="btn mini" onClick={props.onClose}>
+          <button type="button" className="btn mini" onClick={onClose}>
             ← back
           </button>
         </div>

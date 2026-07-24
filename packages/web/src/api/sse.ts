@@ -1,16 +1,5 @@
 import { z } from "zod";
-import { gameResultSchema } from "./schemas.js";
-
-const sideSchema = z.enum(["white", "black"]);
-const terminationSchema = z.enum([
-  "checkmate",
-  "stalemate",
-  "insufficient",
-  "threefold",
-  "fifty_move",
-  "max_plies",
-  "aborted",
-]);
+import { gameResultSchema, sideSchema, terminationSchema } from "./schemas.js";
 
 const resolutionEntrySchema = z.discriminatedUnion("demo", [
   z.object({

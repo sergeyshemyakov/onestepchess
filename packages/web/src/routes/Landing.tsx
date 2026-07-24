@@ -105,6 +105,13 @@ export function Landing(props: {
       flow.send({ type: "PLAY", demo: true, guest: true });
     }
   };
+  const playView = (
+    <PlayView
+      flow={flow}
+      meta={props.meta}
+      onWalletIntent={() => setConnecting(true)}
+    />
+  );
 
   return (
     <AppShell
@@ -205,26 +212,18 @@ export function Landing(props: {
         </a>
         <a href="#rules">· rules</a>
       </div>
-      {gamePanePhase && !gamePaneDismissed ? (
-        <GamePane
-          label="demo game"
-          testId="landing-demo-popover"
-          onClose={() => setGamePaneDismissed(true)}
-        >
-          <PlayView
-            flow={flow}
-            meta={props.meta}
-            onWalletIntent={() => setConnecting(true)}
-          />
-        </GamePane>
-      ) : flow.state.phase !== "IDLE" ? (
-        gamePanePhase ? null : (
-          <PlayView
-            flow={flow}
-            meta={props.meta}
-            onWalletIntent={() => setConnecting(true)}
-          />
+      {gamePanePhase ? (
+        gamePaneDismissed ? null : (
+          <GamePane
+            label="demo game"
+            testId="landing-demo-popover"
+            onClose={() => setGamePaneDismissed(true)}
+          >
+            {playView}
+          </GamePane>
         )
+      ) : flow.state.phase !== "IDLE" ? (
+        playView
       ) : null}
       {connecting ? (
         <ConnectSheet

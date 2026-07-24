@@ -32,8 +32,8 @@ export function RegistrationModal(props: {
   const [turnstileEpoch, setTurnstileEpoch] = useState(0);
   const widgetRef = useRef<HTMLDivElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
-  useDialogFocusTrap(dialogRef, props.onCancel);
-  const { client, meta } = props;
+  const { client, meta, pending, onRegistered, onCancel } = props;
+  useDialogFocusTrap(dialogRef, onCancel);
 
   const reroll = useCallback(() => {
     client
@@ -71,11 +71,11 @@ export function RegistrationModal(props: {
     setBusy(true);
     setError(null);
     try {
-      const response = await props.pending.resubmit({
+      const response = await pending.resubmit({
         nickname,
         turnstileToken: token,
       });
-      props.onRegistered(response);
+      onRegistered(response);
     } catch (caught) {
       if (caught instanceof ApiError) {
         const hint = caught.envelope.hint;
@@ -105,7 +105,7 @@ export function RegistrationModal(props: {
     } finally {
       setBusy(false);
     }
-  }, [busy, nickname, props, token]);
+  }, [busy, nickname, onRegistered, pending, token]);
 
   return (
     <div className="modalback">
@@ -175,7 +175,7 @@ export function RegistrationModal(props: {
           >
             ▸ register
           </button>
-          <button type="button" className="btn" onClick={props.onCancel}>
+          <button type="button" className="btn" onClick={onCancel}>
             cancel
           </button>
         </div>

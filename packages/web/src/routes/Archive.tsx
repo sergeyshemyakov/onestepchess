@@ -5,7 +5,6 @@ import type {
   FinishedDemoItem,
   FinishedGameItem,
   FinishedStakedItem,
-  GamesPage,
   Meta,
   OngoingGameItem,
   PlayerView,
@@ -13,8 +12,10 @@ import type {
 import { Board } from "../board/Board.jsx";
 import { AppShell } from "../components/AppShell.jsx";
 import { PlayerStatus } from "../components/PlayerStatus.jsx";
+import { isFinishedStakedItem } from "../games/items.js";
 import { outcomeFor, outcomeGlyph } from "../games/outcome.js";
 import { QuickView } from "../games/QuickView.jsx";
+import { useGamesPage } from "../games/useGamesPage.js";
 import { explorerTxUrl } from "../lib/explorer.js";
 import { formatLocalTime, formatMicroUsdc } from "../lib/format.js";
 import { useLiveOptional } from "../live/LiveContext.jsx";
@@ -79,41 +80,19 @@ export function Archive(props: {
   const finishedPage =
     Number.isInteger(pageParam) && pageParam >= 1 ? pageParam : 1;
   const [activePage, setActivePage] = useState(1);
-  const [active, setActive] = useState<GamesPage<OngoingGameItem> | null>(null);
-  const [finished, setFinished] = useState<GamesPage<FinishedGameItem> | null>(
-    null,
+  const active = useGamesPage<OngoingGameItem>(
+    client.getOngoingGames,
+    activePage,
+    gamesVersion,
+  );
+  const finished = useGamesPage<FinishedGameItem>(
+    client.getFinishedGames,
+    finishedPage,
+    gamesVersion,
   );
   const [open, setOpen] = useState<
     FinishedStakedItem | FinishedDemoItem | null
   >(null);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies(gamesVersion): live events invalidate the current page without changing its query inputs
-  useEffect(() => {
-    let cancelled = false;
-    client
-      .getOngoingGames(activePage)
-      .then((page) => {
-        if (!cancelled) setActive(page);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [client, activePage, gamesVersion]);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies(gamesVersion): live events invalidate the current page without changing its query inputs
-  useEffect(() => {
-    let cancelled = false;
-    client
-      .getFinishedGames(finishedPage)
-      .then((page) => {
-        if (!cancelled) setFinished(page);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [client, finishedPage, gamesVersion]);
 
   return (
     <AppShell topRight={<PlayerStatus client={client} player={props.player} />}>
@@ -185,8 +164,7 @@ export function Archive(props: {
             <div className="finishedgrid">
               {finished.items.map((item, index) => {
                 const outcome = outcomeFor(item.result, item.yourSide);
-                // `demo` is the discriminator — never field presence (I7).
-                if (item.demo || !("gameId" in item)) {
+                if (!isFinishedStakedItem(item)) {
                   return (
                     <button
                       // biome-ignore lint/suspicious/noArrayIndexKey: demo cards carry no id on purpose (I7)

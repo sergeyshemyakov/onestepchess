@@ -2,6 +2,7 @@ import { z } from "zod";
 
 const isoTimestampSchema = z.iso.datetime({ offset: true });
 const nonNegativeIntegerSchema = z.number().int().nonnegative();
+export const sideSchema = z.enum(["white", "black"]);
 
 // Wire schemas mirroring server spec §6.3 (Release-1 subset). Zod decodes
 // every payload so wire drift becomes a controlled error, not silent
@@ -131,7 +132,7 @@ export type ProfileView = z.infer<typeof profileSchema>;
 
 export const gameResultSchema = z.enum(["white", "black", "draw", "aborted"]);
 export type GameResult = z.infer<typeof gameResultSchema>;
-const terminationSchema = z.enum([
+export const terminationSchema = z.enum([
   "checkmate",
   "stalemate",
   "insufficient",
@@ -143,7 +144,7 @@ const terminationSchema = z.enum([
 
 const gameItemCommonSchema = z.object({
   yourMove: moveSchema,
-  yourSide: z.enum(["white", "black"]),
+  yourSide: sideSchema,
   demo: z.boolean(),
   stakeMicroUsdc: nonNegativeIntegerSchema,
   claimedAt: isoTimestampSchema,
@@ -208,7 +209,7 @@ export type GamesPage<T> = {
 
 export const replayPlySchema = z.object({
   ply: z.number().int().positive(),
-  side: z.enum(["white", "black"]),
+  side: sideSchema,
   move: moveSchema,
   fenAfter: z.string(),
   stakeMicroUsdc: nonNegativeIntegerSchema,
@@ -255,7 +256,7 @@ export type VerifyResponse = z.infer<typeof verifyResponseSchema>;
 
 export const claimViewSchema = z.object({
   claimId: z.string(),
-  yourSide: z.enum(["white", "black"]),
+  yourSide: sideSchema,
   phase: z.enum(["normal", "endspiel"]),
   demo: z.boolean(),
   fen: z.string(),

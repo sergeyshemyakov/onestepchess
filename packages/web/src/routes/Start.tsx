@@ -4,6 +4,7 @@ import type { ApiClient } from "../api/client.js";
 import type { Meta, PlayerView } from "../api/schemas.js";
 import { ConnectSheet } from "../auth/ConnectSheet.jsx";
 import { AppShell } from "../components/AppShell.jsx";
+import { copyText } from "../lib/clipboard.js";
 
 // F-W8 onboarding guide: fully static apart from the shared shell + the
 // asset id from `/meta`. The copy names no network (CA-R10).
@@ -43,7 +44,7 @@ export function Start(props: {
               className="chip click"
               data-testid="asset-id-chip"
               onClick={() => {
-                navigator.clipboard?.writeText(assetId).catch(() => undefined);
+                void copyText(assetId);
                 setCopied(true);
               }}
             >

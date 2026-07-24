@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import type { ApiClient } from "../api/client.js";
-import type { Meta, Move } from "../api/schemas.js";
+import type { ClaimStatus, ErrorEnvelope, Meta, Move } from "../api/schemas.js";
 import { readClaimDraft } from "../lib/storage.js";
 import { syncDraft } from "./draft.js";
 import {
@@ -12,6 +12,19 @@ import {
 import { rehydrate } from "./rehydrate.js";
 
 const SETTLE_POLL_MS = 2_000;
+const ANONYMOUS_CLAIM_OPTIONS = { anonymous: true } as const;
+const CONNECTION_FAILED: ErrorEnvelope = {
+  error: "INTERNAL",
+  hint: "connection failed — try again",
+  docs: "",
+};
+const PAYMENT_DID_NOT_LAND: ErrorEnvelope = {
+  error: "PAYMENT_INVALID",
+  hint: "payment didn't land — nothing was charged; try again",
+  docs: "",
+};
+
+type OpenClaimStatus = Extract<ClaimStatus, { readonly status: "open" }>;
 
 /** Effects hook for the §5.5 reducer: API/wallet calls run here and come
  * back as dispatched events; the reducer itself stays pure. */
@@ -29,6 +42,26 @@ export function usePlayFlow(args: {
   const submitInFlight = useRef(false);
   const rehydrated = useRef(false);
   const guest = args.guest === true;
+  const claimOptions = guest ? ANONYMOUS_CLAIM_OPTIONS : undefined;
+
+  const applyClaimStatus = useCallback(
+    (
+      status: ClaimStatus | null,
+      onOpen: (open: OpenClaimStatus) => void,
+      nullIsExpired = true,
+    ) => {
+      if (status === null) {
+        if (nullIsExpired) dispatch({ type: "CLAIM_EXPIRED" });
+      } else if (status.status === "moved") {
+        dispatch({ type: "RECEIPT", receipt: status.receipt });
+      } else if (status.status === "expired") {
+        dispatch({ type: "CLAIM_EXPIRED" });
+      } else {
+        onOpen(status);
+      }
+    },
+    [],
+  );
 
   // Draft persistence exactly at the specced points (§5.5).
   useEffect(() => {
@@ -47,9 +80,9 @@ export function usePlayFlow(args: {
     if (guest && draft === null) return;
     const recoveryClient = guest
       ? {
-          getCurrentClaim: () => client.getCurrentClaim({ anonymous: true }),
+          getCurrentClaim: () => client.getCurrentClaim(claimOptions),
           getClaimStatus: (id: string) =>
-            client.getClaimStatus(id, { anonymous: true }),
+            client.getClaimStatus(id, claimOptions),
         }
       : client;
     rehydrate(recoveryClient, draft)
@@ -62,7 +95,7 @@ export function usePlayFlow(args: {
         }
       })
       .catch(() => undefined);
-  }, [enabled, client, guest]);
+  }, [enabled, client, guest, claimOptions]);
 
   // CLAIMING → POST /claims (get-or-create).
   useEffect(() => {
@@ -167,14 +200,7 @@ export function usePlayFlow(args: {
         }
       })
       .catch(() =>
-        dispatch({
-          type: "PAYMENT_FAILED",
-          envelope: {
-            error: "INTERNAL",
-            hint: "connection failed — try again",
-            docs: "",
-          },
-        }),
+        dispatch({ type: "PAYMENT_FAILED", envelope: CONNECTION_FAILED }),
       )
       .finally(() => {
         submitInFlight.current = false;
@@ -196,6 +222,7 @@ export function usePlayFlow(args: {
     }
     submitInFlight.current = true;
     const { claim, chosenMove } = state;
+    const meta = args.meta;
     import("../wallet/x402.js")
       .then(({ payMove }) =>
         payMove({
@@ -203,7 +230,7 @@ export function usePlayFlow(args: {
           moveUci: chosenMove.uci,
           address,
           stakeMicroUsdc: claim.stakeMicroUsdc,
-          meta: args.meta as Meta,
+          meta,
           client,
           onPhase: (phase) => {
             if (phase === "settling")
@@ -264,14 +291,7 @@ export function usePlayFlow(args: {
         }
       })
       .catch(() =>
-        dispatch({
-          type: "PAYMENT_FAILED",
-          envelope: {
-            error: "INTERNAL",
-            hint: "connection failed — try again",
-            docs: "",
-          },
-        }),
+        dispatch({ type: "PAYMENT_FAILED", envelope: CONNECTION_FAILED }),
       )
       .finally(() => {
         submitInFlight.current = false;
@@ -288,70 +308,59 @@ export function usePlayFlow(args: {
       client
         .getClaimStatus(claimId)
         .then((status) => {
-          if (status === null) return;
-          if (status.status === "moved") {
-            dispatch({ type: "RECEIPT", receipt: status.receipt });
-          } else if (status.status === "expired") {
-            dispatch({ type: "CLAIM_EXPIRED" });
-          } else if (status.paymentState === null) {
-            dispatch({
-              type: "PAYMENT_FAILED",
-              envelope: {
-                error: "PAYMENT_INVALID",
-                hint: "payment didn't land — nothing was charged; try again",
-                docs: "",
-              },
-            });
-          }
+          applyClaimStatus(
+            status,
+            (open) => {
+              if (open.paymentState === null) {
+                dispatch({
+                  type: "PAYMENT_FAILED",
+                  envelope: PAYMENT_DID_NOT_LAND,
+                });
+              }
+            },
+            false,
+          );
         })
         .catch(() => undefined);
     }, SETTLE_POLL_MS);
     return () => clearInterval(poll);
-  }, [state.phase, state.settlePoll, state.claim?.claimId]);
+  }, [state.phase, state.settlePoll, state.claim?.claimId, applyClaimStatus]);
 
   const refreshClaim = useCallback(() => {
     client
-      .getCurrentClaim(guest ? { anonymous: true } : undefined)
+      .getCurrentClaim(claimOptions)
       .then((claim) => {
         if (claim !== null) dispatch({ type: "CLAIM_REFRESHED", claim });
         else dispatch({ type: "CLAIM_EXPIRED" });
       })
       .catch(() => undefined);
-  }, [client, guest]);
+  }, [client, claimOptions]);
 
   const refreshStatus = useCallback(() => {
     const claimId = state.claim?.claimId;
     if (claimId === undefined) return;
     client
-      .getClaimStatus(claimId, guest ? { anonymous: true } : undefined)
+      .getClaimStatus(claimId, claimOptions)
       .then((status) => {
-        if (status === null || status.status === "expired") {
-          dispatch({ type: "CLAIM_EXPIRED" });
-        } else if (status.status === "moved") {
-          dispatch({ type: "RECEIPT", receipt: status.receipt });
-        } else {
-          dispatch({ type: "CLAIM_REFRESHED", claim: status.claim });
-        }
+        applyClaimStatus(status, (open) =>
+          dispatch({ type: "CLAIM_REFRESHED", claim: open.claim }),
+        );
       })
       .catch(() => undefined);
-  }, [client, guest, state.claim?.claimId]);
+  }, [client, claimOptions, state.claim?.claimId, applyClaimStatus]);
 
   // Timer expiry is cosmetic — confirm against the server before EXPIRED.
   const checkExpiry = useCallback(() => {
     const claimId = state.claim?.claimId;
     if (claimId === undefined) return;
     client
-      .getClaimStatus(claimId, guest ? { anonymous: true } : undefined)
+      .getClaimStatus(claimId, claimOptions)
       .then((status) => {
-        if (status === null || status.status === "expired") {
-          dispatch({ type: "CLAIM_EXPIRED" });
-        } else if (status.status === "moved") {
-          dispatch({ type: "RECEIPT", receipt: status.receipt });
-        }
         // open → the settle-grace rule is playing out; keep the surface.
+        applyClaimStatus(status, () => undefined);
       })
       .catch(() => undefined);
-  }, [client, guest, state.claim?.claimId]);
+  }, [client, claimOptions, state.claim?.claimId, applyClaimStatus]);
 
   const send = useCallback((event: PlayEvent) => dispatch(event), []);
 

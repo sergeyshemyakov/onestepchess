@@ -1,12 +1,13 @@
 import { Fragment, useEffect, useState } from "react";
 import { useParams, useSearchParams } from "react-router";
-import { type ApiClient, ApiError } from "../api/client.js";
-import { fetchReplayCached } from "../api/replayCache.js";
+import type { ApiClient } from "../api/client.js";
 import type { ReplayPly, ReplayView } from "../api/schemas.js";
 import { AppShell } from "../components/AppShell.jsx";
-import { parseUci } from "../lib/fen.js";
+import { copyText } from "../lib/clipboard.js";
 import { formatMicroUsdc } from "../lib/format.js";
+import { toReplayerPlies } from "../replay/plies.js";
 import { Replayer } from "../replay/Replayer.jsx";
+import { useReplay } from "../replay/useReplay.js";
 import { NotFound } from "./NotFound.jsx";
 
 // F-W6 public replay: one GET renders everything; the page never calls
@@ -31,71 +32,24 @@ export function Replay(props: { readonly client: ApiClient }) {
   const { gameId } = useParams();
   const [searchParams] = useSearchParams();
   const hintParam = Number(searchParams.get("ply") ?? "");
-  const [load, setLoad] = useState<
-    | {
-        readonly gameId: string | undefined;
-        readonly kind: "loading";
-        readonly attempt: number;
-      }
-    | {
-        readonly gameId: string;
-        readonly kind: "ready";
-        readonly replay: ReplayView;
-      }
-    | { readonly gameId: string | undefined; readonly kind: "missing" }
-    | {
-        readonly gameId: string | undefined;
-        readonly kind: "failed";
-        readonly hint: string;
-      }
-  >({ gameId, kind: "loading", attempt: 0 });
-  const [retry, setRetry] = useState(0);
+  const { load, retry } = useReplay(props.client, gameId);
   const [ply, setPly] = useState(0);
   const [author, setAuthor] = useState<ReplayPly["author"] | null>(null);
   const [copied, setCopied] = useState(false);
-  const { client } = props;
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies(hintParam): the ?ply= hint applies once at load — scrubbing owns the position afterwards
+  // The query hint applies when a replay loads; scrubbing owns it afterward.
+  // biome-ignore lint/correctness/useExhaustiveDependencies(hintParam): changing only ?ply= must not reset the current scrub position
   useEffect(() => {
-    setLoad({ gameId, kind: "loading", attempt: retry });
-    if (gameId === undefined) {
-      setLoad({ gameId, kind: "missing" });
-      return;
-    }
-    let cancelled = false;
-    fetchReplayCached(client, gameId)
-      .then((fetched) => {
-        if (cancelled) return;
-        setLoad({ gameId, kind: "ready", replay: fetched });
-        const hint =
-          Number.isInteger(hintParam) &&
-          hintParam >= 1 &&
-          hintParam <= fetched.plies.length
-            ? hintParam
-            : 0;
-        setPly(hint);
-      })
-      .catch((error: unknown) => {
-        if (cancelled) return;
-        if (error instanceof ApiError && error.status === 404) {
-          setLoad({ gameId, kind: "missing" });
-          return;
-        }
-        setLoad({
-          gameId,
-          kind: "failed",
-          hint:
-            error instanceof ApiError
-              ? error.envelope.hint
-              : "replay unavailable — try again",
-        });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [client, gameId, retry]);
+    if (load.kind !== "ready") return;
+    const hint =
+      Number.isInteger(hintParam) &&
+      hintParam >= 1 &&
+      hintParam <= load.replay.plies.length
+        ? hintParam
+        : 0;
+    setPly(hint);
+  }, [load]);
 
-  if (load.gameId === gameId && load.kind === "missing") {
+  if (load.kind === "missing") {
     return <NotFound standalone />;
   }
   if (load.gameId === gameId && load.kind === "failed") {
@@ -104,18 +58,14 @@ export function Replay(props: { readonly client: ApiClient }) {
         <div className="empty" role="alert">
           <span className="vt">[ SIGNAL LOST ]</span>
           {load.hint}
-          <button
-            type="button"
-            className="btn mini"
-            onClick={() => setRetry((current) => current + 1)}
-          >
+          <button type="button" className="btn mini" onClick={retry}>
             retry ▸
           </button>
         </div>
       </AppShell>
     );
   }
-  if (load.gameId !== gameId || load.kind !== "ready") {
+  if (load.kind !== "ready") {
     return (
       <AppShell showSystemBanner={false}>
         <p className="console" style={{ padding: "40px 22px" }}>
@@ -144,11 +94,7 @@ export function Replay(props: { readonly client: ApiClient }) {
               <h1>Game {replay.gameId.replace(/^gm_/, "")}</h1>
             </header>
             <Replayer
-              plies={replay.plies.map((item) => ({
-                fenAfter: item.fenAfter,
-                from: parseUci(item.move.uci).from,
-                to: parseUci(item.move.uci).to,
-              }))}
+              plies={toReplayerPlies(replay.plies)}
               controls
               loop
               loopToggle
@@ -218,10 +164,11 @@ export function Replay(props: { readonly client: ApiClient }) {
             type="button"
             className="btn mini"
             onClick={() => {
-              navigator.clipboard
-                ?.writeText(`${window.location.origin}/replay/${replay.gameId}`)
-                .then(() => setCopied(true))
-                .catch(() => undefined);
+              void copyText(
+                `${window.location.origin}/replay/${replay.gameId}`,
+              ).then((success) => {
+                if (success) setCopied(true);
+              });
             }}
           >
             {copied ? "copied ✓" : "copy link"}

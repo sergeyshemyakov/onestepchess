@@ -3,7 +3,6 @@ import { Link } from "react-router";
 import type { ApiClient } from "../api/client.js";
 import type {
   FinishedGameItem,
-  FinishedStakedItem,
   GamesPage,
   Meta,
   OngoingGameItem,
@@ -15,6 +14,7 @@ import { GamePane } from "../components/GamePane.jsx";
 import { PlayerStatus } from "../components/PlayerStatus.jsx";
 import { PromoStrip } from "../components/PromoStrip.jsx";
 import { ShareSheet } from "../components/ShareSheet.jsx";
+import { isFinishedStakedItem } from "../games/items.js";
 import { outcomeFor, outcomeGlyph } from "../games/outcome.js";
 import { payoutChip } from "../games/QuickView.jsx";
 import { explorerTxUrl } from "../lib/explorer.js";
@@ -129,10 +129,7 @@ function FinishedPane(props: {
 }) {
   const items = props.page.items;
   const [sharing, setSharing] = useState(false);
-  // `demo` is the discriminator — never field presence (I7 defense in depth).
-  const hero = items.find(
-    (item): item is FinishedStakedItem => !item.demo && "gameId" in item,
-  );
+  const hero = items.find(isFinishedStakedItem);
   if (items.length === 0) {
     return (
       <div className="empty">
@@ -143,6 +140,10 @@ function FinishedPane(props: {
   }
 
   const rest = items.filter((item) => item !== hero);
+  const heroOutcome =
+    hero === undefined ? null : outcomeFor(hero.result, hero.yourSide);
+  const heroPayoutChip =
+    hero === undefined ? null : payoutChip(hero.payoutStatus);
   return (
     <div data-testid="finished-pane">
       {hero !== undefined ? (
@@ -157,8 +158,8 @@ function FinishedPane(props: {
             <dd className="vt">{hero.gameName}</dd>
             <dt>result</dt>
             <dd>
-              {outcomeGlyph(outcomeFor(hero.result, hero.yourSide))}
-              {outcomeFor(hero.result, hero.yourSide) === "won" ? (
+              {heroOutcome === null ? null : outcomeGlyph(heroOutcome)}
+              {heroOutcome === "won" ? (
                 <>
                   {" "}
                   <button
@@ -178,8 +179,8 @@ function FinishedPane(props: {
             <dt>payout</dt>
             <dd>
               {formatMicroUsdc(hero.payoutMicroUsdc)}
-              {payoutChip(hero.payoutStatus) !== null ? (
-                <span className="chip"> {payoutChip(hero.payoutStatus)}</span>
+              {heroPayoutChip !== null ? (
+                <span className="chip"> {heroPayoutChip}</span>
               ) : null}
               {hero.payoutTxid !== null ? (
                 <>
@@ -216,7 +217,7 @@ function FinishedPane(props: {
       {rest.length > 0 ? (
         <div className="minicards">
           {rest.map((item, index) =>
-            !item.demo && "gameId" in item ? (
+            isFinishedStakedItem(item) ? (
               <Link
                 key={item.gameId}
                 className="minicard"
@@ -361,14 +362,19 @@ export function Hub(props: {
       setGamePaneDismissed(false);
       if (!claimOpen) {
         live.consumePlayNudge();
-        flow.send({ type: "PLAY", demo });
+        send({ type: "PLAY", demo });
       }
     },
-    [claimOpen, flow, live.consumePlayNudge],
+    [claimOpen, send, live.consumePlayNudge],
   );
 
   const surfaceVisible = state.phase !== "IDLE";
   const gamePanePhase = state.phase === "CLAIMING" || state.phase === "FOCUS";
+  const acceptedMove =
+    live.lastEvent?.type === "move_accepted" ? live.lastEvent.payload : null;
+  const playView = (
+    <PlayView flow={flow} meta={props.meta} acceptedMove={acceptedMove} />
+  );
   return (
     <AppShell
       belowBar={<PromoStrip />}
@@ -460,27 +466,11 @@ export function Hub(props: {
               testId="hub-game-popover"
               onClose={() => setGamePaneDismissed(true)}
             >
-              <PlayView
-                flow={flow}
-                meta={props.meta}
-                acceptedMove={
-                  live.lastEvent?.type === "move_accepted"
-                    ? live.lastEvent.payload
-                    : null
-                }
-              />
+              {playView}
             </GamePane>
           )
         ) : (
-          <PlayView
-            flow={flow}
-            meta={props.meta}
-            acceptedMove={
-              live.lastEvent?.type === "move_accepted"
-                ? live.lastEvent.payload
-                : null
-            }
-          />
+          playView
         )
       ) : null}
     </AppShell>

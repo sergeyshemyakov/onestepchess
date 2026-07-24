@@ -3,7 +3,7 @@ import { BrowserRouter, Route, Routes, useLocation } from "react-router";
 import type { ApiClient } from "./api/client.js";
 import type { EventSourceFactory } from "./api/sse.js";
 import type { AuthHandlers } from "./ContextualApp.jsx";
-import { AppShell } from "./components/AppShell.jsx";
+import { BootSkeleton } from "./components/BootSkeleton.jsx";
 import { captureRefFromUrl } from "./lib/refCapture.js";
 
 const ContextualApp = lazy(() =>
@@ -28,16 +28,6 @@ function RefCapture() {
   return null;
 }
 
-function BootSkeleton() {
-  return (
-    <AppShell showSystemBanner={false}>
-      <p className="console" style={{ padding: "40px 22px" }}>
-        &gt; connecting<span className="blink">▊</span>
-      </p>
-    </AppShell>
-  );
-}
-
 export function App(props: {
   readonly client: ApiClient;
   readonly authHandlers: AuthHandlers;
@@ -50,7 +40,7 @@ export function App(props: {
         <Route
           path="/replay/:gameId"
           element={
-            <Suspense fallback={<BootSkeleton />}>
+            <Suspense fallback={<BootSkeleton showSystemBanner={false} />}>
               <Replay client={props.client} />
             </Suspense>
           }
@@ -58,7 +48,7 @@ export function App(props: {
         <Route
           path="*"
           element={
-            <Suspense fallback={<BootSkeleton />}>
+            <Suspense fallback={<BootSkeleton showSystemBanner={false} />}>
               <ContextualApp
                 client={props.client}
                 authHandlers={props.authHandlers}

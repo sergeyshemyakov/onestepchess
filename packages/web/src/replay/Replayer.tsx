@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Board, type BoardFx } from "../board/Board.jsx";
+import { useLoopGate } from "./useLoopGate.js";
 
 export const START_FEN =
   "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -12,36 +13,6 @@ export type ReplayerPly = {
   readonly from?: string;
   readonly to?: string;
 };
-
-/** Animation loops gate on IntersectionObserver + document.hidden and idle
- * ≥ 1 s off-screen (§9). Environments without IntersectionObserver (tests)
- * count as visible. */
-export function useLoopGate(ref: {
-  readonly current: HTMLElement | null;
-}): boolean {
-  const [onScreen, setOnScreen] = useState(true);
-  const [hidden, setHidden] = useState(
-    typeof document !== "undefined" && document.hidden,
-  );
-
-  useEffect(() => {
-    const host = ref.current;
-    if (host === null || typeof IntersectionObserver !== "function") return;
-    const observer = new IntersectionObserver((entries) => {
-      setOnScreen(entries.some((entry) => entry.isIntersecting));
-    });
-    observer.observe(host);
-    return () => observer.disconnect();
-  }, [ref]);
-
-  useEffect(() => {
-    const onVisibility = () => setHidden(document.hidden);
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => document.removeEventListener("visibilitychange", onVisibility);
-  }, []);
-
-  return onScreen && !hidden;
-}
 
 const END_HOLD_MS = 2_000;
 const HIGHLIGHT_HOLD_MS = 1_000;
