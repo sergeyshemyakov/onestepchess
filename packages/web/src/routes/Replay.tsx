@@ -2,7 +2,7 @@ import { Fragment, useEffect, useState } from "react";
 import { useParams, useSearchParams } from "react-router";
 import { type ApiClient, ApiError } from "../api/client.js";
 import { fetchReplayCached } from "../api/replayCache.js";
-import type { ReplayView } from "../api/schemas.js";
+import type { ReplayPly, ReplayView } from "../api/schemas.js";
 import { AppShell } from "../components/AppShell.jsx";
 import { parseUci } from "../lib/fen.js";
 import { formatMicroUsdc } from "../lib/format.js";
@@ -51,7 +51,7 @@ export function Replay(props: { readonly client: ApiClient }) {
   >({ gameId, kind: "loading", attempt: 0 });
   const [retry, setRetry] = useState(0);
   const [ply, setPly] = useState(0);
-  const [winratePly, setWinratePly] = useState<number | null>(null);
+  const [author, setAuthor] = useState<ReplayPly["author"] | null>(null);
   const [copied, setCopied] = useState(false);
   const { client } = props;
 
@@ -137,17 +137,9 @@ export function Replay(props: { readonly client: ApiClient }) {
     <AppShell showSystemBanner={false}>
       <div className="replaypage" data-testid="replay-page">
         <header className="replayhead">
-          <h1>{replay.name}</h1>
-          <p className="dim">
-            {replay.result === "white"
-              ? "1-0"
-              : replay.result === "black"
-                ? "0-1"
-                : replay.result === "draw"
-                  ? "½-½"
-                  : "aborted"}{" "}
-            · {replay.termination}
-          </p>
+          {/* The URL id, not the word-list name — names collide with nickname
+           * vocabulary and read like a player (playtest round 2). */}
+          <h1>Game {replay.gameId.replace(/^gm_/, "")}</h1>
         </header>
         <div className="replaymain">
           <Replayer
@@ -157,6 +149,9 @@ export function Replay(props: { readonly client: ApiClient }) {
               to: parseUci(item.move.uci).to,
             }))}
             controls
+            loop
+            loopToggle
+            moveFx="glide"
             ply={ply}
             onScrub={setPly}
             {...(highlightPly === undefined ? {} : { highlightPly })}
@@ -190,13 +185,11 @@ export function Replay(props: { readonly client: ApiClient }) {
                     <span className="dim">{item.ply}</span>{" "}
                     <span className="mv">{item.move.san}</span>
                   </button>
-                  {/* Winrate popover works by tap on touch (F-W6). */}
+                  {/* Player popup works by tap on touch (F-W6). */}
                   <button
                     type="button"
                     className="author"
-                    onClick={() =>
-                      setWinratePly(winratePly === item.ply ? null : item.ply)
-                    }
+                    onClick={() => setAuthor(item.author)}
                   >
                     {item.author.nickname ?? "anonymous"}{" "}
                     <span className="chip">{item.author.kind}</span>
@@ -206,13 +199,6 @@ export function Replay(props: { readonly client: ApiClient }) {
                   ) : (
                     <span>{formatMicroUsdc(item.stakeMicroUsdc)}</span>
                   )}
-                  {winratePly === item.ply ? (
-                    <span className="winrate-pop" role="note">
-                      {item.author.winratePct === null
-                        ? "no decided games yet"
-                        : `${Math.round(item.author.winratePct)}% winrate`}
-                    </span>
-                  ) : null}
                 </div>
               </Fragment>
             ))}
@@ -239,6 +225,40 @@ export function Replay(props: { readonly client: ApiClient }) {
             {copied ? "copied ✓" : "copy link"}
           </button>
         </div>
+        {author !== null ? (
+          <div className="modalback">
+            <div
+              className="modal"
+              role="dialog"
+              aria-modal="true"
+              data-testid="player-popup"
+            >
+              <h3>PLAYER</h3>
+              <p className="mv">{author.nickname ?? "anonymous"}</p>
+              <dl className="qv-fields">
+                <dt>type</dt>
+                <dd>{author.kind}</dd>
+                <dt>total moves</dt>
+                <dd>{author.movesTotal}</dd>
+                <dt>winrate</dt>
+                <dd>
+                  {author.winratePct === null
+                    ? "no decided games yet"
+                    : `${Math.round(author.winratePct)}%`}
+                </dd>
+              </dl>
+              <div className="modal-actions single">
+                <button
+                  type="button"
+                  className="btn mini"
+                  onClick={() => setAuthor(null)}
+                >
+                  close
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     </AppShell>
   );

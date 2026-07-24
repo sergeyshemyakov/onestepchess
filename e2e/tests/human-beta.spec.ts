@@ -59,7 +59,12 @@ const replay = {
       fenAfter: "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
       stakeMicroUsdc: 10_000,
       demo: false,
-      author: { nickname: "night-owl", kind: "human", winratePct: 50 },
+      author: {
+        nickname: "night-owl",
+        kind: "human",
+        winratePct: 50,
+        movesTotal: 24,
+      },
     },
     {
       ply: 2,
@@ -68,7 +73,12 @@ const replay = {
       fenAfter: "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
       stakeMicroUsdc: 10_000,
       demo: false,
-      author: { nickname: "quiet-bishop", kind: "human", winratePct: 52 },
+      author: {
+        nickname: "quiet-bishop",
+        kind: "human",
+        winratePct: 52,
+        movesTotal: 31,
+      },
     },
     {
       ply: 3,
@@ -78,7 +88,12 @@ const replay = {
         "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2",
       stakeMicroUsdc: 10_000,
       demo: false,
-      author: { nickname: "night-owl", kind: "human", winratePct: 50 },
+      author: {
+        nickname: "night-owl",
+        kind: "human",
+        winratePct: 50,
+        movesTotal: 24,
+      },
     },
   ],
   pgn: '[Event "One Step Chess"]\n\n1. e4 e5 2. Nf3 1-0\n',

@@ -163,7 +163,7 @@ export function Landing(props: {
               plies={DEEP_BLUE_GAME6.plies}
               autoPlay
               loop
-              moveFx="type"
+              moveFx="glide"
               pliesPerSecond={1.5}
               caption="deep blue – kasparov · game 6 · 1997 · 1-0"
             />

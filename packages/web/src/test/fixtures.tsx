@@ -177,6 +177,7 @@ export function replayFixture(
         nickname: `author-${ply}`,
         kind: "human" as const,
         winratePct: 50,
+        movesTotal: 24,
       },
     };
   });

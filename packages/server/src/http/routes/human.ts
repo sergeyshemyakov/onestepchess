@@ -446,6 +446,21 @@ export function registerHumanRoutes(
     const playerByAddress = new Map(
       players.map((player) => [player.address, player]),
     );
+    // Same "moves" definition as /my/profile: staked entries only.
+    const movesByAddress = new Map(
+      (addresses.length === 0
+        ? []
+        : deps.db
+            .select({
+              player: schema.stakeEntries.player,
+              count: sql<number>`count(*)`,
+            })
+            .from(schema.stakeEntries)
+            .where(inArray(schema.stakeEntries.player, addresses))
+            .groupBy(schema.stakeEntries.player)
+            .all()
+      ).map((row) => [row.player, row.count]),
+    );
     return c.json({
       gameId: game.id,
       name: game.name,
@@ -465,6 +480,7 @@ export function registerHumanRoutes(
             kind: author.kind,
             winratePct:
               decisions === 0 ? null : (author.wins / decisions) * 100,
+            movesTotal: movesByAddress.get(authorAddress) ?? 0,
           },
         };
       }),

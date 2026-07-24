@@ -32,10 +32,11 @@ type ToastState = {
 const ToastContext = createContext<ToastState | null>(null);
 
 const TOAST_CAP = 3;
-const TOAST_TTL_MS = 5_200;
+const TOAST_TTL_MS = 180_000;
 
 /** Capped stack of 3 (oldest drops), aria-live polite (F-W7). A toast may
- * carry one action — the win toast's `share ▸` entry point (F-W12). */
+ * carry one action — the win toast's `share ▸` entry point (F-W12).
+ * Toasts persist for minutes, so each carries a ✕ like the banners. */
 export function ToastProvider(props: { readonly children: ReactNode }) {
   const [toasts, setToasts] = useState<readonly Toast[]>([]);
   const nextId = useRef(1);
@@ -115,19 +116,27 @@ export function ToastProvider(props: { readonly children: ReactNode }) {
               }
             }}
           >
+            <button
+              type="button"
+              className="btn mini toast-close"
+              aria-label="dismiss notification"
+              onClick={() => dismiss(toast.id)}
+            >
+              ✕
+            </button>
             {toast.text}
             {toast.action !== undefined ? (
               toast.action.href === undefined ? (
                 <button
                   type="button"
-                  className="btn mini"
+                  className="btn mini toast-action"
                   onClick={toast.action.onClick}
                 >
                   {toast.action.label}
                 </button>
               ) : (
                 <a
-                  className="btn mini"
+                  className="btn mini toast-action"
                   href={toast.action.href}
                   target="_blank"
                   rel="noopener noreferrer"

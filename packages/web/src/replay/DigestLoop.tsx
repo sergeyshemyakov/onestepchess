@@ -15,6 +15,7 @@ export function DigestLoop(props: {
         plies={props.plies}
         autoPlay
         loop
+        moveFx="glide"
         {...(props.highlightPly === undefined
           ? {}
           : { highlightPly: props.highlightPly })}

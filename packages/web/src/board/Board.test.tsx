@@ -205,4 +205,29 @@ describe("move FX (§8.2)", () => {
       vi.useRealTimers();
     }
   });
+
+  it("plays the glide FX: clone slides from source, then cleans up", () => {
+    vi.useFakeTimers();
+    try {
+      const view = render(<Board fen={AFTER_E4} />);
+      view.rerender(
+        <Board
+          fen={AFTER_E4}
+          fx={{ kind: "glide", from: "e2", to: "e4", seq: 1 }}
+        />,
+      );
+      const layer = view.container.querySelector(".fxlayer");
+      if (layer === null) throw new Error("fx layer missing");
+      expect(layer.querySelectorAll(".fx-glide").length).toBe(1);
+      const glyph = view.container.querySelector<SVGElement>(
+        '[data-square="e4"] svg.pc',
+      );
+      expect(glyph?.style.visibility).toBe("hidden");
+      vi.advanceTimersByTime(400);
+      expect(layer.children.length).toBe(0);
+      expect(glyph?.style.visibility).toBe("");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

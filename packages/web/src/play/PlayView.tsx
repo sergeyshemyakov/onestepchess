@@ -340,9 +340,15 @@ export function PlayView(props: {
                   {state.selected === null || state.selected === undefined
                     ? "> tap a piece, then a target"
                     : `> ${state.selected} :: pick a target`}
-                  {epTargets.length > 0
-                    ? "\n> en passant available — the dashed pawn can be taken"
-                    : ""}
+                  {epTargets.length > 0 ? (
+                    <span className="epline">
+                      {
+                        "\n> en passant available — the dashed pawn can be taken"
+                      }
+                    </span>
+                  ) : (
+                    ""
+                  )}
                 </p>
               ) : null}
               <p style={{ marginTop: 6 }}>

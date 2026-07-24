@@ -88,12 +88,20 @@ export function BoardLoop(props: {
   const board = props.fen === undefined ? null : parseFenBoard(props.fen);
   const mover =
     board?.[squareIndex(props.from)] ?? pieceFromSan(props.san, props.side);
-  const victim = capture ? (board?.[squareIndex(props.to)] ?? null) : null;
+  // En passant: a pawn capturing onto an empty square — the victim sits on
+  // the target file at the origin rank, not on the target square.
+  const enPassant =
+    capture &&
+    board !== null &&
+    mover.type === "p" &&
+    board[squareIndex(props.to)] === null;
+  const victimSquare = enPassant ? `${props.to[0]}${props.from[1]}` : props.to;
+  const victim = capture ? (board?.[squareIndex(victimSquare)] ?? null) : null;
   const baseFen =
     props.fen === undefined
       ? EMPTY_FEN
       : fenWithoutSquare(
-          capture ? fenWithoutSquare(props.fen, props.to) : props.fen,
+          capture ? fenWithoutSquare(props.fen, victimSquare) : props.fen,
           props.from,
         );
   const position = (square: string) => {
@@ -109,7 +117,7 @@ export function BoardLoop(props: {
         {victim !== null && !atTarget ? (
           <span
             className="boardloop-piece"
-            style={{ transform: position(props.to) }}
+            style={{ transform: position(victimSquare) }}
           >
             <PieceGlyph type={victim.type} side={victim.side} />
           </span>
@@ -117,7 +125,7 @@ export function BoardLoop(props: {
         {capture && phase === "type" && !reduced ? (
           <span
             className="boardloop-burn"
-            style={{ transform: position(props.to) }}
+            style={{ transform: position(victimSquare) }}
           />
         ) : null}
         {(phase === "erase" || phase === "type") && !reduced ? (

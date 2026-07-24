@@ -238,6 +238,7 @@ const replay = z.object({
         nickname: z.string().nullable(),
         kind: z.enum(["human", "agent", "guest"]),
         winratePct: z.number().min(0).max(100).nullable(),
+        movesTotal: z.number().int().nonnegative(),
       }),
       stakeMicroUsdc: z.number().int().nonnegative(),
       demo: z.boolean(),

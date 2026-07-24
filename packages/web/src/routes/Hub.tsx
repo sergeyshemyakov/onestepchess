@@ -14,6 +14,7 @@ import { AppShell } from "../components/AppShell.jsx";
 import { GamePane } from "../components/GamePane.jsx";
 import { PlayerStatus } from "../components/PlayerStatus.jsx";
 import { PromoStrip } from "../components/PromoStrip.jsx";
+import { ShareSheet } from "../components/ShareSheet.jsx";
 import { outcomeFor, outcomeGlyph } from "../games/outcome.js";
 import { payoutChip } from "../games/QuickView.jsx";
 import { explorerTxUrl } from "../lib/explorer.js";
@@ -133,8 +134,10 @@ function FinishedPane(props: {
   readonly client: ApiClient;
   readonly page: GamesPage<FinishedGameItem>;
   readonly meta: Meta;
+  readonly refCode: string | null;
 }) {
   const items = props.page.items;
+  const [sharing, setSharing] = useState(false);
   // `demo` is the discriminator — never field presence (I7 defense in depth).
   const hero = items.find(
     (item): item is FinishedStakedItem => !item.demo && "gameId" in item,
@@ -162,7 +165,21 @@ function FinishedPane(props: {
             <dt>game</dt>
             <dd className="vt">{hero.gameName}</dd>
             <dt>result</dt>
-            <dd>{outcomeGlyph(outcomeFor(hero.result, hero.yourSide))}</dd>
+            <dd>
+              {outcomeGlyph(outcomeFor(hero.result, hero.yourSide))}
+              {outcomeFor(hero.result, hero.yourSide) === "won" ? (
+                <>
+                  {" "}
+                  <button
+                    type="button"
+                    className="btn pri mini"
+                    onClick={() => setSharing(true)}
+                  >
+                    share ▸
+                  </button>
+                </>
+              ) : null}
+            </dd>
             <dt>your move</dt>
             <dd>
               {hero.yourMove.san} · ply {hero.yourPly}
@@ -195,6 +212,14 @@ function FinishedPane(props: {
               full replay ▸
             </Link>
           </p>
+          {sharing ? (
+            <ShareSheet
+              gameId={hero.gameId}
+              yourPly={hero.yourPly}
+              refCode={props.refCode}
+              onClose={() => setSharing(false)}
+            />
+          ) : null}
         </div>
       ) : null}
       {rest.length > 0 ? (
@@ -421,7 +446,12 @@ export function Hub(props: {
           ) : finished === null ? (
             <p className="console">&gt; loading…</p>
           ) : (
-            <FinishedPane client={client} page={finished} meta={props.meta} />
+            <FinishedPane
+              client={client}
+              page={finished}
+              meta={props.meta}
+              refCode={profile?.refCode ?? null}
+            />
           )}
         </div>
         <p className="archivelink">

@@ -846,6 +846,7 @@ describe("profile, game history, and public replay reads (§6.3)", () => {
     for (const ply of body.plies) {
       expect(Object.keys(ply.author).sort()).toEqual([
         "kind",
+        "movesTotal",
         "nickname",
         "winratePct",
       ]);

@@ -216,6 +216,7 @@ export const replayPlySchema = z.object({
     nickname: z.string().nullable(),
     kind: z.enum(["human", "agent", "guest"]),
     winratePct: z.number().min(0).max(100).nullable(),
+    movesTotal: nonNegativeIntegerSchema,
   }),
 });
 export type ReplayPly = z.infer<typeof replayPlySchema>;

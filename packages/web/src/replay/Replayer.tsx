@@ -51,6 +51,8 @@ export function Replayer(props: {
   readonly startFen?: string;
   readonly autoPlay?: boolean;
   readonly loop?: boolean;
+  /** Show a loop toggle in the controls row; `loop` becomes its initial state. */
+  readonly loopToggle?: boolean;
   readonly controls?: boolean;
   readonly pliesPerSecond?: number;
   readonly moveFx?: BoardFx["kind"];
@@ -67,6 +69,8 @@ export function Replayer(props: {
     props.autoPlay === true ? 0 : (props.ply ?? 0),
   );
   const [playing, setPlaying] = useState(props.autoPlay === true);
+  const [looping, setLooping] = useState(props.loop === true);
+  const loop = props.loopToggle === true ? looping : props.loop === true;
   const holdRef = useRef(0);
   const hostRef = useRef<HTMLDivElement>(null);
   const live = useLoopGate(hostRef);
@@ -97,7 +101,7 @@ export function Replayer(props: {
       }
       if (controlled) {
         // Controlled auto mode: the owner advances via onScrub.
-        const next = ply >= total ? (props.loop === true ? 0 : ply) : ply + 1;
+        const next = ply >= total ? (loop ? 0 : ply) : ply + 1;
         if (next === ply) setPlaying(false);
         else {
           if (next === props.highlightPly)
@@ -110,7 +114,7 @@ export function Replayer(props: {
       }
       setInternalPly((current) => {
         if (current >= total) {
-          if (props.loop === true) return 0;
+          if (loop) return 0;
           setPlaying(false);
           return current;
         }
@@ -129,7 +133,7 @@ export function Replayer(props: {
     total,
     controlled,
     ply,
-    props.loop,
+    loop,
     props.highlightPly,
     props.pliesPerSecond,
     onScrub,
@@ -231,6 +235,23 @@ export function Replayer(props: {
               setPly(Number(event.target.value));
             }}
           />
+          {props.loopToggle === true ? (
+            <button
+              type="button"
+              className={
+                looping ? "btn mini loopbtn toggled" : "btn mini loopbtn"
+              }
+              aria-label="toggle loop"
+              aria-pressed={looping}
+              onClick={() => {
+                const next = !looping;
+                setLooping(next);
+                if (next) setPlaying(true);
+              }}
+            >
+              ⟳
+            </button>
+          ) : null}
           <span className="replayer-pos">
             {ply}/{total}
           </span>
