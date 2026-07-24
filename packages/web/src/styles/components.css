@@ -73,6 +73,10 @@ a.chip.click {
   padding: 14px 30px 12px;
   min-width: 340px;
 }
+.ctas .bigplay,
+.hub-actions .bigplay {
+  border-radius: 12px;
+}
 .bigplay .bp-title {
   font-family: "VT323", monospace;
   font-size: 34px;
@@ -709,6 +713,34 @@ svg.pc {
   padding: 18px 18px 14px;
   position: relative;
 }
+.game-pane-backdrop {
+  padding: 24px;
+  overflow: auto;
+}
+.game-pane {
+  width: min(840px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  padding-top: 42px;
+}
+.game-pane .focuswrap {
+  padding: 0;
+}
+.game-pane-close {
+  position: absolute;
+  z-index: 61;
+  top: 8px;
+  right: 8px;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  color: var(--ph-hi);
+  font-family: "VT323", monospace;
+  font-size: 28px;
+  line-height: 1;
+}
 .modal h3 {
   position: absolute;
   top: -9px;
@@ -784,61 +816,10 @@ svg.pc {
   font-size: 14px;
   padding: 7px 15px;
 }
-/* TODO(spec F-W4): .move-loop/.move-square/.move-track/.move-runner style the
-   interim CONFIRM from→to runner; delete when it is replaced by the whole-board
-   loop shared with the F-W3 ongoing hero card. */
-.move-loop {
-  display: grid;
-  grid-template-columns: 38px 110px 38px;
-  justify-content: center;
-  align-items: center;
-  gap: 9px;
+.confirm-board-loop {
+  width: min(220px, 100%);
   margin: 8px 0 12px;
-}
-.move-square {
-  display: grid;
-  place-items: center;
-  aspect-ratio: 1;
-  border: 1px solid var(--line);
-  background: var(--sqd);
-  color: var(--ph-dim);
-  font-size: 11px;
-}
-.move-track {
-  position: relative;
-  height: 2px;
-  background: var(--ph-dark);
-}
-.move-runner {
-  position: absolute;
-  left: -2px;
-  top: 50%;
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  color: var(--ph-hi);
-  animation: confirm-move-loop 1.7s ease-in-out infinite;
-}
-.move-runner .pc {
-  width: 27px;
-  height: 27px;
-}
-@keyframes confirm-move-loop {
-  0%,
-  14% {
-    transform: translate(0, -50%);
-    opacity: 0.35;
-  }
-  58%,
-  82% {
-    transform: translate(80px, -50%);
-    opacity: 1;
-  }
-  100% {
-    transform: translate(80px, -50%);
-    opacity: 0;
-  }
+  margin-inline: auto;
 }
 .settling {
   margin-top: 10px;
@@ -861,12 +842,6 @@ svg.pc {
   .settling {
     animation: none;
     background: var(--faint);
-  }
-  .move-runner {
-    animation: none;
-    left: auto;
-    right: -2px;
-    transform: translateY(-50%);
   }
 }
 
@@ -947,6 +922,12 @@ svg.pc {
     border-bottom: 0;
     padding-bottom: max(14px, env(safe-area-inset-bottom));
   }
+  .game-pane-backdrop {
+    padding: 0;
+  }
+  .game-pane {
+    max-height: min(92dvh, 100%);
+  }
   .sheetbtn {
     display: block;
     width: 100%;
@@ -1003,8 +984,15 @@ svg.pc {
 .landfn .howitworks {
   padding: 12px 0;
 }
+.landdeco {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  min-width: 0;
+}
 .landdeco .replaystrip {
-  padding: 26px 0 0;
+  padding: 0;
 }
 .ctas {
   display: grid;
@@ -1020,9 +1008,6 @@ svg.pc {
   .landsplit {
     grid-template-columns: 1fr;
     padding: 16px 14px 4px;
-  }
-  .landdeco .replaystrip {
-    padding: 10px 0 0;
   }
 }
 .tabrow {
@@ -1217,6 +1202,11 @@ svg.pc {
   padding: 6px 10px;
   font-size: 12.5px;
   color: var(--ph-dim, var(--ph));
+}
+.active-minicard {
+  /* 7-char SAN + black + the largest SQLite INTEGER USDC rendering + status. */
+  width: min(calc(50ch + 22px), 100%);
+  flex: none;
 }
 .qv-fields {
   display: grid;

@@ -5,6 +5,7 @@ import type { Meta, PlayerView } from "../api/schemas.js";
 import { ConnectSheet } from "../auth/ConnectSheet.jsx";
 import { AlgorandMark } from "../board/pieces.jsx";
 import { AppShell } from "../components/AppShell.jsx";
+import { GamePane } from "../components/GamePane.jsx";
 import { PromoStrip } from "../components/PromoStrip.jsx";
 import { StatsStrip } from "../components/StatsStrip.jsx";
 import { TowerTeaser } from "../components/TowerTeaser.jsx";
@@ -75,6 +76,7 @@ export function Landing(props: {
 }) {
   const [connecting, setConnecting] = useState(false);
   const [guestDemo, setGuestDemo] = useState(readGuestDemo);
+  const [gamePaneDismissed, setGamePaneDismissed] = useState(false);
   const flow = usePlayFlow({
     client: props.client,
     meta: props.meta,
@@ -92,6 +94,17 @@ export function Landing(props: {
       setGuestDemo("expired");
     }
   }, [flow.state.phase, flow.state.guest]);
+
+  const gamePanePhase =
+    flow.state.phase === "GUEST_GATE" ||
+    flow.state.phase === "CLAIMING" ||
+    flow.state.phase === "FOCUS";
+  const openDemoGame = () => {
+    setGamePaneDismissed(false);
+    if (!gamePanePhase) {
+      flow.send({ type: "PLAY", demo: true, guest: true });
+    }
+  };
 
   return (
     <AppShell
@@ -127,9 +140,7 @@ export function Landing(props: {
               <button
                 type="button"
                 className="bigplay demo"
-                onClick={() =>
-                  flow.send({ type: "PLAY", demo: true, guest: true })
-                }
+                onClick={openDemoGame}
               >
                 <span className="bp-title">PLAY A DEMO GAME</span>
                 <span className="bp-sub">
@@ -152,6 +163,8 @@ export function Landing(props: {
               plies={DEEP_BLUE_GAME6.plies}
               autoPlay
               loop
+              moveFx="type"
+              pliesPerSecond={1.5}
               caption="deep blue – kasparov · game 6 · 1997 · 1-0"
             />
           </section>
@@ -192,12 +205,26 @@ export function Landing(props: {
         </a>
         <a href="#rules">· rules</a>
       </div>
-      {flow.state.phase !== "IDLE" ? (
-        <PlayView
-          flow={flow}
-          meta={props.meta}
-          onWalletIntent={() => setConnecting(true)}
-        />
+      {gamePanePhase && !gamePaneDismissed ? (
+        <GamePane
+          label="demo game"
+          testId="landing-demo-popover"
+          onClose={() => setGamePaneDismissed(true)}
+        >
+          <PlayView
+            flow={flow}
+            meta={props.meta}
+            onWalletIntent={() => setConnecting(true)}
+          />
+        </GamePane>
+      ) : flow.state.phase !== "IDLE" ? (
+        gamePanePhase ? null : (
+          <PlayView
+            flow={flow}
+            meta={props.meta}
+            onWalletIntent={() => setConnecting(true)}
+          />
+        )
       ) : null}
       {connecting ? (
         <ConnectSheet

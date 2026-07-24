@@ -259,7 +259,11 @@ export function Board(props: BoardProps) {
   useEffect(() => {
     const layer = fxRef.current;
     const fx = props.fx;
-    if (layer === null || fx === null || fx === undefined) return;
+    if (layer === null) return;
+    if (fx === null || fx === undefined) {
+      lastFxSeq.current = 0;
+      return;
+    }
     if (fx.seq === lastFxSeq.current) return;
     lastFxSeq.current = fx.seq;
     return playFx(layer, fx);

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Meta, Move } from "../api/schemas.js";
 import { obtainTurnstileToken } from "../auth/turnstile.js";
 import { Board, type BoardFx } from "../board/Board.jsx";
+import { BoardLoop } from "../board/BoardLoop.jsx";
 import {
   enPassantCaptures,
   movesTo,
@@ -10,14 +11,8 @@ import {
   targetsFor,
 } from "../board/moves.js";
 import { PromotionPicker } from "../board/PromotionPicker.jsx";
-import { PieceGlyph } from "../board/pieces.jsx";
 import { isCheck, kingSquare } from "../lib/check.js";
-import {
-  parseFenBoard,
-  parseUci,
-  sideToMove,
-  squareIndex,
-} from "../lib/fen.js";
+import { parseUci, sideToMove } from "../lib/fen.js";
 import {
   formatCountdown,
   formatMicroUsdc,
@@ -447,7 +442,20 @@ function ConfirmMorph(props: {
               {uci.from}→{uci.to} <span className="dim">({move.san})</span>
             </p>
             {state.phase === "CONFIRM" && claim !== undefined ? (
-              <MoveLoop fen={claim.fen} move={move} />
+              <div
+                className="confirm-board-loop"
+                role="img"
+                aria-label={`move animation ${uci.from} to ${uci.to}`}
+                data-testid="confirm-move-animation"
+              >
+                <BoardLoop
+                  fen={claim.fen}
+                  from={uci.from}
+                  to={uci.to}
+                  san={move.san}
+                  side={claim.yourSide}
+                />
+              </div>
             ) : null}
           </>
         ) : null}
@@ -706,31 +714,6 @@ function OnboardingDoors(props: { readonly onWalletIntent?: () => void }) {
       <a className="btn" href="/start">
         I don't have one yet
       </a>
-    </div>
-  );
-}
-
-/* TODO(spec F-W4): interim placeholder — replace with the looping whole-board
- * move animation shared with the F-W3 ongoing hero card, rendered on the full
- * `fen` position, once that board loop is implemented. */
-function MoveLoop(props: { readonly fen: string; readonly move: Move }) {
-  const { from, to } = parseUci(props.move.uci);
-  const piece = parseFenBoard(props.fen)[squareIndex(from)] ?? null;
-
-  return (
-    <div
-      className="move-loop"
-      role="img"
-      aria-label={`move animation ${from} to ${to}`}
-      data-testid="confirm-move-animation"
-    >
-      <span className="move-square">{from}</span>
-      <span className="move-track" aria-hidden="true">
-        <span className="move-runner">
-          {piece === null ? "◆" : <PieceGlyph {...piece} />}
-        </span>
-      </span>
-      <span className="move-square">{to}</span>
     </div>
   );
 }

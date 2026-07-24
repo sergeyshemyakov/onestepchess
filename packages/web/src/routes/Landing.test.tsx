@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -46,6 +47,7 @@ const receipt: MoveReceipt = {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   localStorage.clear();
   sessionStorage.clear();
   resetTurnstileForTests();
@@ -95,6 +97,31 @@ async function reachConfirm(_view: ReturnType<typeof render>) {
   fireEvent.click(surface.querySelector('[data-square="e4"]') as Element);
   await screen.findByText("FINAL MOVE?");
 }
+
+it("landing_demo_board_opens_in_an_overlay_pane", async () => {
+  const client = guestClient();
+  renderLanding(client);
+
+  fireEvent.click(
+    await screen.findByRole("button", { name: /PLAY A DEMO GAME/ }),
+  );
+
+  const pane = await screen.findByRole("dialog", { name: "demo game" });
+  await within(pane).findByText(/YOU PLAY WHITE/);
+  expect(pane.dataset.testid).toBe("landing-demo-popover");
+  expect(within(pane).getByTestId("play-surface").dataset.phase).toBe("FOCUS");
+  expect(pane.parentElement?.className).toContain("modalback");
+
+  fireEvent.click(
+    within(pane).getByRole("button", { name: "Close game pane" }),
+  );
+  expect(screen.queryByRole("dialog", { name: "demo game" })).toBeNull();
+
+  fireEvent.click(screen.getByRole("button", { name: /PLAY A DEMO GAME/ }));
+  const reopened = await screen.findByRole("dialog", { name: "demo game" });
+  expect(within(reopened).getByText(/YOU PLAY WHITE/)).not.toBeNull();
+  expect(client.createClaim).toHaveBeenCalledTimes(1);
+});
 
 it("landing_uses_only_meta_and_session_probe_before_interaction", async () => {
   // -- API count: exactly /meta + the session boot probe, nothing else.
@@ -164,6 +191,30 @@ it("landing_uses_only_meta_and_session_probe_before_interaction", async () => {
   expect(screen.getByTestId("stats-strip").textContent).toContain(
     "41 human moves · 7 wallets · 5 games settled · 44 payments",
   );
+});
+
+it("deep_blue_piece_movement_uses_scanline_type_in", () => {
+  vi.useFakeTimers();
+  const view = renderLanding(guestClient());
+  const strip = screen.getByTestId("deepblue-strip");
+
+  act(() => vi.advanceTimersByTime(670));
+  expect(strip.querySelector(".fx-erase")).not.toBeNull();
+  expect(strip.querySelector(".fx-sweep")).not.toBeNull();
+
+  act(() => vi.advanceTimersByTime(220));
+  expect(
+    strip
+      .querySelector('[data-square="e4"] svg.pc')
+      ?.classList.contains("fx-typein"),
+  ).toBe(true);
+  expect(strip.querySelector(".fx-caret")).not.toBeNull();
+
+  act(() => vi.advanceTimersByTime(400));
+  expect(strip.querySelector(".fx-erase")).toBeNull();
+  expect(strip.querySelector(".fx-sweep")).toBeNull();
+  expect(strip.querySelector(".fx-caret")).toBeNull();
+  view.unmount();
 });
 
 it("tower_teaser_can_be_closed_and_stays_hidden_during_its_cooldown", async () => {
