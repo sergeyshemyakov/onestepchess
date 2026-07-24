@@ -210,6 +210,13 @@ describe("staked claim moves (F4)", () => {
     const firstBody = await first.json();
     const firstResponseHeader = first.headers.get("PAYMENT-RESPONSE");
     const replay = await moveRequest(stack, claim, "alice", header);
+    const unsignedReplay = await stack.app.request(
+      `/api/v1/claims/${claim.id}/move`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${session(stack, "alice")}` },
+      },
+    );
 
     expect(first.status).toBe(200);
     expect(firstBody).toMatchObject({
@@ -220,6 +227,8 @@ describe("staked claim moves (F4)", () => {
     expect(firstResponseHeader).not.toBeNull();
     expect(await replay.json()).toEqual(firstBody);
     expect(replay.headers.get("PAYMENT-RESPONSE")).toBe(firstResponseHeader);
+    expect(await unsignedReplay.json()).toEqual(firstBody);
+    expect(unsignedReplay.headers.get("PAYMENT-RESPONSE")).toBeNull();
     expect(metrics.recordMoveSettled).toHaveBeenCalledTimes(1);
     expect(
       stack.database.db.select().from(schema.stakeEntries).all(),

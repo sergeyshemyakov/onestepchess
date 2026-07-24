@@ -1,13 +1,15 @@
 import { renderAscii } from "@onestepchess/core";
 import { and, eq, inArray } from "drizzle-orm";
 import type { Hono } from "hono";
-import type { z } from "zod";
+import type { TurnstileVerifier } from "../../auth/turnstile.js";
 import type {
   ClaimDeps,
   ClaimRecord,
   MoveReceipt,
 } from "../../coordinator/claims.js";
 import { legalMove, receiptFor } from "../../coordinator/claims.js";
+import type { DispatchResult } from "../../coordinator/queue.js";
+import { parseGameRules } from "../../coordinator/timers.js";
 import { schema } from "../../db/open.js";
 import { newId } from "../../ids.js";
 import { resolveReferrer } from "../../incentives/referrals.js";
@@ -15,16 +17,19 @@ import { type AppEnv, AppError } from "../app.js";
 import { claimBodySchema, moveBodySchema } from "../contracts.js";
 import { clientIp } from "../middleware/client-ip.js";
 import { createTokenBucket } from "../middleware/ratelimit.js";
+import { requireTurnstile } from "../turnstile.js";
+import { parseJsonBody } from "../validation.js";
 import {
-  type AuthRouteDeps,
   guestOrSessionAuth,
   optionalGuestOrSessionAuth,
+  type SessionAuthDeps,
   setGuestCookie,
 } from "./auth.js";
 
 export type ClaimRouteDeps = ClaimDeps &
-  Pick<AuthRouteDeps, "jwtSecret" | "trustProxyHops" | "turnstile"> & {
-    readonly publicBaseUrl: string;
+  SessionAuthDeps & {
+    readonly trustProxyHops: number;
+    readonly turnstile: TurnstileVerifier;
     readonly mode: () => "running" | "paused";
     readonly metrics?: {
       recordClaimCreated(): void;
@@ -33,23 +38,6 @@ export type ClaimRouteDeps = ClaimDeps &
     };
   };
 
-function parseBody<T>(
-  schema_: z.ZodType<T>,
-  request: { json(): Promise<unknown> },
-): Promise<T> {
-  return request
-    .json()
-    .catch(() => {
-      throw new AppError("INVALID_REQUEST", { hint: "body must be JSON" });
-    })
-    .then((body) => {
-      const parsed = schema_.safeParse(body);
-      if (!parsed.success)
-        throw new AppError("INVALID_REQUEST", { hint: "invalid request body" });
-      return parsed.data;
-    });
-}
-
 function claimView(deps: ClaimRouteDeps, claim: ClaimRecord, ascii: boolean) {
   const game = deps.db
     .select()
@@ -57,7 +45,7 @@ function claimView(deps: ClaimRouteDeps, claim: ClaimRecord, ascii: boolean) {
     .where(eq(schema.games.id, claim.gameId))
     .get();
   if (game === undefined) throw new Error("claim game missing");
-  const adapter = deps.registry.get(JSON.parse(game.rulesJson));
+  const adapter = deps.registry.get(parseGameRules(game.rulesJson));
   const state = adapter.fromHistory(JSON.parse(game.historyJson));
   return {
     claimId: claim.id,
@@ -147,7 +135,11 @@ async function normalizeRequestedMove(
   claim: ClaimRecord,
   request: { json(): Promise<unknown> },
 ): Promise<MoveReceipt["move"]> {
-  const body = await parseBody(moveBodySchema, request);
+  const body = await parseJsonBody(
+    moveBodySchema,
+    request,
+    "invalid request body",
+  );
   const normalized = legalMove(deps, claim, body.move);
   if (!normalized.ok)
     throw new AppError(
@@ -160,13 +152,287 @@ async function normalizeRequestedMove(
   return normalized.move;
 }
 
+type JsonRequest = {
+  json(): Promise<unknown>;
+};
+
+type PaidMoveResult =
+  | {
+      readonly kind: "moved";
+      readonly receipt: MoveReceipt;
+      readonly paymentResponse: string | null;
+    }
+  | { readonly kind: "pending"; readonly claimId: string };
+
+function unwrapInternal<R>(result: DispatchResult<R>): R {
+  if (result.kind === "deprioritized") {
+    throw new Error("internal command deprioritized");
+  }
+  return result.result;
+}
+
+async function submitDemoMove(
+  deps: ClaimRouteDeps,
+  claim: ClaimRecord,
+  player: string,
+  request: JsonRequest,
+): Promise<MoveReceipt> {
+  assertClaimNotExpired(deps, claim);
+  if (claim.status === "moved") return receipt(deps, claim);
+  const move = await normalizeRequestedMove(deps, claim, request);
+  const result = await deps.coordinator.dispatch<unknown, MoveReceipt>({
+    type: "DemoMoveSubmitted",
+    payload: { claimId: claim.id, player, move },
+  });
+  return unwrapInternal(result);
+}
+
+async function submitPaidMove(
+  deps: ClaimRouteDeps,
+  claim: ClaimRecord,
+  player: string,
+  signature: string | undefined,
+  request: JsonRequest,
+): Promise<PaidMoveResult> {
+  const required = challenge(deps, claim);
+  if (signature === undefined) {
+    assertClaimNotExpired(deps, claim);
+    if (claim.status === "moved") {
+      return {
+        kind: "moved",
+        receipt: receipt(deps, claim),
+        paymentResponse: null,
+      };
+    }
+    await normalizeRequestedMove(deps, claim, request);
+    throw new AppError("PAYMENT_REQUIRED", {
+      hint: "payment signature required",
+      headers: { "PAYMENT-REQUIRED": required.header },
+    });
+  }
+
+  const decoded = deps.rail.decodePayment(signature);
+  const accepted = required.required.accepts[0];
+  if (
+    !decoded.ok ||
+    decoded.payment.sender !== player ||
+    decoded.payment.amountMicroUsdc !== claim.stakeMicrousdc ||
+    decoded.payment.asset !== accepted.asset ||
+    decoded.payment.payTo !== deps.rail.treasuryAddress
+  ) {
+    throw paymentError("PAYMENT_INVALID", required.header);
+  }
+
+  const clientTxid = decoded.payment.clientTxId;
+  const existing = deps.db
+    .select()
+    .from(schema.paymentIntents)
+    .where(eq(schema.paymentIntents.clientTxid, clientTxid))
+    .get();
+  if (
+    existing !== undefined &&
+    (existing.player !== player || existing.claimId !== claim.id)
+  ) {
+    throw paymentError("PAYMENT_INVALID", required.header);
+  }
+  if (existing?.status === "settled") {
+    if (claim.status !== "moved" || existing.paymentResponseHeader === null) {
+      throw new Error("settled intent lacks a durable receipt");
+    }
+    return {
+      kind: "moved",
+      receipt: receipt(deps, claim),
+      paymentResponse: existing.paymentResponseHeader,
+    };
+  }
+  if (existing?.status === "verified" || existing?.status === "settling") {
+    return { kind: "pending", claimId: claim.id };
+  }
+  if (existing?.status === "failed") {
+    throw paymentError(
+      failurePaymentCode(existing.failureCode),
+      required.header,
+    );
+  }
+
+  assertClaimNotExpired(deps, claim);
+  if (claim.status !== "open") {
+    throw paymentError("PAYMENT_INVALID", required.header);
+  }
+  const move = await normalizeRequestedMove(deps, claim, request);
+  const inflight = deps.db
+    .select()
+    .from(schema.paymentIntents)
+    .where(
+      and(
+        eq(schema.paymentIntents.claimId, claim.id),
+        inArray(schema.paymentIntents.status, ["verified", "settling"]),
+      ),
+    )
+    .get();
+  if (inflight !== undefined) {
+    throw new AppError("PAYMENT_IN_FLIGHT", {
+      hint: "another payment is in flight",
+    });
+  }
+
+  const opened = unwrapInternal(
+    await deps.coordinator.dispatch<
+      {
+        claimId: string;
+        player: string;
+        move: MoveReceipt["move"];
+        clientTxid: string;
+        amount: number;
+        lastValidRound: number | null;
+      },
+      {
+        status:
+          | "verified"
+          | "in_flight"
+          | "settling"
+          | "settled"
+          | "failed"
+          | "foreign"
+          | "expired";
+        created: boolean;
+      }
+    >({
+      type: "PaymentIntentOpened",
+      payload: {
+        claimId: claim.id,
+        player,
+        move,
+        clientTxid,
+        amount: claim.stakeMicrousdc,
+        lastValidRound: decoded.payment.lastValidRound,
+      },
+    }),
+  );
+  if (opened.status === "foreign") {
+    throw paymentError("PAYMENT_INVALID", required.header);
+  }
+  if (opened.status === "expired") {
+    await deps.coordinator.dispatch({
+      type: "ExpireClaim",
+      payload: { claimId: claim.id },
+    });
+    throw new AppError("CLAIM_EXPIRED", { hint: "claim expired" });
+  }
+  if (opened.status === "in_flight") {
+    throw new AppError("PAYMENT_IN_FLIGHT", {
+      hint: "another payment is in flight",
+    });
+  }
+  if (!opened.created && opened.status === "failed") {
+    const failed = deps.db
+      .select({ failureCode: schema.paymentIntents.failureCode })
+      .from(schema.paymentIntents)
+      .where(eq(schema.paymentIntents.clientTxid, clientTxid))
+      .get();
+    throw paymentError(
+      failurePaymentCode(failed?.failureCode ?? null),
+      required.header,
+    );
+  }
+  if (!opened.created && opened.status === "settled") {
+    const settledIntent = deps.db
+      .select()
+      .from(schema.paymentIntents)
+      .where(eq(schema.paymentIntents.clientTxid, clientTxid))
+      .get();
+    const moved = deps.db
+      .select()
+      .from(schema.claims)
+      .where(eq(schema.claims.id, claim.id))
+      .get();
+    if (
+      settledIntent?.paymentResponseHeader === null ||
+      settledIntent?.paymentResponseHeader === undefined ||
+      moved?.status !== "moved"
+    ) {
+      throw new Error("settled intent lacks a durable receipt");
+    }
+    return {
+      kind: "moved",
+      receipt: receipt(deps, moved),
+      paymentResponse: settledIntent.paymentResponseHeader,
+    };
+  }
+  if (!opened.created) {
+    return { kind: "pending", claimId: claim.id };
+  }
+
+  const settlementStartedAt = deps.now();
+  let verification: Awaited<ReturnType<typeof deps.rail.verify>>;
+  try {
+    verification = await deps.rail.verify(signature, required.required);
+  } catch (error) {
+    deps.metrics?.recordFacilitatorError();
+    throw error;
+  }
+  if (!verification.ok) {
+    deps.metrics?.recordFacilitatorError();
+    await deps.coordinator.dispatch({
+      type: "IntentFailed",
+      payload: { clientTxid, failureCode: verification.reason },
+    });
+    throw paymentError(
+      failurePaymentCode(verification.reason),
+      required.header,
+    );
+  }
+
+  await deps.coordinator.dispatch({
+    type: "IntentMarkedSettling",
+    payload: { clientTxid },
+  });
+  let settled: Awaited<ReturnType<typeof deps.rail.settle>>;
+  try {
+    settled = await deps.rail.settle(signature, required.required);
+  } catch (error) {
+    deps.metrics?.recordFacilitatorError();
+    throw error;
+  }
+  if (!settled.ok) {
+    deps.metrics?.recordFacilitatorError();
+    if (settled.reason === "unavailable") {
+      return { kind: "pending", claimId: claim.id };
+    }
+    await deps.coordinator.dispatch({
+      type: "IntentFailed",
+      payload: { clientTxid, failureCode: settled.reason },
+    });
+    throw paymentError("PAYMENT_INVALID", required.header);
+  }
+
+  const committed = unwrapInternal(
+    await deps.coordinator.dispatch<unknown, MoveReceipt>({
+      type: "MoveSettled",
+      payload: {
+        claimId: claim.id,
+        player,
+        move,
+        clientTxid,
+        txid: settled.txid,
+        response: settled.paymentResponseHeader,
+      },
+    }),
+  );
+  deps.metrics?.recordMoveSettled(deps.now() - settlementStartedAt);
+  return {
+    kind: "moved",
+    receipt: committed,
+    paymentResponse: settled.paymentResponseHeader,
+  };
+}
+
 export function registerClaimRoutes(
   app: Hono<AppEnv>,
   deps: ClaimRouteDeps,
 ): void {
-  const authDeps = deps as unknown as AuthRouteDeps;
-  const auth = guestOrSessionAuth(authDeps);
-  const optionalAuth = optionalGuestOrSessionAuth(authDeps);
+  const auth = guestOrSessionAuth(deps);
+  const optionalAuth = optionalGuestOrSessionAuth(deps);
   const bucket = createTokenBucket({
     limitPerMinute: () => deps.config().RATE_LIMIT_CLAIMS_PER_IP_MIN,
     now: deps.now,
@@ -179,7 +445,11 @@ export function registerClaimRoutes(
         hint: "too many claim requests",
         retryAfterSeconds: decision.retryAfterSeconds,
       });
-    const body = await parseBody(claimBodySchema, c.req);
+    const body = await parseJsonBody(
+      claimBodySchema,
+      c.req,
+      "invalid request body",
+    );
     let session = c.get("session");
     let createGuest:
       | { turnstileVerifiedAt: number; referredBy: string | null }
@@ -191,19 +461,11 @@ export function registerClaimRoutes(
         throw new AppError("TURNSTILE_REQUIRED", {
           hint: "anonymous demo play requires Turnstile",
         });
-      const verified = await deps.turnstile(
+      await requireTurnstile(
+        deps.turnstile,
         body.turnstileToken,
         clientIp(c, deps.trustProxyHops),
       );
-      if (verified === "unavailable")
-        throw new AppError("DEPENDENCY_UNAVAILABLE", {
-          hint: "captcha verification unavailable; retry shortly",
-          retryAfterSeconds: 5,
-        });
-      if (verified === "fail")
-        throw new AppError("TURNSTILE_FAILED", {
-          hint: "captcha verification failed",
-        });
       const address = newId("guest_");
       session = {
         address,
@@ -339,243 +601,31 @@ export function registerClaimRoutes(
     const session = c.get("session");
     const claim = claimed(deps, c.req.param("id"), session.address);
     if (claim.demo) {
-      assertClaimNotExpired(deps, claim);
-      if (claim.status === "moved") return c.json(receipt(deps, claim));
-      const move = await normalizeRequestedMove(deps, claim, c.req);
-      const result = await deps.coordinator.dispatch({
-        type: "DemoMoveSubmitted",
-        payload: {
-          claimId: claim.id,
-          player: session.address,
-          move,
-        },
-      });
-      if (result.kind === "deprioritized")
-        throw new Error("internal command deprioritized");
-      return c.json(result.result as MoveReceipt);
+      return c.json(await submitDemoMove(deps, claim, session.address, c.req));
     }
-    const signature = c.req.header("PAYMENT-SIGNATURE");
-    const required = challenge(deps, claim);
-    if (signature === undefined) {
-      assertClaimNotExpired(deps, claim);
-      if (claim.status === "moved") return c.json(receipt(deps, claim));
-      await normalizeRequestedMove(deps, claim, c.req);
-      throw new AppError("PAYMENT_REQUIRED", {
-        hint: "payment signature required",
-        headers: { "PAYMENT-REQUIRED": required.header },
-      });
-    }
-    const decoded = deps.rail.decodePayment(signature);
-    const accepted = required.required.accepts[0];
-    if (
-      !decoded.ok ||
-      decoded.payment.sender !== session.address ||
-      decoded.payment.amountMicroUsdc !== claim.stakeMicrousdc ||
-      decoded.payment.asset !== accepted.asset ||
-      decoded.payment.payTo !== deps.rail.treasuryAddress
-    )
-      throw paymentError("PAYMENT_INVALID", required.header);
-    const existing = deps.db
-      .select()
-      .from(schema.paymentIntents)
-      .where(eq(schema.paymentIntents.clientTxid, decoded.payment.clientTxId))
-      .get();
-    if (
-      existing !== undefined &&
-      (existing.player !== session.address || existing.claimId !== claim.id)
-    )
-      throw paymentError("PAYMENT_INVALID", required.header);
-    if (existing?.status === "settled") {
-      if (claim.status !== "moved" || existing.paymentResponseHeader === null)
-        throw new Error("settled intent lacks a durable receipt");
-      return c.json(receipt(deps, claim), 200, {
-        "PAYMENT-RESPONSE": existing.paymentResponseHeader,
-      });
-    }
-    if (existing?.status === "verified" || existing?.status === "settling")
+    const result = await submitPaidMove(
+      deps,
+      claim,
+      session.address,
+      c.req.header("PAYMENT-SIGNATURE"),
+      c.req,
+    );
+    if (result.kind === "pending") {
       return c.json(
-        { status: "payment_pending", claimId: claim.id, retryAfterSeconds: 5 },
+        {
+          status: "payment_pending",
+          claimId: result.claimId,
+          retryAfterSeconds: 5,
+        },
         202,
         { "Retry-After": "5" },
       );
-    if (existing?.status === "failed")
-      throw paymentError(
-        failurePaymentCode(existing.failureCode),
-        required.header,
-      );
-    assertClaimNotExpired(deps, claim);
-    if (claim.status !== "open")
-      throw paymentError("PAYMENT_INVALID", required.header);
-    const move = await normalizeRequestedMove(deps, claim, c.req);
-    const inflight = deps.db
-      .select()
-      .from(schema.paymentIntents)
-      .where(
-        and(
-          eq(schema.paymentIntents.claimId, claim.id),
-          inArray(schema.paymentIntents.status, ["verified", "settling"]),
-        ),
-      )
-      .get();
-    if (inflight !== undefined)
-      throw new AppError("PAYMENT_IN_FLIGHT", {
-        hint: "another payment is in flight",
-      });
-    const opened = await deps.coordinator.dispatch<
-      {
-        claimId: string;
-        player: string;
-        move: MoveReceipt["move"];
-        clientTxid: string;
-        amount: number;
-        lastValidRound: number | null;
-      },
-      {
-        status:
-          | "verified"
-          | "in_flight"
-          | "settling"
-          | "settled"
-          | "failed"
-          | "foreign"
-          | "expired";
-        created: boolean;
-      }
-    >({
-      type: "PaymentIntentOpened",
-      payload: {
-        claimId: claim.id,
-        player: session.address,
-        move,
-        clientTxid: decoded.payment.clientTxId,
-        amount: claim.stakeMicrousdc,
-        lastValidRound: decoded.payment.lastValidRound,
-      },
-    });
-    if (opened.kind === "deprioritized")
-      throw new Error("internal command deprioritized");
-    if (opened.result.status === "foreign")
-      throw paymentError("PAYMENT_INVALID", required.header);
-    if (opened.result.status === "expired") {
-      await deps.coordinator.dispatch({
-        type: "ExpireClaim",
-        payload: { claimId: claim.id },
-      });
-      throw new AppError("CLAIM_EXPIRED", { hint: "claim expired" });
     }
-    if (opened.result.status === "in_flight")
-      throw new AppError("PAYMENT_IN_FLIGHT", {
-        hint: "another payment is in flight",
-      });
-    if (!opened.result.created && opened.result.status === "failed") {
-      const failed = deps.db
-        .select({ failureCode: schema.paymentIntents.failureCode })
-        .from(schema.paymentIntents)
-        .where(eq(schema.paymentIntents.clientTxid, decoded.payment.clientTxId))
-        .get();
-      throw paymentError(
-        failurePaymentCode(failed?.failureCode ?? null),
-        required.header,
-      );
-    }
-    if (!opened.result.created && opened.result.status === "settled") {
-      const settledIntent = deps.db
-        .select()
-        .from(schema.paymentIntents)
-        .where(eq(schema.paymentIntents.clientTxid, decoded.payment.clientTxId))
-        .get();
-      const moved = deps.db
-        .select()
-        .from(schema.claims)
-        .where(eq(schema.claims.id, claim.id))
-        .get();
-      if (
-        settledIntent?.paymentResponseHeader === null ||
-        settledIntent?.paymentResponseHeader === undefined ||
-        moved?.status !== "moved"
-      )
-        throw new Error("settled intent lacks a durable receipt");
-      return c.json(receipt(deps, moved), 200, {
-        "PAYMENT-RESPONSE": settledIntent.paymentResponseHeader,
-      });
-    }
-    if (!opened.result.created)
-      return c.json(
-        { status: "payment_pending", claimId: claim.id, retryAfterSeconds: 5 },
-        202,
-        { "Retry-After": "5" },
-      );
-    const settlementStartedAt = deps.now();
-    let verification: Awaited<ReturnType<typeof deps.rail.verify>>;
-    try {
-      verification = await deps.rail.verify(signature, required.required);
-    } catch (error) {
-      deps.metrics?.recordFacilitatorError();
-      throw error;
-    }
-    if (!verification.ok) {
-      deps.metrics?.recordFacilitatorError();
-      await deps.coordinator.dispatch({
-        type: "IntentFailed",
-        payload: {
-          clientTxid: decoded.payment.clientTxId,
-          failureCode: verification.reason,
-        },
-      });
-      throw paymentError(
-        failurePaymentCode(verification.reason),
-        required.header,
-      );
-    }
-    await deps.coordinator.dispatch({
-      type: "IntentMarkedSettling",
-      payload: { clientTxid: decoded.payment.clientTxId },
-    });
-    let settled: Awaited<ReturnType<typeof deps.rail.settle>>;
-    try {
-      settled = await deps.rail.settle(signature, required.required);
-    } catch (error) {
-      deps.metrics?.recordFacilitatorError();
-      throw error;
-    }
-    if (!settled.ok) {
-      deps.metrics?.recordFacilitatorError();
-      if (settled.reason === "unavailable")
-        return c.json(
-          {
-            status: "payment_pending",
-            claimId: claim.id,
-            retryAfterSeconds: 5,
-          },
-          202,
-          { "Retry-After": "5" },
-        );
-      await deps.coordinator.dispatch({
-        type: "IntentFailed",
-        payload: {
-          clientTxid: decoded.payment.clientTxId,
-          failureCode: settled.reason,
-        },
-      });
-      throw paymentError("PAYMENT_INVALID", required.header);
-    }
-    const committed = await deps.coordinator.dispatch({
-      type: "MoveSettled",
-      payload: {
-        claimId: claim.id,
-        player: session.address,
-        move,
-        clientTxid: decoded.payment.clientTxId,
-        txid: settled.txid,
-        response: settled.paymentResponseHeader,
-      },
-    });
-    if (committed.kind === "deprioritized")
-      throw new Error("internal command deprioritized");
-    deps.metrics?.recordMoveSettled(deps.now() - settlementStartedAt);
-    return c.json(committed.result as MoveReceipt, 200, {
-      "PAYMENT-RESPONSE": settled.paymentResponseHeader,
-    });
+    return result.paymentResponse === null
+      ? c.json(result.receipt)
+      : c.json(result.receipt, 200, {
+          "PAYMENT-RESPONSE": result.paymentResponse,
+        });
   });
 }
 

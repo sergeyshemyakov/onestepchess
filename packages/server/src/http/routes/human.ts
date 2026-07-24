@@ -1,65 +1,34 @@
 import type { PaymentRail, Rng } from "@onestepchess/core";
-import { and, eq, gt, inArray, ne, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, sql } from "drizzle-orm";
 import type { Hono } from "hono";
-import type { z } from "zod";
+import {
+  freeNickname,
+  NICKNAME_PATTERN,
+  nicknameTaken,
+} from "../../auth/nickname.js";
 import { CardCache } from "../../cards/raster.js";
 import { buildCardSvg, type CardOutcome } from "../../cards/svg.js";
-import type { ServerConfig } from "../../config.js";
 import type { Coordinator } from "../../coordinator/queue.js";
-import type { Db } from "../../db/open.js";
 import { schema } from "../../db/open.js";
-import { generateName } from "../../names.js";
+import { findTerminalReplayGame, parseStoredReplay } from "../../replays.js";
 import { type AppEnv, AppError } from "../app.js";
 import {
   cardQuerySchema,
   gamesQuerySchema,
   renameBodySchema,
 } from "../contracts.js";
-import { type AuthRouteDeps, sessionAuth } from "./auth.js";
+import { parseJsonBody, parseQuery } from "../validation.js";
+import { playerView } from "../views.js";
+import { type SessionAuthDeps, sessionAuth } from "./auth.js";
 
 const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
-const NICKNAME_PATTERN = /^[a-zA-Z0-9_-]{3,24}$/;
-
-export type HumanRouteDeps = {
-  readonly db: Db;
+export type HumanRouteDeps = SessionAuthDeps & {
   readonly coordinator: Coordinator;
   readonly rail: PaymentRail;
-  readonly config: () => ServerConfig;
-  readonly jwtSecret: string;
-  readonly publicBaseUrl: string;
   readonly trustProxyHops: number;
-  readonly now: () => number;
   readonly rng: Rng;
 };
-
-function nicknameTaken(db: Db, nickname: string, except: string): boolean {
-  return (
-    db
-      .select({ address: schema.players.address })
-      .from(schema.players)
-      .where(
-        and(
-          sql`${schema.players.nickname} = ${nickname} COLLATE NOCASE`,
-          ne(schema.players.address, except),
-        ),
-      )
-      .get() !== undefined
-  );
-}
-
-function freeNickname(db: Db, rng: Rng): string {
-  for (let attempt = 0; attempt < 1_000; attempt += 1) {
-    const nickname = generateName(rng);
-    const taken = db
-      .select({ address: schema.players.address })
-      .from(schema.players)
-      .where(sql`${schema.players.nickname} = ${nickname} COLLATE NOCASE`)
-      .get();
-    if (taken === undefined) return nickname;
-  }
-  throw new Error("word list exhausted generating a nickname");
-}
 
 export function registerHumanCommands(deps: HumanRouteDeps): void {
   deps.coordinator.register(
@@ -143,27 +112,11 @@ function quotaView(
   };
 }
 
-function playerView(player: typeof schema.players.$inferSelect) {
-  return {
-    address: player.address,
-    kind: player.kind,
-    nickname: player.nickname,
-    createdAt: new Date(player.createdAt).toISOString(),
-  };
-}
-
-function parseQuery<T>(schema_: z.ZodType<T>, value: unknown): T {
-  const parsed = schema_.safeParse(value);
-  if (!parsed.success)
-    throw new AppError("INVALID_REQUEST", { hint: "invalid query parameters" });
-  return parsed.data;
-}
-
 export function registerHumanRoutes(
   app: Hono<AppEnv>,
   deps: HumanRouteDeps,
 ): void {
-  const auth = sessionAuth(deps as unknown as AuthRouteDeps);
+  const auth = sessionAuth(deps);
   const cardCache = new CardCache(deps.config().CARD_CACHE_MAX);
 
   app.get("/api/v1/my/profile", auth, async (c) => {
@@ -240,11 +193,12 @@ export function registerHumanRoutes(
   });
 
   app.patch("/api/v1/my/profile", auth, async (c) => {
-    const raw = await c.req.json().catch(() => null);
-    const parsed = renameBodySchema.safeParse(raw);
-    if (!parsed.success)
-      throw new AppError("INVALID_REQUEST", { hint: "nickname is required" });
-    if (!NICKNAME_PATTERN.test(parsed.data.nickname))
+    const body = await parseJsonBody(
+      renameBodySchema,
+      c.req,
+      "nickname is required",
+    );
+    if (!NICKNAME_PATTERN.test(body.nickname))
       throw new AppError("INVALID_NICKNAME", {
         hint: "nickname must match ^[a-zA-Z0-9_-]{3,24}$",
       });
@@ -257,7 +211,7 @@ export function registerHumanRoutes(
       type: "ProfileRenamed",
       payload: {
         player: c.get("session").address,
-        nickname: parsed.data.nickname,
+        nickname: body.nickname,
       },
     });
     if (result.kind !== "ok") throw new Error("rename deprioritized");
@@ -411,32 +365,15 @@ export function registerHumanRoutes(
   });
 
   app.get("/api/v1/games/:id/replay", (c) => {
-    const game = deps.db
-      .select()
-      .from(schema.games)
-      .where(eq(schema.games.id, c.req.param("id")))
-      .get();
+    const game = findTerminalReplayGame(deps.db, c.req.param("id"));
     if (
-      game === undefined ||
-      (game.status !== "finished" && game.status !== "aborted") ||
-      game.replayJson === null ||
+      game === null ||
       game.result === null ||
       game.termination === null ||
       game.finishedAt === null
     )
       throw new AppError("GAME_NOT_FOUND", { hint: "game not found" });
-    const stored = JSON.parse(game.replayJson) as {
-      plies: Array<{
-        ply: number;
-        side: "white" | "black";
-        move: { uci: string; san: string };
-        fenAfter: string;
-        authorAddress: string;
-        stakeMicroUsdc: number;
-        demo: boolean;
-      }>;
-      pgn: string;
-    };
+    const stored = parseStoredReplay(game.replayJson);
     const addresses = [
       ...new Set(stored.plies.map((ply) => ply.authorAddress)),
     ];
@@ -494,30 +431,12 @@ export function registerHumanRoutes(
   });
 
   app.get("/api/v1/games/:id/card.png", async (c) => {
-    const game = deps.db
-      .select()
-      .from(schema.games)
-      .where(eq(schema.games.id, c.req.param("id")))
-      .get();
+    const game = findTerminalReplayGame(deps.db, c.req.param("id"));
     // I7 parity with the replay route: unknown and non-terminal ids are the
     // same GAME_NOT_FOUND, so a card never leaks a game's existence (F16).
-    if (
-      game === undefined ||
-      (game.status !== "finished" && game.status !== "aborted") ||
-      game.replayJson === null ||
-      game.result === null
-    )
+    if (game === null || game.result === null)
       throw new AppError("GAME_NOT_FOUND", { hint: "game not found" });
-    const stored = JSON.parse(game.replayJson) as {
-      plies: Array<{
-        ply: number;
-        side: "white" | "black";
-        move: { uci: string; san: string };
-        fenAfter: string;
-        authorAddress: string;
-        demo: boolean;
-      }>;
-    };
+    const stored = parseStoredReplay(game.replayJson);
     if (stored.plies.length === 0)
       throw new AppError("GAME_NOT_FOUND", { hint: "game not found" });
     let plyIndex = stored.plies.length;

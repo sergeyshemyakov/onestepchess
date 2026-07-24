@@ -7,6 +7,7 @@ import {
   type TurnstileVerifier,
 } from "./auth/turnstile.js";
 import { nextBackupDelayMs, runBackup } from "./backup.js";
+import { currentMode, initializeSystemState } from "./boot.js";
 import {
   applyConfigOverrides,
   ConfigError,
@@ -52,10 +53,12 @@ import {
 export * from "./auth/challenge.js";
 export * from "./auth/genesis.js";
 export * from "./auth/jwt.js";
+export * from "./auth/nickname.js";
 export * from "./auth/turnstile.js";
 export * from "./auth/verify-arc60.js";
 export * from "./auth/verify-txn.js";
 export * from "./backup.js";
+export * from "./boot.js";
 export * from "./config.js";
 export * from "./coordinator/chess-registry.js";
 export * from "./coordinator/claims.js";
@@ -79,12 +82,17 @@ export * from "./http/routes/discovery.js";
 export * from "./http/routes/events.js";
 export * from "./http/routes/human.js";
 export * from "./http/static.js";
+export * from "./http/turnstile.js";
+export * from "./http/validation.js";
+export * from "./http/views.js";
 export * from "./ids.js";
 export * from "./logger.js";
+export * from "./markup.js";
 export * from "./metrics.js";
 export * from "./names.js";
 export * from "./payouts/executor.js";
 export * from "./recovery.js";
+export * from "./replays.js";
 
 const POOL_TICK_INTERVAL_MS = 60_000;
 const PAYOUT_TICK_INTERVAL_MS = 2_000;
@@ -129,55 +137,20 @@ export async function main(): Promise<void> {
   }
   const rail = createMockRail();
 
-  // The DB's rail identity is pinned on first boot; a mismatch on any later
-  // boot refuses to start rather than recover on another chain (§5).
   const now = Date.now();
-  const identity = db.select().from(schema.systemState).get();
-  if (identity === undefined) {
-    db.insert(schema.systemState)
-      .values({
-        id: 1,
-        railKind: loaded.env.RAIL,
-        caip2: config.CAIP2,
-        usdcAsset: config.USDC_ASA,
-        treasuryAddress: rail.treasuryAddress,
-        pauseCausesJson: "[]",
-        banner: loaded.env.SYSTEM_BANNER ?? null,
-        updatedAt: now,
-      })
-      .run();
-  } else if (
-    identity.railKind !== loaded.env.RAIL ||
-    identity.caip2 !== config.CAIP2 ||
-    identity.usdcAsset !== config.USDC_ASA ||
-    identity.treasuryAddress !== rail.treasuryAddress
+  if (
+    !initializeSystemState({
+      db,
+      railKind: loaded.env.RAIL,
+      config,
+      treasuryAddress: rail.treasuryAddress,
+      banner: loaded.env.SYSTEM_BANNER,
+      now,
+      logger,
+    })
   ) {
-    logger.fatal(
-      {
-        stored: {
-          railKind: identity.railKind,
-          caip2: identity.caip2,
-          usdcAsset: identity.usdcAsset,
-        },
-        configured: {
-          railKind: loaded.env.RAIL,
-          caip2: config.CAIP2,
-          usdcAsset: config.USDC_ASA,
-        },
-      },
-      "rail identity mismatch — refusing to start (migration required)",
-    );
     process.exitCode = 1;
     return;
-  }
-  if (
-    loaded.env.SYSTEM_BANNER !== undefined &&
-    identity !== undefined &&
-    identity.banner !== loaded.env.SYSTEM_BANNER
-  ) {
-    db.update(schema.systemState)
-      .set({ banner: loaded.env.SYSTEM_BANNER, updatedAt: now })
-      .run();
   }
 
   const views = new CoordinatorViews();
@@ -357,15 +330,7 @@ export async function main(): Promise<void> {
   };
   scheduleBackup();
 
-  const mode = (): "running" | "paused" => {
-    const row = db
-      .select({ pauseCausesJson: schema.systemState.pauseCausesJson })
-      .from(schema.systemState)
-      .get();
-    const causes =
-      row === undefined ? [] : (JSON.parse(row.pauseCausesJson) as string[]);
-    return causes.length > 0 ? "paused" : "running";
-  };
+  const mode = (): "running" | "paused" => currentMode(db);
 
   const app = createApp({
     logger,

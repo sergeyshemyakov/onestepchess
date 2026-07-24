@@ -3,6 +3,8 @@
 // only public-replay data (never an address); every dynamic text value is
 // XML-escaped before it reaches the markup.
 
+import { escapeMarkup } from "../markup.js";
+
 export type CardOutcome = "WON" | "LOST" | "DRAW";
 
 export type CardData = {
@@ -28,15 +30,6 @@ const LIGHT = "#20361f";
 const DARK = "#0f1c0f";
 const PHOSPHOR = "#35e07a";
 const INK_LIGHT = "#eafff0";
-
-function xmlEscape(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
 
 // Same 16×16 bitmaps as the web boards (web/src/board/pieces.tsx): white
 // renders filled, black hollow — the locked fill-vs-hollow side contrast
@@ -259,7 +252,7 @@ export function buildCardSvg(data: CardData): string {
   const author =
     data.authorNickname === null
       ? ""
-      : `<text x="${PANEL_X}" y="330" font-family="Menlo, monospace" font-size="30" fill="${INK_LIGHT}" opacity="0.75">by ${xmlEscape(data.authorNickname)}</text>`;
+      : `<text x="${PANEL_X}" y="330" font-family="Menlo, monospace" font-size="30" fill="${INK_LIGHT}" opacity="0.75">by ${escapeMarkup(data.authorNickname)}</text>`;
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}" viewBox="0 0 ${WIDTH} ${HEIGHT}">
   <defs>
@@ -273,8 +266,8 @@ export function buildCardSvg(data: CardData): string {
   ${arrow}
   ${pieces.join("\n  ")}
   <text x="${PANEL_X}" y="215" font-family="Menlo, monospace" font-size="34" fill="${PHOSPHOR}" letter-spacing="4">ONE STEP CHESS</text>
-  <text x="${PANEL_X}" y="285" font-family="Georgia, serif" font-size="52" font-weight="700" fill="${INK_LIGHT}">${xmlEscape(data.gameId.replace(/^gm_/, ""))}</text>
+  <text x="${PANEL_X}" y="285" font-family="Georgia, serif" font-size="52" font-weight="700" fill="${INK_LIGHT}">${escapeMarkup(data.gameId.replace(/^gm_/, ""))}</text>
   ${author}
-  <text x="${PANEL_X}" y="440" font-family="Menlo, monospace" font-size="120" font-weight="700" fill="${outcomeColor}">${xmlEscape(data.outcome)}</text>
+  <text x="${PANEL_X}" y="440" font-family="Menlo, monospace" font-size="120" font-weight="700" fill="${outcomeColor}">${escapeMarkup(data.outcome)}</text>
 </svg>`;
 }

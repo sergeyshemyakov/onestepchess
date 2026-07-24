@@ -6,12 +6,13 @@ import {
 } from "@onestepchess/core";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { ServerConfig } from "../config.js";
-import { bumpLedgerBalance } from "../db/ledger.js";
+import { appendLedgerEntry } from "../db/ledger.js";
 import type { Db } from "../db/open.js";
 import { schema } from "../db/open.js";
 import { newId } from "../ids.js";
 import { awardResolutionPoints } from "../incentives/points.js";
 import type { Logger } from "../logger.js";
+import type { StoredReplayPly } from "../replays.js";
 import type { CommandContext, Coordinator } from "./queue.js";
 import { parseGameRules } from "./timers.js";
 
@@ -176,26 +177,20 @@ export function registerResolution(deps: ResolutionDeps): void {
       ];
       for (const [refType, amount] of takes) {
         if (amount <= 0) continue;
-        db.insert(schema.ledger)
-          .values({
-            ts: ctx.now,
-            account: "treasury",
-            deltaMicrousdc: -amount,
-            refType,
-            refId: game.id,
-          })
-          .run();
-        db.insert(schema.ledger)
-          .values({
-            ts: ctx.now,
-            account: "protocol",
-            deltaMicrousdc: amount,
-            refType,
-            refId: game.id,
-          })
-          .run();
-        bumpLedgerBalance(db, "treasury", -amount);
-        bumpLedgerBalance(db, "protocol", amount);
+        appendLedgerEntry(db, {
+          ts: ctx.now,
+          account: "treasury",
+          deltaMicrousdc: -amount,
+          refType,
+          refId: game.id,
+        });
+        appendLedgerEntry(db, {
+          ts: ctx.now,
+          account: "protocol",
+          deltaMicrousdc: amount,
+          refType,
+          refId: game.id,
+        });
       }
 
       materializeReplayAndStats(db, game, stakeRows);
@@ -236,16 +231,6 @@ export function registerResolution(deps: ResolutionDeps): void {
     },
   );
 }
-
-type StoredReplayPly = {
-  readonly ply: number;
-  readonly side: "white" | "black";
-  readonly move: { readonly uci: string; readonly san: string };
-  readonly fenAfter: string;
-  readonly authorAddress: string;
-  readonly stakeMicroUsdc: number;
-  readonly demo: boolean;
-};
 
 function materializeReplayAndStats(
   db: Db,

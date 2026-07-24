@@ -16,7 +16,7 @@ import type { Db } from "../db/open.js";
 import { schema } from "../db/open.js";
 import { newId } from "../ids.js";
 import type { Logger } from "../logger.js";
-import { generateName } from "../names.js";
+import { generateUniqueName } from "../names.js";
 import type { ChessAdapterRegistry } from "./chess-registry.js";
 import type { CommandContext, Coordinator } from "./queue.js";
 import { parseGameRules, type TimerKind, type TimerService } from "./timers.js";
@@ -64,13 +64,7 @@ export function registerLifecycle(deps: LifecycleDeps): LifecycleApi {
       .get() !== undefined;
 
   const uniqueName = (): string => {
-    for (let attempt = 0; attempt < 1_000; attempt += 1) {
-      const name = generateName(deps.rng);
-      if (!nameTaken(name)) {
-        return name;
-      }
-    }
-    throw new Error("word list exhausted generating a unique game name");
+    return generateUniqueName(deps.rng, nameTaken, "a unique game name");
   };
 
   const liveGameCount = (): number => {
