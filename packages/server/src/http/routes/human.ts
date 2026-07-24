@@ -539,12 +539,11 @@ export function registerHumanRoutes(
           ? "DRAW"
           : "LOST";
     const svg = buildCardSvg({
-      gameName: game.name,
+      gameId: game.id,
       authorNickname: author?.nickname ?? null,
       outcome,
       fen: ply.fenAfter,
       moveUci: ply.move.uci,
-      side: ply.side,
     });
     const png = await cardCache.render(`${game.id}:${plyIndex}`, svg);
     // Copy into a plain Uint8Array so the body type is exact (Hono rejects the

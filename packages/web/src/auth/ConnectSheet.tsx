@@ -75,7 +75,7 @@ export function ConnectSheet(props: {
         }
         await module?.disconnect().catch(() => undefined);
         setError(
-          "wallet sign-in failed — check the mnemonic or connection, then try again",
+          "wallet sign-in failed — check your wallet connection, then try again",
         );
       } finally {
         setBusy(false);

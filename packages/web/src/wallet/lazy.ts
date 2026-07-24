@@ -7,6 +7,12 @@ import type { WalletModule } from "./provider.js";
 let loaded: Promise<WalletModule> | null = null;
 
 export function loadWalletModule(): Promise<WalletModule> {
+  // Pera and Defly still transitively load WalletConnect v1 code that expects
+  // the Node-style alias even though the SDK is running in a browser.
+  const runtime = globalThis as typeof globalThis & {
+    global?: typeof globalThis;
+  };
+  runtime.global ??= globalThis;
   loaded ??= import("./provider.js").then((module) =>
     module.createWalletModule(),
   );

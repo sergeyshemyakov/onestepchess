@@ -71,6 +71,32 @@ function source(): FakeEventSource {
 }
 
 describe("Release 2 live human surfaces", () => {
+  it("consumes a game-available nudge when the claim recheck finds no boards", async () => {
+    const client = mockClient({
+      createClaim: vi.fn(async () => ({
+        kind: "none" as const,
+        retryAfterSeconds: 5,
+      })),
+    } as never);
+
+    render(
+      <App
+        client={client}
+        authHandlers={handlers}
+        eventSourceFactory={factory}
+      />,
+    );
+    const play = await screen.findByRole("button", { name: /▸ PLAY/ });
+    await waitFor(() => expect(FakeEventSource.current).not.toBeNull());
+
+    source().emit("game_available", {});
+    await waitFor(() => expect(play.className).toContain("live-pulse"));
+    fireEvent.click(play);
+
+    await screen.findByText("NO BOARDS FREE :: retrying in 00:05");
+    expect(play.className).not.toContain("live-pulse");
+  });
+
   it("sse_fanout_maps_every_event_to_its_human_surface", async () => {
     const claim = claimFixture();
     const secondClaim = claimFixture({ claimId: "clm_test2" });
@@ -126,6 +152,7 @@ describe("Release 2 live human surfaces", () => {
 
     fireEvent.click(play);
     await screen.findByText(/YOU PLAY WHITE/);
+    expect(play.className).not.toContain("live-pulse");
     source().emit("claim_expiring", {
       claimId: claim.claimId,
       deadline: new Date(Date.now() + 90_000).toISOString(),
@@ -159,7 +186,7 @@ describe("Release 2 live human surfaces", () => {
       expect(screen.queryByText(/board reserved/)).toBeNull(),
     );
     source().emit("game_available", {});
-    await screen.findByText(/a board is ready/);
+    await screen.findByText("a board may be available — PLAY to check");
 
     source().emit("system_banner", {
       mode: "paused",

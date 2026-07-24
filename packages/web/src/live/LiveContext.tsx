@@ -50,6 +50,7 @@ type LiveValue = {
   readonly lastEvent: LiveEvent | null;
   readonly gamesVersion: number;
   readonly playPulse: number;
+  readonly consumePlayNudge: () => void;
   readonly playSurfaceVisible: boolean;
   readonly setPlaySurfaceVisible: (visible: boolean) => void;
   readonly trackClaim: (claim: ClaimView | null) => void;
@@ -133,6 +134,7 @@ export function LiveProvider(props: {
     readonly yourPly: number;
   } | null>(null);
   const { client, eventSourceFactory } = props;
+  const consumePlayNudge = useCallback(() => setPlayPulse(0), []);
 
   useEffect(() => {
     pathRef.current = location.pathname;
@@ -238,7 +240,9 @@ export function LiveProvider(props: {
     });
     on("game_available", () => {
       setPlayPulse((pulse) => pulse + 1);
-      if (pathRef.current !== "/") push("a board is ready — PLAY when you are");
+      if (pathRef.current !== "/") {
+        push("a board may be available — PLAY to check");
+      }
     });
     on("game_resolved", (payload) => {
       const win = isWin(payload);
@@ -321,6 +325,7 @@ export function LiveProvider(props: {
       lastEvent,
       gamesVersion,
       playPulse,
+      consumePlayNudge,
       playSurfaceVisible,
       setPlaySurfaceVisible,
       trackClaim: setCurrentClaim,
@@ -335,6 +340,7 @@ export function LiveProvider(props: {
       lastEvent,
       gamesVersion,
       playPulse,
+      consumePlayNudge,
       playSurfaceVisible,
       refreshAll,
     ],

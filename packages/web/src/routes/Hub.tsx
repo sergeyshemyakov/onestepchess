@@ -368,9 +368,12 @@ export function Hub(props: {
   const start = useCallback(
     (demo: boolean) => {
       setGamePaneDismissed(false);
-      if (!claimOpen) flow.send({ type: "PLAY", demo });
+      if (!claimOpen) {
+        live.consumePlayNudge();
+        flow.send({ type: "PLAY", demo });
+      }
     },
-    [claimOpen, flow],
+    [claimOpen, flow, live.consumePlayNudge],
   );
 
   const surfaceVisible = state.phase !== "IDLE";

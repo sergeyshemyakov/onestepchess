@@ -930,12 +930,11 @@ describe("profile, game history, and public replay reads (§6.3)", () => {
 
     // Every dynamic value is XML-escaped and no address ever reaches the SVG.
     const svg = buildCardSvg({
-      gameName: `<script>"drop"&'go'`,
+      gameId: `gm_<script>"drop"&'go'`,
       authorNickname: "<b>nick</b>",
       outcome: "WON",
       fen: FEN_AFTER_E5,
       moveUci: "e7e5",
-      side: "black",
     });
     expect(svg).not.toContain("<script>");
     expect(svg).toContain("&lt;script&gt;");
@@ -949,12 +948,11 @@ describe("profile, game history, and public replay reads (§6.3)", () => {
       await cache.render(
         key,
         buildCardSvg({
-          gameName: key,
+          gameId: key,
           authorNickname: null,
           outcome: "DRAW",
           fen: STARTING_FEN,
           moveUci: "e2e4",
-          side: "white",
         }),
       );
     }

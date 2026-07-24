@@ -136,26 +136,28 @@ export function Replay(props: { readonly client: ApiClient }) {
   return (
     <AppShell showSystemBanner={false}>
       <div className="replaypage" data-testid="replay-page">
-        <header className="replayhead">
-          {/* The URL id, not the word-list name — names collide with nickname
-           * vocabulary and read like a player (playtest round 2). */}
-          <h1>Game {replay.gameId.replace(/^gm_/, "")}</h1>
-        </header>
         <div className="replaymain">
-          <Replayer
-            plies={replay.plies.map((item) => ({
-              fenAfter: item.fenAfter,
-              from: parseUci(item.move.uci).from,
-              to: parseUci(item.move.uci).to,
-            }))}
-            controls
-            loop
-            loopToggle
-            moveFx="glide"
-            ply={ply}
-            onScrub={setPly}
-            {...(highlightPly === undefined ? {} : { highlightPly })}
-          />
+          <div className="replayboardcol">
+            <header className="replayhead">
+              {/* The URL id, not the word-list name — names collide with
+               * nickname vocabulary and read like a player (playtest round 2). */}
+              <h1>Game {replay.gameId.replace(/^gm_/, "")}</h1>
+            </header>
+            <Replayer
+              plies={replay.plies.map((item) => ({
+                fenAfter: item.fenAfter,
+                from: parseUci(item.move.uci).from,
+                to: parseUci(item.move.uci).to,
+              }))}
+              controls
+              loop
+              loopToggle
+              moveFx="glide"
+              ply={ply}
+              onScrub={setPly}
+              {...(highlightPly === undefined ? {} : { highlightPly })}
+            />
+          </div>
           <div className="movelist" data-testid="move-list">
             {replay.plies.map((item) => (
               <Fragment key={item.ply}>

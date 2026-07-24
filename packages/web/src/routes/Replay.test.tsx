@@ -59,6 +59,30 @@ function renderReplay(client: ApiClient, entry: string) {
   );
 }
 
+it("replay_heading_and_actions_are_centered_with_the_board", async () => {
+  const client = publicOnlyClient(async () => replayFixture("gm_uljwmk6itj34"));
+  renderReplay(client, "/replay/gm_uljwmk6itj34");
+
+  const heading = await screen.findByRole("heading", {
+    name: "Game uljwmk6itj34",
+  });
+  const boardColumn = heading.closest(".replayboardcol");
+  expect(boardColumn).not.toBeNull();
+  expect(boardColumn?.querySelector('[data-testid="replayer"]')).not.toBeNull();
+
+  const { readFileSync } = await import("node:fs");
+  const { join, dirname } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const css = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "../styles/components.css"),
+    "utf8",
+  );
+  expect(css).toMatch(
+    /\.replayhead \{[^}]*padding-bottom: 18px;[^}]*text-align: center;/s,
+  );
+  expect(css).toMatch(/\.replayfoot \{[^}]*justify-content: center;/s);
+});
+
 it("public_replay_is_session_free_scrubbable_and_downloads_exact_pgn", async () => {
   // -- 300 plies, fenAfter-indexed; one public request renders everything.
   const replay = replayFixture("gm_300", 300);

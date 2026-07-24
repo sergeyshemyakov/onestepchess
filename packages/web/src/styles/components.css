@@ -1357,6 +1357,13 @@ svg.pc {
   gap: 28px;
   align-items: center;
 }
+.replayboardcol {
+  min-width: 0;
+}
+.replayhead {
+  padding-bottom: 18px;
+  text-align: center;
+}
 .replaypage .replayer-board,
 .replaypage .replayer-controls {
   max-width: 420px;
@@ -1397,6 +1404,7 @@ svg.pc {
 .replayfoot {
   display: flex;
   gap: 10px;
+  justify-content: center;
   margin-top: 12px;
 }
 .popover {

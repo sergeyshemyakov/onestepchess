@@ -6,14 +6,13 @@
 export type CardOutcome = "WON" | "LOST" | "DRAW";
 
 export type CardData = {
-  readonly gameName: string;
+  readonly gameId: string;
   readonly authorNickname: string | null;
   readonly outcome: CardOutcome;
   /** fenAfter of the rendered ply. */
   readonly fen: string;
   /** UCI of the rendered ply, for the move arrow. */
   readonly moveUci: string;
-  readonly side: "white" | "black";
 };
 
 const WIDTH = 1200;
@@ -274,9 +273,8 @@ export function buildCardSvg(data: CardData): string {
   ${arrow}
   ${pieces.join("\n  ")}
   <text x="${PANEL_X}" y="215" font-family="Menlo, monospace" font-size="34" fill="${PHOSPHOR}" letter-spacing="4">ONE STEP CHESS</text>
-  <text x="${PANEL_X}" y="285" font-family="Georgia, serif" font-size="52" font-weight="700" fill="${INK_LIGHT}">${xmlEscape(data.gameName)}</text>
+  <text x="${PANEL_X}" y="285" font-family="Georgia, serif" font-size="52" font-weight="700" fill="${INK_LIGHT}">${xmlEscape(data.gameId.replace(/^gm_/, ""))}</text>
   ${author}
   <text x="${PANEL_X}" y="440" font-family="Menlo, monospace" font-size="120" font-weight="700" fill="${outcomeColor}">${xmlEscape(data.outcome)}</text>
-  <text x="${PANEL_X}" y="490" font-family="Menlo, monospace" font-size="28" fill="${INK_LIGHT}" opacity="0.6">${data.side === "white" ? "White" : "Black"} — one move, staked in USDC</text>
 </svg>`;
 }

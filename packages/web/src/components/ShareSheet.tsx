@@ -98,7 +98,7 @@ export function ShareSheet(props: {
                 className="btn pri mini"
                 onClick={() => {
                   navigator.clipboard
-                    ?.writeText(`${SHARE_TEXT} ${url}`)
+                    ?.writeText(url)
                     .then(() => setCopied(true))
                     .catch(() => undefined);
                 }}
