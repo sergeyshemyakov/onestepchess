@@ -9,18 +9,18 @@ import type {
   OngoingGameItem,
   PlayerView,
 } from "../api/schemas.js";
-import { useSession } from "../auth/SessionContext.jsx";
 import { BoardLoop } from "../board/BoardLoop.jsx";
 import { AppShell } from "../components/AppShell.jsx";
+import { GamePane } from "../components/GamePane.jsx";
+import { PlayerStatus } from "../components/PlayerStatus.jsx";
 import { PromoStrip } from "../components/PromoStrip.jsx";
-import { WalletPopover } from "../components/WalletPopover.jsx";
 import { outcomeFor, outcomeGlyph } from "../games/outcome.js";
 import { payoutChip } from "../games/QuickView.jsx";
-import { shortenAddress } from "../lib/address.js";
 import { explorerTxUrl } from "../lib/explorer.js";
 import { parseUci } from "../lib/fen.js";
 import { formatLocalTime, formatMicroUsdc } from "../lib/format.js";
 import {
+  findMoveContextFen,
   readLastSeenFinishedAt,
   writeLastSeenFinishedAt,
 } from "../lib/storage.js";
@@ -46,6 +46,14 @@ function ActivePane(props: {
     );
   }
   const uci = parseUci(hero.yourMove.uci);
+  // Cached claim position from this device's own commit (I7 stays intact
+  // server-side); miss → redacted empty board as before.
+  const contextFen = findMoveContextFen({
+    uci: hero.yourMove.uci,
+    side: hero.yourSide,
+    demo: hero.demo,
+    movedAt: hero.movedAt,
+  });
   return (
     <div data-testid="active-pane">
       <div className="herocard" data-testid="active-hero">
@@ -54,6 +62,7 @@ function ActivePane(props: {
           to={uci.to}
           san={hero.yourMove.san}
           side={hero.yourSide}
+          {...(contextFen === null ? {} : { fen: contextFen })}
         />
         <dl className="qv-fields">
           <dt>your move</dt>
@@ -99,7 +108,7 @@ function ActivePane(props: {
             <span
               // biome-ignore lint/suspicious/noArrayIndexKey: ongoing entries carry no id on purpose (I7)
               key={index}
-              className="minicard"
+              className="minicard active-minicard"
               data-testid="active-minicard"
             >
               <span className="mv">{item.yourMove.san}</span> · {item.yourSide}{" "}
@@ -226,11 +235,10 @@ export function Hub(props: {
   readonly meta: Meta;
   readonly player: PlayerView;
 }) {
-  const { logout, signedIn } = useSession();
   const live = useLive();
   const { profile, ongoing, finished } = live;
   const [pane, setPane] = useState<"active" | "finished">("active");
-  const [popover, setPopover] = useState(false);
+  const [gamePaneDismissed, setGamePaneDismissed] = useState(false);
   const handledLiveSeq = useRef(0);
   const flow = usePlayFlow({
     client: props.client,
@@ -334,138 +342,122 @@ export function Hub(props: {
 
   const start = useCallback(
     (demo: boolean) => {
-      flow.send({ type: "PLAY", demo });
+      setGamePaneDismissed(false);
+      if (!claimOpen) flow.send({ type: "PLAY", demo });
     },
-    [flow],
+    [claimOpen, flow],
   );
 
   const surfaceVisible = state.phase !== "IDLE";
-  const stats = profile?.stats;
-
+  const gamePanePhase = state.phase === "CLAIMING" || state.phase === "FOCUS";
   return (
     <AppShell
       belowBar={<PromoStrip />}
-      topRight={
-        <>
-          {stats !== undefined ? (
-            <span className="chip" data-testid="stats-chip">
-              W {stats.wins} · D {stats.draws} · L {stats.losses}
-              {stats.winratePct !== null
-                ? ` · ${Math.round(stats.winratePct)}%`
-                : ""}
-            </span>
-          ) : null}
+      topRight={<PlayerStatus client={client} player={props.player} />}
+    >
+      <div className="hubplay">
+        <div className="hub-actions">
           <button
             type="button"
-            className="chip click"
-            title={props.player.address}
-            onClick={() => setPopover((open) => !open)}
+            className={`bigplay primary${live.playPulse > 0 ? " live-pulse" : ""}`}
+            disabled={!claimOpen && (cta.disabled || stakedQuotaOut)}
+            onClick={() => start(false)}
           >
-            {props.player.nickname ?? "anonymous"} ·{" "}
-            {shortenAddress(props.player.address)}
+            <span className="bp-title">▸ PLAY</span>
+            <span className="bp-sub">
+              {formatMicroUsdc(stake)} on one move in a live game — win pays{" "}
+              {formatMicroUsdc(payout)}
+            </span>
           </button>
-          {popover ? (
-            <WalletPopover
-              client={client}
-              player={props.player}
-              onRenamed={(player) => signedIn(player)}
-              onLogout={() => void logout()}
-              onClose={() => setPopover(false)}
-            />
-          ) : null}
-        </>
-      }
-    >
-      <div className={surfaceVisible && claimOpen ? "focus-dim" : ""}>
-        {!claimOpen ? (
-          <div className="hubplay">
-            <div className="hub-actions">
-              <button
-                type="button"
-                className={`bigplay primary${live.playPulse > 0 ? " live-pulse" : ""}`}
-                disabled={cta.disabled || stakedQuotaOut}
-                onClick={() => start(false)}
-              >
-                <span className="bp-title">▸ PLAY</span>
-                <span className="bp-sub">
-                  {formatMicroUsdc(stake)} on one move in a live game — win pays{" "}
-                  {formatMicroUsdc(payout)}
-                </span>
-              </button>
-              <button
-                type="button"
-                className="bigplay demo"
-                disabled={cta.disabled || demoQuotaOut}
-                onClick={() => start(true)}
-              >
-                <span className="bp-title">▸ DEMO PLAY</span>
-                <span className="bp-sub">
-                  $0 — same live games · no stats · no replay
-                </span>
-              </button>
-            </div>
-            {cta.reason !== null ? (
-              <p className="ctareason">{cta.reason}</p>
-            ) : quotaReason !== null ? (
-              <p className="ctareason">
-                {quotaReason}
-                {!demoQuotaOut ? " · demo boards remain" : ""}
-              </p>
-            ) : null}
-
-            <div className="panes" data-testid="hub-panes">
-              <div className="tabrow" role="tablist">
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={pane === "active"}
-                  className={pane === "active" ? "tab active" : "tab"}
-                  onClick={() => setPane("active")}
-                >
-                  ACTIVE
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={pane === "finished"}
-                  className={pane === "finished" ? "tab active" : "tab"}
-                  onClick={showFinished}
-                >
-                  FINISHED
-                  {unseenFinished ? (
-                    <span aria-hidden="true"> · NEW</span>
-                  ) : null}
-                </button>
-              </div>
-              {pane === "active" ? (
-                ongoing === null ? (
-                  <p className="console">&gt; loading…</p>
-                ) : (
-                  <ActivePane page={ongoing} meta={props.meta} />
-                )
-              ) : finished === null ? (
-                <p className="console">&gt; loading…</p>
-              ) : (
-                <FinishedPane
-                  client={client}
-                  page={finished}
-                  meta={props.meta}
-                />
-              )}
-            </div>
-          </div>
+          <button
+            type="button"
+            className="bigplay demo"
+            disabled={!claimOpen && (cta.disabled || demoQuotaOut)}
+            onClick={() => start(true)}
+          >
+            <span className="bp-title">▸ DEMO PLAY</span>
+            <span className="bp-sub">
+              $0 — same live games · no stats · no replay
+            </span>
+          </button>
+        </div>
+        {cta.reason !== null ? (
+          <p className="ctareason">{cta.reason}</p>
+        ) : quotaReason !== null ? (
+          <p className="ctareason">
+            {quotaReason}
+            {!demoQuotaOut ? " · demo boards remain" : ""}
+          </p>
         ) : null}
+
+        <div className="panes" data-testid="hub-panes">
+          <div className="tabrow" role="tablist">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={pane === "active"}
+              className={pane === "active" ? "tab active" : "tab"}
+              onClick={() => setPane("active")}
+            >
+              LAST ACTIVE
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={pane === "finished"}
+              className={pane === "finished" ? "tab active" : "tab"}
+              onClick={showFinished}
+            >
+              LAST FINISHED
+              {unseenFinished ? <span aria-hidden="true"> · NEW</span> : null}
+            </button>
+          </div>
+          {pane === "active" ? (
+            ongoing === null ? (
+              <p className="console">&gt; loading…</p>
+            ) : (
+              <ActivePane page={ongoing} meta={props.meta} />
+            )
+          ) : finished === null ? (
+            <p className="console">&gt; loading…</p>
+          ) : (
+            <FinishedPane client={client} page={finished} meta={props.meta} />
+          )}
+        </div>
+        <p className="archivelink">
+          <Link to="/archive">full archive ▸</Link>
+        </p>
       </div>
       {surfaceVisible ? (
-        <PlayView
-          flow={flow}
-          meta={props.meta}
-          acceptedMove={
-            live.lastEvent?.type === "move_accepted"
-              ? live.lastEvent.payload
-              : null
-          }
-        />
+        gamePanePhase ? (
+          gamePaneDismissed ? null : (
+            <GamePane
+              label="game"
+              testId="hub-game-popover"
+              onClose={() => setGamePaneDismissed(true)}
+            >
+              <PlayView
+                flow={flow}
+                meta={props.meta}
+                acceptedMove={
+                  live.lastEvent?.type === "move_accepted"
+                    ? live.lastEvent.payload
+                    : null
+                }
+              />
+            </GamePane>
+          )
+        ) : (
+          <PlayView
+            flow={flow}
+            meta={props.meta}
+            acceptedMove={
+              live.lastEvent?.type === "move_accepted"
+                ? live.lastEvent.payload
+                : null
+            }
+          />
+        )
       ) : null}
     </AppShell>
   );

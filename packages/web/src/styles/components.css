@@ -4,6 +4,12 @@
  * video (never a new color), reduced motion always has a static state. */
 
 /* ---- buttons ---- */
+button:not(.sq),
+a.btn,
+a.chip.click {
+  border-radius: 3px;
+}
+
 .btn {
   font: inherit;
   background: none;
@@ -66,6 +72,10 @@
   cursor: pointer;
   padding: 14px 30px 12px;
   min-width: 340px;
+}
+.ctas .bigplay,
+.hub-actions .bigplay {
+  border-radius: 12px;
 }
 .bigplay .bp-title {
   font-family: "VT323", monospace;
@@ -267,6 +277,15 @@
   aspect-ratio: 1;
   border: 1px solid var(--line);
   user-select: none;
+  /* D13 floor for play/replay surfaces; small-board contexts (loops,
+   * digests, archive thumbs) opt out — an oversized board there breaks
+   * overlay-to-square alignment. */
+  min-width: 320px;
+}
+.boardloop .board,
+.digestloop .board,
+.fincard .board {
+  min-width: 0;
 }
 .board.commitflash {
   animation: commit 0.22s;
@@ -398,8 +417,10 @@ svg.pc {
   }
 }
 
-/* ---- move FX: transform/opacity only (compositor-friendly) ----
- * trail = your committed move · glide = replays/minis · burn = captures. */
+/* ---- move FX: transform/opacity/clip-path only (compositor-friendly) ----
+ * scanline type-in = every committed move · burn = captures.
+ * The source erases top-down, a beam sweeps the board, the piece types in
+ * on the target under a blinking caret (UI suggestions "type" mode). */
 .fxlayer {
   position: absolute;
   inset: 0;
@@ -415,20 +436,53 @@ svg.pc {
   left: 0;
   top: 0;
 }
-.fx-mover {
-  transition: transform 0.3s cubic-bezier(0.2, 0.85, 0.25, 1);
+.fx-erase {
+  animation: fxerase 0.18s steps(6) forwards;
 }
-.fx-mover.glide {
-  transition-duration: 0.24s;
-}
-.fx-ghost {
-  opacity: 0.45;
-  animation: fxghost 0.55s forwards;
-}
-@keyframes fxghost {
+@keyframes fxerase {
+  from {
+    clip-path: inset(0);
+  }
   to {
+    clip-path: inset(100% 0 0 0);
+  }
+}
+.fx-typein {
+  animation: fxtypein 0.26s steps(8);
+}
+@keyframes fxtypein {
+  from {
+    clip-path: inset(0 0 100% 0);
+  }
+  to {
+    clip-path: inset(0);
+  }
+}
+.fx-sweep {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -2px;
+  height: 2px;
+  background: var(--ph);
+  opacity: 0.5;
+  box-shadow: 0 0 14px var(--ph);
+  animation: fxsweep 0.3s linear forwards;
+}
+@keyframes fxsweep {
+  to {
+    transform: translateY(calc(var(--sq) * 8 + 2px));
     opacity: 0;
   }
+}
+.fx-caret {
+  position: absolute;
+  right: 12%;
+  bottom: 8%;
+  font-size: calc(var(--sq) * 0.35);
+  color: var(--ph);
+  z-index: 6;
+  animation: blink 0.5s steps(1) infinite;
 }
 .fx-burn {
   animation: fxburn 0.42s steps(6) forwards;
@@ -465,17 +519,17 @@ svg.pc {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .fx-mover,
-  .fx-mover.glide {
-    transition: none;
-  }
-  .fx-ghost,
+  .fx-erase,
+  .fx-typein,
+  .fx-sweep,
+  .fx-caret,
   .fx-burn,
   .sq.flash,
   .board.commitflash {
     animation: none;
   }
-  .fx-ghost,
+  .fx-erase,
+  .fx-sweep,
   .fx-burn {
     opacity: 0;
   }
@@ -659,6 +713,34 @@ svg.pc {
   padding: 18px 18px 14px;
   position: relative;
 }
+.game-pane-backdrop {
+  padding: 24px;
+  overflow: auto;
+}
+.game-pane {
+  width: min(840px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  padding-top: 42px;
+}
+.game-pane .focuswrap {
+  padding: 0;
+}
+.game-pane-close {
+  position: absolute;
+  z-index: 61;
+  top: 8px;
+  right: 8px;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  color: var(--ph-hi);
+  font-family: "VT323", monospace;
+  font-size: 28px;
+  line-height: 1;
+}
 .modal h3 {
   position: absolute;
   top: -9px;
@@ -734,61 +816,10 @@ svg.pc {
   font-size: 14px;
   padding: 7px 15px;
 }
-/* TODO(spec F-W4): .move-loop/.move-square/.move-track/.move-runner style the
-   interim CONFIRM from→to runner; delete when it is replaced by the whole-board
-   loop shared with the F-W3 ongoing hero card. */
-.move-loop {
-  display: grid;
-  grid-template-columns: 38px 110px 38px;
-  justify-content: center;
-  align-items: center;
-  gap: 9px;
+.confirm-board-loop {
+  width: min(220px, 100%);
   margin: 8px 0 12px;
-}
-.move-square {
-  display: grid;
-  place-items: center;
-  aspect-ratio: 1;
-  border: 1px solid var(--line);
-  background: var(--sqd);
-  color: var(--ph-dim);
-  font-size: 11px;
-}
-.move-track {
-  position: relative;
-  height: 2px;
-  background: var(--ph-dark);
-}
-.move-runner {
-  position: absolute;
-  left: -2px;
-  top: 50%;
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  color: var(--ph-hi);
-  animation: confirm-move-loop 1.7s ease-in-out infinite;
-}
-.move-runner .pc {
-  width: 27px;
-  height: 27px;
-}
-@keyframes confirm-move-loop {
-  0%,
-  14% {
-    transform: translate(0, -50%);
-    opacity: 0.35;
-  }
-  58%,
-  82% {
-    transform: translate(80px, -50%);
-    opacity: 1;
-  }
-  100% {
-    transform: translate(80px, -50%);
-    opacity: 0;
-  }
+  margin-inline: auto;
 }
 .settling {
   margin-top: 10px;
@@ -811,12 +842,6 @@ svg.pc {
   .settling {
     animation: none;
     background: var(--faint);
-  }
-  .move-runner {
-    animation: none;
-    left: auto;
-    right: -2px;
-    transform: translateY(-50%);
   }
 }
 
@@ -897,6 +922,12 @@ svg.pc {
     border-bottom: 0;
     padding-bottom: max(14px, env(safe-area-inset-bottom));
   }
+  .game-pane-backdrop {
+    padding: 0;
+  }
+  .game-pane {
+    max-height: min(92dvh, 100%);
+  }
   .sheetbtn {
     display: block;
     width: 100%;
@@ -938,11 +969,46 @@ svg.pc {
   font-size: 12.5px;
   letter-spacing: 0.06em;
 }
-.towerteaser {
-  text-align: center;
-  font-size: 12px;
+.towerstrip {
   color: var(--ph-dark);
-  padding: 4px 12px;
+}
+
+/* ---- landing split: functional pane | decorative deep-blue pane ---- */
+.landsplit {
+  display: grid;
+  grid-template-columns: minmax(340px, 560px) minmax(280px, 1fr);
+  gap: 30px;
+  align-items: start;
+  padding: 26px 30px 8px;
+}
+.landfn .howitworks {
+  padding: 12px 0;
+}
+.landdeco {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  min-width: 0;
+}
+.landdeco .replaystrip {
+  padding: 0;
+}
+.ctas {
+  display: grid;
+  grid-auto-rows: 1fr;
+  gap: 12px;
+  margin-top: 16px;
+}
+.ctas .bigplay {
+  width: 100%;
+  min-width: 0;
+}
+@media (max-width: 768px) {
+  .landsplit {
+    grid-template-columns: 1fr;
+    padding: 16px 14px 4px;
+  }
 }
 .tabrow {
   display: flex;
@@ -969,6 +1035,13 @@ svg.pc {
 .archive,
 .replaypage {
   padding: 18px 30px;
+}
+/* ---- archive: active | finished side-by-side ---- */
+.archive {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 26px;
+  align-items: start;
 }
 .rules {
   white-space: pre-wrap;
@@ -1037,8 +1110,39 @@ svg.pc {
   height: 12.5%;
   display: grid;
   place-items: center;
-  transition: transform 1.2s ease-in-out;
-  will-change: transform;
+}
+/* scanline cycle: reuses the committed-move fxerase/fxtypein keyframes */
+.boardloop-piece.erasing {
+  animation: fxerase 0.18s steps(6) forwards;
+}
+.boardloop-piece.typing {
+  animation: fxtypein 0.26s steps(8);
+}
+.boardloop-sweep {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  background: var(--ph);
+  opacity: 0.5;
+  box-shadow: 0 0 14px var(--ph);
+  animation: blsweep 0.55s linear forwards;
+}
+@keyframes blsweep {
+  to {
+    top: 100%;
+    opacity: 0;
+  }
+}
+.boardloop-caret {
+  position: absolute;
+  right: 12%;
+  bottom: 8%;
+  font-style: normal;
+  font-size: calc(var(--sq) * 0.35);
+  color: var(--ph);
+  animation: blink 0.5s steps(1) infinite;
 }
 .boardloop-burn {
   position: absolute;
@@ -1051,16 +1155,34 @@ svg.pc {
     color-mix(in oklab, var(--ph) 60%, transparent),
     transparent 70%
   );
-  opacity: 0.8;
+  animation: blburn 0.38s steps(6) forwards;
 }
-@media (prefers-reduced-motion: reduce) {
-  .boardloop-piece {
-    transition: none;
+@keyframes blburn {
+  from {
+    opacity: 0.85;
+  }
+  to {
+    opacity: 0;
   }
 }
+@media (prefers-reduced-motion: reduce) {
+  .boardloop-piece.erasing,
+  .boardloop-piece.typing,
+  .boardloop-sweep,
+  .boardloop-caret,
+  .boardloop-burn {
+    animation: none;
+  }
+}
+/* Fixed width (not max-width): the tab row and panel edges must not move
+ * when switching between a populated and an empty pane. */
 .panes {
   margin-top: 20px;
-  max-width: 760px;
+  width: min(760px, calc(100% - 32px));
+}
+.archivelink {
+  font-size: 12.5px;
+  margin-top: 8px;
 }
 .herocard {
   display: grid;
@@ -1080,6 +1202,11 @@ svg.pc {
   padding: 6px 10px;
   font-size: 12.5px;
   color: var(--ph-dim, var(--ph));
+}
+.active-minicard {
+  /* 7-char SAN + black + the largest SQLite INTEGER USDC rendering + status. */
+  width: min(calc(50ch + 22px), 100%);
+  flex: none;
 }
 .qv-fields {
   display: grid;
@@ -1228,7 +1355,8 @@ svg.pc {
 }
 @media (max-width: 768px) {
   .herocard,
-  .replaymain {
+  .replaymain,
+  .archive {
     grid-template-columns: 1fr;
   }
   .howitworks,

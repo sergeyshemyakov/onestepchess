@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  fenWithoutSquare,
   parseFenBoard,
   parseUci,
   sideToMove,
@@ -33,5 +34,19 @@ describe("fen parsing", () => {
   it("parses uci moves incl. promotions", () => {
     expect(parseUci("e2e4")).toEqual({ from: "e2", to: "e4" });
     expect(parseUci("e7e8q")).toEqual({ from: "e7", to: "e8", promotion: "q" });
+  });
+});
+
+describe("fenWithoutSquare", () => {
+  const START = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+  it("removes exactly one square and keeps the tail fields", () => {
+    expect(fenWithoutSquare(START, "e2")).toBe(
+      "rnbqkbnr/pppppppp/8/8/8/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1",
+    );
+  });
+  it("merges empty runs around the removed square", () => {
+    expect(fenWithoutSquare("8/8/8/3P4/8/8/8/8 w - - 0 1", "d5")).toBe(
+      "8/8/8/8/8/8/8/8 w - - 0 1",
+    );
   });
 });

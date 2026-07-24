@@ -158,6 +158,10 @@ describe("static and discovery serving (§6.6)", () => {
     expect(csp).toContain("https://mainnet-api.4160.nodely.dev");
     // required wallet + Turnstile origins
     expect(csp).toContain("wss://relay.walletconnect.org");
+    expect(csp).toContain("https://wc.perawallet.app");
+    expect(csp).toContain("https://static.defly.app");
+    expect(csp).toContain("wss://wallet-connect-a.perawallet.app");
+    expect(csp).toContain("wss://wallet-connect-h.perawallet.app");
     expect(csp).toContain("https://challenges.cloudflare.com");
     // no wildcard or unsafe directives
     expect(csp).not.toContain("*");

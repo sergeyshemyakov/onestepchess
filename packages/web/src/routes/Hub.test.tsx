@@ -4,15 +4,17 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PostMoveResult } from "../api/client.js";
 import type { MoveReceipt } from "../api/schemas.js";
-import { writeClaimDraft } from "../lib/storage.js";
+import { writeClaimDraft, writeMoveContext } from "../lib/storage.js";
 import {
   claimFixture,
   metaFixture,
   mockClient,
+  ongoingItemFixture,
   Providers,
   playerFixture,
 } from "../test/fixtures.jsx";
@@ -117,9 +119,7 @@ describe("demo path end-to-end against a scripted server (#31)", () => {
     expect(close.closest(".modal-actions")?.className).toContain("single");
   });
 
-  // TODO(spec F-W4): asserts the interim from→to runner; rewrite when CONFIRM
-  // gets the whole-board loop shared with the F-W3 ongoing hero card.
-  it("shows a looping move animation beneath the final-move description", async () => {
+  it("shows the full claim board loop beneath the final-move description", async () => {
     await playDemoToConfirm();
     const description = screen.getByText(/e2→e4/);
     const animation = screen.getByTestId("confirm-move-animation");
@@ -129,6 +129,11 @@ describe("demo path end-to-end against a scripted server (#31)", () => {
     expect(animation.getAttribute("aria-label")).toBe(
       "move animation e2 to e4",
     );
+    expect(animation.querySelectorAll("svg.pc")).toHaveLength(32);
+    expect(animation.querySelector('[data-square="d8"] svg.pc')).not.toBeNull();
+    expect(animation.querySelector('[data-square="d2"] svg.pc')).not.toBeNull();
+    expect(animation.querySelector('[data-square="e2"] svg.pc')).toBeNull();
+    expect(animation.querySelector(".boardloop-piece svg.pc")).not.toBeNull();
   });
 
   it("tells the player they will be notified when the moved game ends", async () => {
@@ -234,7 +239,7 @@ describe("I7 leak tests (#31)", () => {
 });
 
 describe("edge states (#31, F-W10 rows)", () => {
-  it("NO_BOARDS auto-retry countdown loops from Retry-After", async () => {
+  it("NO_BOARDS auto-retry countdown loops from the five-second backoff", async () => {
     const createClaim = vi.fn(async () => ({
       kind: "none" as const,
       retryAfterSeconds: 1,
@@ -242,15 +247,15 @@ describe("edge states (#31, F-W10 rows)", () => {
     const client = mockClient({ createClaim } as never);
     renderHub(client);
     fireEvent.click(await screen.findByRole("button", { name: /▸ PLAY/ }));
-    await screen.findByText(/NO BOARDS FREE :: retrying in/);
+    await screen.findByText("NO BOARDS FREE :: retrying in 00:05");
     // The countdown reaches zero and automatically re-claims.
     await waitFor(
       () => {
         expect(createClaim.mock.calls.length).toBeGreaterThanOrEqual(2);
       },
-      { timeout: 4_000 },
+      { timeout: 7_000 },
     );
-  });
+  }, 10_000);
 
   it("QUOTA_OUT renders next-at from Retry-After", async () => {
     const client = mockClient({
@@ -417,16 +422,23 @@ describe("disabled-CTA reason matrix (#31)", () => {
     });
   });
 
-  it("hides both play CTAs and the board-reserved return control after a claim", async () => {
-    renderHub();
+  it("keeps the hub visible and reopens the reserved board without reclaiming", async () => {
+    const client = mockClient();
+    renderHub(client);
     fireEvent.click(await screen.findByRole("button", { name: /▸ PLAY/ }));
     await screen.findByText(/YOU PLAY WHITE/);
-    expect(screen.queryByRole("button", { name: /▸ PLAY/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: /DEMO PLAY/ })).toBeNull();
-    expect(screen.queryByText(/board reserved — return/)).toBeNull();
-    expect(
-      screen.queryByRole("button", { name: /return to board/ }),
-    ).toBeNull();
+    expect(screen.getByTestId("hub-panes")).not.toBeNull();
+    const pane = screen.getByRole("dialog", { name: "game" });
+    fireEvent.click(
+      within(pane).getByRole("button", { name: "Close game pane" }),
+    );
+    expect(screen.queryByRole("dialog", { name: "game" })).toBeNull();
+    expect(screen.getByText(/board reserved — return/)).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /▸ PLAY/ }));
+    const reopened = await screen.findByRole("dialog", { name: "game" });
+    expect(within(reopened).getByText(/YOU PLAY WHITE/)).not.toBeNull();
+    expect(client.createClaim).toHaveBeenCalledTimes(1);
   });
 
   it("paused meta disables both CTAs — the banner owns the message", async () => {
@@ -518,5 +530,85 @@ describe("responsive treatment (#31)", () => {
     expect(css).toMatch(
       /\.bigplay\.primary \{[\s\S]*background: var\(--faint\)/,
     );
+  });
+});
+
+describe("hub panes chrome (playtest UI fixes)", () => {
+  it("renames the tabs and links to the archive below the panel", async () => {
+    renderHub();
+    expect(
+      await screen.findByRole("tab", { name: /LAST ACTIVE/ }),
+    ).not.toBeNull();
+    expect(screen.getByRole("tab", { name: /LAST FINISHED/ })).not.toBeNull();
+    const link = screen.getByRole("link", { name: /full archive/ });
+    expect(link.getAttribute("href")).toBe("/archive");
+  });
+
+  it("pins the panes to a fixed width so tab switches cannot reflow", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join, dirname } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const dir = dirname(fileURLToPath(import.meta.url));
+    const css = readFileSync(join(dir, "../styles/components.css"), "utf8");
+    expect(css).toMatch(
+      /\.panes \{[\s\S]*?width: min\(760px, calc\(100% - 32px\)\)/,
+    );
+  });
+
+  it("gives every active-game minicard the width needed by its longest label", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join, dirname } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const dir = dirname(fileURLToPath(import.meta.url));
+    const css = readFileSync(join(dir, "../styles/components.css"), "utf8");
+    expect(css).toMatch(
+      /\.active-minicard \{[\s\S]*?width: min\(calc\(50ch \+ 22px\), 100%\)/,
+    );
+  });
+});
+
+describe("active-pane board loop context (playtest UI fixes)", () => {
+  afterEach(() => {
+    localStorage.clear();
+  });
+
+  const startFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+  const ongoingPage = {
+    items: [ongoingItemFixture()],
+    page: 1,
+    pageCount: 1,
+    total: 1,
+  };
+
+  it("loops the move over the cached claim position when one matches", async () => {
+    writeMoveContext({
+      uci: "e2e4",
+      san: "e4",
+      side: "white",
+      demo: false,
+      fen: startFen,
+      at: "2026-07-20T10:00:30Z",
+    });
+    const client = mockClient({
+      getOngoingGames: vi.fn(async () => ongoingPage),
+    } as never);
+    const { view } = renderHub(client);
+    const loop = await screen.findByTestId("board-loop");
+    // Real position renders around the mover…
+    expect(loop.querySelector('[data-square="d8"] svg.pc')).not.toBeNull();
+    // …but the mover's source square is empty on the base board (the
+    // overlay piece is the only e2 pawn).
+    expect(loop.querySelector('[data-square="e2"] svg.pc')).toBeNull();
+    expect(view.container.querySelector(".boardloop-piece")).not.toBeNull();
+  });
+
+  it("falls back to the redacted empty board without a cached context", async () => {
+    const client = mockClient({
+      getOngoingGames: vi.fn(async () => ongoingPage),
+    } as never);
+    renderHub(client);
+    const loop = await screen.findByTestId("board-loop");
+    expect(loop.querySelector('[data-square="d8"] svg.pc')).toBeNull();
+    expect(loop.querySelector(".boardloop-piece")).not.toBeNull();
   });
 });

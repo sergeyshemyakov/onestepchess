@@ -13,12 +13,15 @@
     "generate:test-mnemonics": "node scripts/generate-test-mnemonics.mjs"
   },
   "dependencies": {
+    "@blockshake/defly-connect": "^1.2.1",
     "@fontsource/ibm-plex-mono": "^5.2.0",
     "@fontsource/vt323": "^5.2.0",
+    "@perawallet/connect": "^1.5.2",
     "@txnlab/use-wallet-react": "^4.0.0",
     "@x402-avm/avm": "^2.6.0",
     "@x402-avm/core": "^2.6.0",
     "algosdk": "^3.0.0",
+    "lute-connect": "^1.7.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router": "^7.0.0",

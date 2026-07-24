@@ -82,10 +82,10 @@ export function AppShell(props: {
       <div className="overlay scan" />
       <div className="overlay vig" />
       <div className="appbar">
-        <span className="brand">
+        <Link className="brand" to="/" aria-label="ONE STEP CHESS home">
           <KnightMark />
           ONE STEP CHESS
-        </span>
+        </Link>
         <span className="spacer" />
         {live !== null ? (
           <nav className="appnav" aria-label="primary">
@@ -104,7 +104,14 @@ export function AppShell(props: {
         ) : null}
         {props.topRight}
         <PhosphorToggle />
-        <AlgorandMark />
+        <a
+          href="https://algorand.co/"
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="Algorand website"
+        >
+          <AlgorandMark />
+        </a>
       </div>
       {props.belowBar}
       {showClaimBar ? (

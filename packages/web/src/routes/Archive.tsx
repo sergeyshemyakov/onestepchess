@@ -8,9 +8,11 @@ import type {
   GamesPage,
   Meta,
   OngoingGameItem,
+  PlayerView,
 } from "../api/schemas.js";
 import { Board } from "../board/Board.jsx";
 import { AppShell } from "../components/AppShell.jsx";
+import { PlayerStatus } from "../components/PlayerStatus.jsx";
 import { outcomeFor, outcomeGlyph } from "../games/outcome.js";
 import { QuickView } from "../games/QuickView.jsx";
 import { explorerTxUrl } from "../lib/explorer.js";
@@ -52,6 +54,7 @@ function Pager(props: {
 export function Archive(props: {
   readonly client: ApiClient;
   readonly meta: Meta;
+  readonly player: PlayerView;
 }) {
   const { client } = props;
   const live = useLiveOptional();
@@ -113,14 +116,10 @@ export function Archive(props: {
   }, [client, finishedPage, gamesVersion]);
 
   return (
-    <AppShell>
+    <AppShell topRight={<PlayerStatus client={client} player={props.player} />}>
       <div className="archive">
-        <section aria-label="active moves">
+        <section className="archpane" aria-label="active moves">
           <h2>ACTIVE</h2>
-          <p className="faintt">
-            two of these could be the same game and you'd never know (that's the
-            point).
-          </p>
           {active === null ? (
             <p className="console">&gt; loading…</p>
           ) : active.items.length === 0 ? (
@@ -173,7 +172,7 @@ export function Archive(props: {
           ) : null}
         </section>
 
-        <section aria-label="finished games">
+        <section className="archpane" aria-label="finished games">
           <h2>FINISHED</h2>
           {finished === null ? (
             <p className="console">&gt; loading…</p>

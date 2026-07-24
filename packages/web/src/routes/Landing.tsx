@@ -5,8 +5,10 @@ import type { Meta, PlayerView } from "../api/schemas.js";
 import { ConnectSheet } from "../auth/ConnectSheet.jsx";
 import { AlgorandMark } from "../board/pieces.jsx";
 import { AppShell } from "../components/AppShell.jsx";
+import { GamePane } from "../components/GamePane.jsx";
 import { PromoStrip } from "../components/PromoStrip.jsx";
 import { StatsStrip } from "../components/StatsStrip.jsx";
+import { TowerTeaser } from "../components/TowerTeaser.jsx";
 import { DEEP_BLUE_GAME6 } from "../lib/deepblue-game6.js";
 import { readGuestDemo, writeGuestDemo } from "../lib/storage.js";
 import { PlayView } from "../play/PlayView.jsx";
@@ -74,6 +76,7 @@ export function Landing(props: {
 }) {
   const [connecting, setConnecting] = useState(false);
   const [guestDemo, setGuestDemo] = useState(readGuestDemo);
+  const [gamePaneDismissed, setGamePaneDismissed] = useState(false);
   const flow = usePlayFlow({
     client: props.client,
     meta: props.meta,
@@ -92,18 +95,33 @@ export function Landing(props: {
     }
   }, [flow.state.phase, flow.state.guest]);
 
+  const gamePanePhase =
+    flow.state.phase === "GUEST_GATE" ||
+    flow.state.phase === "CLAIMING" ||
+    flow.state.phase === "FOCUS";
+  const openDemoGame = () => {
+    setGamePaneDismissed(false);
+    if (!gamePanePhase) {
+      flow.send({ type: "PLAY", demo: true, guest: true });
+    }
+  };
+
   return (
-    <AppShell belowBar={<PromoStrip />}>
-      <div className="hero2">
-        <div style={{ maxWidth: 520 }}>
+    <AppShell
+      belowBar={
+        <>
+          <PromoStrip />
+          <TowerTeaser />
+        </>
+      }
+    >
+      <div className="landsplit" data-testid="landing-split">
+        <div className="landfn">
           <h1 style={{ fontSize: 62 }}>
             ONLY ONE MOVE.<span className="blink">▊</span>
           </h1>
-          <p className="dim" style={{ marginTop: 8 }}>
-            strangers and machines share a chess game — you play exactly one of
-            its moves. if your side goes on to win, your cent becomes two.
-          </p>
-          <div className="ctas" style={{ marginTop: 16 }}>
+          <HowItWorks meta={props.meta} />
+          <div className="ctas">
             <button
               type="button"
               className="bigplay"
@@ -111,7 +129,7 @@ export function Landing(props: {
             >
               <span className="bp-title">▸ I HAVE AN ALGORAND WALLET</span>
               <span className="bp-sub">
-                connect &amp; sign — one free signature, nothing is broadcast
+                connect &amp; sign a zero transfer to log in
               </span>
             </button>
             <Link className="bigplay" to="/start">
@@ -122,9 +140,7 @@ export function Landing(props: {
               <button
                 type="button"
                 className="bigplay demo"
-                onClick={() =>
-                  flow.send({ type: "PLAY", demo: true, guest: true })
-                }
+                onClick={openDemoGame}
               >
                 <span className="bp-title">PLAY A DEMO GAME</span>
                 <span className="bp-sub">
@@ -141,38 +157,21 @@ export function Landing(props: {
             internal playtest — mock settlement, no real USDC.
           </p>
         </div>
-        <div className="algohero">
-          <AlgorandMark size={110} />
-          <span className="vt" style={{ fontSize: 30, letterSpacing: ".24em" }}>
-            ALGORAND
-          </span>
+        <div className="landdeco">
+          <section className="replaystrip" data-testid="deepblue-strip">
+            <Replayer
+              plies={DEEP_BLUE_GAME6.plies}
+              autoPlay
+              loop
+              moveFx="type"
+              pliesPerSecond={1.5}
+              caption="deep blue – kasparov · game 6 · 1997 · 1-0"
+            />
+          </section>
         </div>
       </div>
 
-      <HowItWorks meta={props.meta} />
-
-      <section className="replaystrip" data-testid="deepblue-strip">
-        <Replayer
-          plies={DEEP_BLUE_GAME6.plies}
-          autoPlay
-          loop
-          caption="deep blue – kasparov · game 6 · 1997 · 1-0"
-        />
-      </section>
-
       <StatsStrip meta={props.meta} />
-
-      <p className="towerteaser" data-testid="tower-teaser">
-        coming soon: integration with{" "}
-        {/* announcement URL is CA-14 — text + link only, no brand assets (R13) */}
-        <a
-          href="https://worldchess.com"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          the tower, world chess's arena on algorand ↗
-        </a>
-      </p>
 
       <div
         className="landfoot"
@@ -187,9 +186,15 @@ export function Landing(props: {
           color: "var(--ph-dark)",
         }}
       >
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+        <a
+          href="https://algorand.co/"
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="Algorand website"
+          style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
+        >
           <AlgorandMark /> RUNS ON ALGORAND
-        </span>
+        </a>
         <span>· built for the x402 global challenge</span>
         <a
           href={props.meta.docs.repo}
@@ -200,12 +205,26 @@ export function Landing(props: {
         </a>
         <a href="#rules">· rules</a>
       </div>
-      {flow.state.phase !== "IDLE" ? (
-        <PlayView
-          flow={flow}
-          meta={props.meta}
-          onWalletIntent={() => setConnecting(true)}
-        />
+      {gamePanePhase && !gamePaneDismissed ? (
+        <GamePane
+          label="demo game"
+          testId="landing-demo-popover"
+          onClose={() => setGamePaneDismissed(true)}
+        >
+          <PlayView
+            flow={flow}
+            meta={props.meta}
+            onWalletIntent={() => setConnecting(true)}
+          />
+        </GamePane>
+      ) : flow.state.phase !== "IDLE" ? (
+        gamePanePhase ? null : (
+          <PlayView
+            flow={flow}
+            meta={props.meta}
+            onWalletIntent={() => setConnecting(true)}
+          />
+        )
       ) : null}
       {connecting ? (
         <ConnectSheet

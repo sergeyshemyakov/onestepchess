@@ -1,9 +1,11 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { MoveReceipt } from "../api/schemas.js";
@@ -45,6 +47,7 @@ const receipt: MoveReceipt = {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   localStorage.clear();
   sessionStorage.clear();
   resetTurnstileForTests();
@@ -94,6 +97,31 @@ async function reachConfirm(_view: ReturnType<typeof render>) {
   fireEvent.click(surface.querySelector('[data-square="e4"]') as Element);
   await screen.findByText("FINAL MOVE?");
 }
+
+it("landing_demo_board_opens_in_an_overlay_pane", async () => {
+  const client = guestClient();
+  renderLanding(client);
+
+  fireEvent.click(
+    await screen.findByRole("button", { name: /PLAY A DEMO GAME/ }),
+  );
+
+  const pane = await screen.findByRole("dialog", { name: "demo game" });
+  await within(pane).findByText(/YOU PLAY WHITE/);
+  expect(pane.dataset.testid).toBe("landing-demo-popover");
+  expect(within(pane).getByTestId("play-surface").dataset.phase).toBe("FOCUS");
+  expect(pane.parentElement?.className).toContain("modalback");
+
+  fireEvent.click(
+    within(pane).getByRole("button", { name: "Close game pane" }),
+  );
+  expect(screen.queryByRole("dialog", { name: "demo game" })).toBeNull();
+
+  fireEvent.click(screen.getByRole("button", { name: /PLAY A DEMO GAME/ }));
+  const reopened = await screen.findByRole("dialog", { name: "demo game" });
+  expect(within(reopened).getByText(/YOU PLAY WHITE/)).not.toBeNull();
+  expect(client.createClaim).toHaveBeenCalledTimes(1);
+});
 
 it("landing_uses_only_meta_and_session_probe_before_interaction", async () => {
   // -- API count: exactly /meta + the session boot probe, nothing else.
@@ -163,6 +191,46 @@ it("landing_uses_only_meta_and_session_probe_before_interaction", async () => {
   expect(screen.getByTestId("stats-strip").textContent).toContain(
     "41 human moves · 7 wallets · 5 games settled · 44 payments",
   );
+});
+
+it("deep_blue_piece_movement_uses_scanline_type_in", () => {
+  vi.useFakeTimers();
+  const view = renderLanding(guestClient());
+  const strip = screen.getByTestId("deepblue-strip");
+
+  act(() => vi.advanceTimersByTime(670));
+  expect(strip.querySelector(".fx-erase")).not.toBeNull();
+  expect(strip.querySelector(".fx-sweep")).not.toBeNull();
+
+  act(() => vi.advanceTimersByTime(220));
+  expect(
+    strip
+      .querySelector('[data-square="e4"] svg.pc')
+      ?.classList.contains("fx-typein"),
+  ).toBe(true);
+  expect(strip.querySelector(".fx-caret")).not.toBeNull();
+
+  act(() => vi.advanceTimersByTime(400));
+  expect(strip.querySelector(".fx-erase")).toBeNull();
+  expect(strip.querySelector(".fx-sweep")).toBeNull();
+  expect(strip.querySelector(".fx-caret")).toBeNull();
+  view.unmount();
+});
+
+it("tower_teaser_can_be_closed_and_stays_hidden_during_its_cooldown", async () => {
+  const first = renderLanding(guestClient());
+  const teaser = await screen.findByTestId("tower-teaser");
+  fireEvent.click(
+    within(teaser).getByRole("button", {
+      name: "dismiss Tower integration notice",
+    }),
+  );
+  expect(screen.queryByTestId("tower-teaser")).toBeNull();
+  first.unmount();
+
+  renderLanding(guestClient());
+  await screen.findByRole("button", { name: /I HAVE AN ALGORAND WALLET/ });
+  expect(screen.queryByTestId("tower-teaser")).toBeNull();
 });
 
 it("guest_claim_rehydrates_only_when_this_tab_has_a_draft", async () => {
@@ -245,4 +313,20 @@ it("guest_demo_receipt_and_expiry_render_only_login_wall_data", async () => {
   await waitFor(() => {
     expect(localStorage.getItem("osc.guestDemo")).toBe("expired");
   });
+});
+
+it("splits the landing into functional + decorative panes with a tower banner strip", async () => {
+  renderLanding(guestClient());
+  await screen.findByRole("button", { name: /I HAVE AN ALGORAND WALLET/ });
+  expect(screen.queryByText(/strangers and machines share/)).toBeNull();
+  const split = screen.getByTestId("landing-split");
+  expect(within(split).getByTestId("how-it-works")).not.toBeNull();
+  expect(within(split).getByTestId("deepblue-strip")).not.toBeNull();
+  expect(
+    within(split).getByRole("heading", { name: /ONLY ONE MOVE/ }),
+  ).not.toBeNull();
+  const tower = screen.getByTestId("tower-teaser");
+  expect(tower.className).toContain("promostrip");
+  const ctas = split.querySelector(".ctas");
+  expect(ctas?.querySelectorAll(".bigplay").length).toBe(3);
 });

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Meta, Move } from "../api/schemas.js";
 import { obtainTurnstileToken } from "../auth/turnstile.js";
 import { Board, type BoardFx } from "../board/Board.jsx";
+import { BoardLoop } from "../board/BoardLoop.jsx";
 import {
   enPassantCaptures,
   movesTo,
@@ -10,20 +11,20 @@ import {
   targetsFor,
 } from "../board/moves.js";
 import { PromotionPicker } from "../board/PromotionPicker.jsx";
-import { PieceGlyph } from "../board/pieces.jsx";
 import { isCheck, kingSquare } from "../lib/check.js";
-import {
-  parseFenBoard,
-  parseUci,
-  sideToMove,
-  squareIndex,
-} from "../lib/fen.js";
+import { parseUci, sideToMove } from "../lib/fen.js";
 import {
   formatCountdown,
   formatMicroUsdc,
   nextAtLabel,
 } from "../lib/format.js";
-import { coachMarksSeen, markCoachMarksSeen, readRef } from "../lib/storage.js";
+import {
+  coachMarksSeen,
+  markCoachMarksSeen,
+  readRef,
+  writeMoveContext,
+} from "../lib/storage.js";
+import { INITIAL_NO_BOARDS_RETRY_SECONDS } from "./machine.js";
 import { Timer } from "./Timer.jsx";
 import type { PlayFlow } from "./usePlayFlow.js";
 
@@ -72,18 +73,31 @@ export function PlayView(props: {
     if (state.phase === "FOCUS" && coach) markCoachMarksSeen();
   }, [state.phase, coach]);
 
-  // The committed move plays with trail FX behind the settle morph.
+  // The committed move plays with the scanline type-in FX behind the
+  // settle morph, and its claim position is cached so the hub's active
+  // loop can replay the move over the real board (ongoing items stay
+  // redacted server-side — I7).
   useEffect(() => {
     if (state.phase !== "RECEIPT" || state.receipt === undefined) return;
     const { from, to } = parseUci(state.receipt.move.uci);
     setFx({
-      kind: "trail",
+      kind: "type",
       from,
       to,
       capture: state.receipt.move.san.includes("x"),
       seq: Date.now(),
     });
-  }, [state.phase, state.receipt]);
+    if (state.claim !== undefined) {
+      writeMoveContext({
+        uci: state.receipt.move.uci,
+        san: state.receipt.move.san,
+        side: state.claim.yourSide,
+        demo: state.claim.demo,
+        fen: state.claim.fen,
+        at: new Date().toISOString(),
+      });
+    }
+  }, [state.phase, state.receipt, state.claim]);
 
   const claim = state.claim;
   const selectable = useMemo(
@@ -184,7 +198,12 @@ export function PlayView(props: {
             <h3>NO BOARDS</h3>
             <p className="mv">
               <CountdownLine
-                seconds={Math.max(1, Math.ceil(state.retryAfterSeconds ?? 5))}
+                seconds={Math.max(
+                  1,
+                  Math.ceil(
+                    state.retryAfterSeconds ?? INITIAL_NO_BOARDS_RETRY_SECONDS,
+                  ),
+                )}
                 onDone={() => send({ type: "RETRY" })}
                 render={(left) =>
                   `NO BOARDS FREE :: retrying in ${formatCountdown(left)}`
@@ -423,7 +442,20 @@ function ConfirmMorph(props: {
               {uci.from}→{uci.to} <span className="dim">({move.san})</span>
             </p>
             {state.phase === "CONFIRM" && claim !== undefined ? (
-              <MoveLoop fen={claim.fen} move={move} />
+              <div
+                className="confirm-board-loop"
+                role="img"
+                aria-label={`move animation ${uci.from} to ${uci.to}`}
+                data-testid="confirm-move-animation"
+              >
+                <BoardLoop
+                  fen={claim.fen}
+                  from={uci.from}
+                  to={uci.to}
+                  san={move.san}
+                  side={claim.yourSide}
+                />
+              </div>
             ) : null}
           </>
         ) : null}
@@ -682,31 +714,6 @@ function OnboardingDoors(props: { readonly onWalletIntent?: () => void }) {
       <a className="btn" href="/start">
         I don't have one yet
       </a>
-    </div>
-  );
-}
-
-/* TODO(spec F-W4): interim placeholder — replace with the looping whole-board
- * move animation shared with the F-W3 ongoing hero card, rendered on the full
- * `fen` position, once that board loop is implemented. */
-function MoveLoop(props: { readonly fen: string; readonly move: Move }) {
-  const { from, to } = parseUci(props.move.uci);
-  const piece = parseFenBoard(props.fen)[squareIndex(from)] ?? null;
-
-  return (
-    <div
-      className="move-loop"
-      role="img"
-      aria-label={`move animation ${from} to ${to}`}
-      data-testid="confirm-move-animation"
-    >
-      <span className="move-square">{from}</span>
-      <span className="move-track" aria-hidden="true">
-        <span className="move-runner">
-          {piece === null ? "◆" : <PieceGlyph {...piece} />}
-        </span>
-      </span>
-      <span className="move-square">{to}</span>
     </div>
   );
 }

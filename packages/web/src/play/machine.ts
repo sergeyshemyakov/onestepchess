@@ -45,6 +45,7 @@ export type PlayState = {
 };
 
 export const initialPlayState: PlayState = { phase: "IDLE", demo: false };
+export const INITIAL_NO_BOARDS_RETRY_SECONDS = 5;
 
 export type PlayEvent =
   | { readonly type: "PLAY"; readonly demo: boolean; readonly guest?: boolean }
@@ -93,8 +94,17 @@ export function playReducer(state: PlayState, event: PlayEvent): PlayState {
       }
       if (state.phase === "NO_BOARDS" && event.type === "RETRY") {
         return state.guest === true
-          ? { phase: "GUEST_GATE", demo: true, guest: true }
-          : { phase: "CLAIMING", demo: state.demo };
+          ? {
+              phase: "GUEST_GATE",
+              demo: true,
+              guest: true,
+              retryAfterSeconds: state.retryAfterSeconds,
+            }
+          : {
+              phase: "CLAIMING",
+              demo: state.demo,
+              retryAfterSeconds: state.retryAfterSeconds,
+            };
       }
       if (state.phase !== "IDLE" && event.type === "ACK") {
         return initialPlayState;
@@ -109,6 +119,9 @@ export function playReducer(state: PlayState, event: PlayEvent): PlayState {
           guest: true,
           turnstileToken: event.turnstileToken,
           ...(event.ref === undefined ? {} : { ref: event.ref }),
+          ...(state.retryAfterSeconds === undefined
+            ? {}
+            : { retryAfterSeconds: state.retryAfterSeconds }),
         };
       }
       if (event.type === "GUEST_GATE_FAILED") {
@@ -150,7 +163,10 @@ export function playReducer(state: PlayState, event: PlayEvent): PlayState {
             phase: "NO_BOARDS",
             demo: state.demo,
             ...(state.guest === true ? { guest: true } : {}),
-            retryAfterSeconds: event.retryAfterSeconds,
+            retryAfterSeconds:
+              state.retryAfterSeconds === undefined
+                ? INITIAL_NO_BOARDS_RETRY_SECONDS
+                : state.retryAfterSeconds * 2,
           };
         case "QUOTA_OUT":
           return {

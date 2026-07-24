@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { ClaimView, MoveReceipt } from "../api/schemas.js";
-import { initialPlayState, type PlayState, playReducer } from "./machine.js";
+import {
+  INITIAL_NO_BOARDS_RETRY_SECONDS,
+  initialPlayState,
+  type PlayState,
+  playReducer,
+} from "./machine.js";
 
 const claim: ClaimView = {
   claimId: "clm_1",
@@ -57,7 +62,10 @@ describe("claiming branch (§5.5)", () => {
       type: "NO_BOARDS",
       retryAfterSeconds: 19,
     });
-    expect(next).toMatchObject({ phase: "NO_BOARDS", retryAfterSeconds: 19 });
+    expect(next).toMatchObject({
+      phase: "NO_BOARDS",
+      retryAfterSeconds: INITIAL_NO_BOARDS_RETRY_SECONDS,
+    });
   });
 
   it("CLAIMING + 429 QUOTA_OUT → QUOTA_OUT with retryAfter", () => {
@@ -79,7 +87,31 @@ describe("claiming branch (§5.5)", () => {
     expect(playReducer(none, { type: "RETRY" })).toMatchObject({
       phase: "CLAIMING",
       demo: true,
+      retryAfterSeconds: 19,
     });
+  });
+
+  it("NO_BOARDS retries start at five seconds and double after every miss", () => {
+    const firstMiss = playReducer(at("CLAIMING"), {
+      type: "NO_BOARDS",
+      retryAfterSeconds: 1,
+    });
+    const firstRetry = playReducer(firstMiss, { type: "RETRY" });
+    const secondMiss = playReducer(firstRetry, {
+      type: "NO_BOARDS",
+      retryAfterSeconds: 1,
+    });
+    const secondRetry = playReducer(secondMiss, { type: "RETRY" });
+    const thirdMiss = playReducer(secondRetry, {
+      type: "NO_BOARDS",
+      retryAfterSeconds: 1,
+    });
+
+    expect([
+      firstMiss.retryAfterSeconds,
+      secondMiss.retryAfterSeconds,
+      thirdMiss.retryAfterSeconds,
+    ]).toEqual([5, 10, 20]);
   });
 
   it("NO_BOARDS / QUOTA_OUT / PAUSED ack back to IDLE", () => {

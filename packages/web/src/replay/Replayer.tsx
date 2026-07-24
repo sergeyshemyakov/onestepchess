@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Board } from "../board/Board.jsx";
+import { Board, type BoardFx } from "../board/Board.jsx";
 
 export const START_FEN =
   "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -43,8 +43,8 @@ export function useLoopGate(ref: {
   return onScreen && !hidden;
 }
 
-const END_HOLD_TICKS = 8;
-const HIGHLIGHT_HOLD_TICKS = 4;
+const END_HOLD_MS = 2_000;
+const HIGHLIGHT_HOLD_MS = 1_000;
 
 export function Replayer(props: {
   readonly plies: readonly ReplayerPly[];
@@ -53,6 +53,7 @@ export function Replayer(props: {
   readonly loop?: boolean;
   readonly controls?: boolean;
   readonly pliesPerSecond?: number;
+  readonly moveFx?: BoardFx["kind"];
   /** 1-based ply that plays in slow motion with a flash (own-move accent). */
   readonly highlightPly?: number;
   readonly onPly?: (ply: number) => void;
@@ -86,41 +87,41 @@ export function Replayer(props: {
 
   useEffect(() => {
     if (!playing || !live || total === 0) return;
-    const interval = setInterval(
-      () => {
-        if (holdRef.current > 0) {
-          holdRef.current -= 1;
-          return;
-        }
-        if (controlled) {
-          // Controlled auto mode: the owner advances via onScrub.
-          const next = ply >= total ? (props.loop === true ? 0 : ply) : ply + 1;
-          if (next === ply) setPlaying(false);
-          else {
-            if (next === props.highlightPly)
-              holdRef.current = HIGHLIGHT_HOLD_TICKS;
-            if (next === total) holdRef.current = END_HOLD_TICKS;
-            onScrub?.(next);
-            onPly?.(next);
-          }
-          return;
-        }
-        setInternalPly((current) => {
-          if (current >= total) {
-            if (props.loop === true) return 0;
-            setPlaying(false);
-            return current;
-          }
-          const next = current + 1;
+    const intervalMs = 1_000 / (props.pliesPerSecond ?? 4);
+    const holdTicks = (durationMs: number) =>
+      Math.max(0, Math.ceil(durationMs / intervalMs) - 1);
+    const interval = setInterval(() => {
+      if (holdRef.current > 0) {
+        holdRef.current -= 1;
+        return;
+      }
+      if (controlled) {
+        // Controlled auto mode: the owner advances via onScrub.
+        const next = ply >= total ? (props.loop === true ? 0 : ply) : ply + 1;
+        if (next === ply) setPlaying(false);
+        else {
           if (next === props.highlightPly)
-            holdRef.current = HIGHLIGHT_HOLD_TICKS;
-          if (next === total) holdRef.current = END_HOLD_TICKS;
+            holdRef.current = holdTicks(HIGHLIGHT_HOLD_MS);
+          if (next === total) holdRef.current = holdTicks(END_HOLD_MS);
+          onScrub?.(next);
           onPly?.(next);
-          return next;
-        });
-      },
-      1_000 / (props.pliesPerSecond ?? 4),
-    );
+        }
+        return;
+      }
+      setInternalPly((current) => {
+        if (current >= total) {
+          if (props.loop === true) return 0;
+          setPlaying(false);
+          return current;
+        }
+        const next = current + 1;
+        if (next === props.highlightPly)
+          holdRef.current = holdTicks(HIGHLIGHT_HOLD_MS);
+        if (next === total) holdRef.current = holdTicks(END_HOLD_MS);
+        onPly?.(next);
+        return next;
+      });
+    }, intervalMs);
     return () => clearInterval(interval);
   }, [
     playing,
@@ -161,6 +162,18 @@ export function Replayer(props: {
     current !== null && current.from !== undefined && current.to !== undefined
       ? { from: current.from, to: current.to }
       : null;
+  const moveFx: BoardFx | null =
+    props.moveFx !== undefined &&
+    current !== null &&
+    current.from !== undefined &&
+    current.to !== undefined
+      ? {
+          kind: props.moveFx,
+          from: current.from,
+          to: current.to,
+          seq: ply,
+        }
+      : null;
   const atHighlight =
     props.highlightPly !== undefined && ply === props.highlightPly;
 
@@ -169,7 +182,7 @@ export function Replayer(props: {
       <div
         className={atHighlight ? "replayer-board own-ply" : "replayer-board"}
       >
-        <Board fen={fen} lastMove={lastMove} />
+        <Board fen={fen} lastMove={lastMove} fx={moveFx} />
       </div>
       {props.caption !== undefined ? (
         <p className="replayer-caption">{props.caption}</p>

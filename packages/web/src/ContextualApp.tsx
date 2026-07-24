@@ -105,7 +105,7 @@ function ArchiveRoute(props: { readonly client: ApiClient }) {
   const { meta } = useMeta();
   if (meta === null || session.status === "probing") return <BootSkeleton />;
   if (session.status === "out") return <Navigate to="/" replace />;
-  return <Archive client={props.client} meta={meta} />;
+  return <Archive client={props.client} meta={meta} player={session.player} />;
 }
 
 /** Route group that participates in meta/session boot. It is itself lazy so

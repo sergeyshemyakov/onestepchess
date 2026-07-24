@@ -8,6 +8,7 @@ import {
   mockClient,
   ongoingItemFixture,
   Providers,
+  playerFixture,
   replayFixture,
 } from "../test/fixtures.jsx";
 import { assertNoGameIdentity } from "../test/leak.js";
@@ -87,7 +88,7 @@ it("hub_and_archive_never_correlate_ongoing_or_demo_games", async () => {
 
   // -- Hub finished pane: the staked hero may name its game; the demo
   //    minicard must not — and must not link anywhere.
-  fireEvent.click(screen.getByRole("tab", { name: "FINISHED" }));
+  fireEvent.click(screen.getByRole("tab", { name: "LAST FINISHED" }));
   await screen.findByTestId("finished-hero");
   expect(screen.getByText("crimson-rook-217")).not.toBeNull();
   const demoCard = await screen.findByTestId("finished-demo-minicard");
@@ -108,7 +109,7 @@ it("hub_and_archive_never_correlate_ongoing_or_demo_games", async () => {
   // -- Archive rows, demo cards, and the demo quick-view leak nothing.
   const archive = render(
     <Providers client={client}>
-      <Archive client={client} meta={metaFixture} />
+      <Archive client={client} meta={metaFixture} player={playerFixture} />
     </Providers>,
   );
   const rows = await screen.findAllByTestId("active-row");
