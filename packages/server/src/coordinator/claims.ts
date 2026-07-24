@@ -532,6 +532,7 @@ export function registerClaimCommands(deps: ClaimDeps): void {
         status: "open" as const,
         createdAt: ctx.now,
         deadline: terms.deadline,
+        fenBefore: selectedView.fen,
       };
       if (payload.createGuest !== undefined) {
         deps.db

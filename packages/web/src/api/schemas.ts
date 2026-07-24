@@ -152,6 +152,7 @@ const gameItemCommonSchema = z.object({
 
 /** Ongoing entries never carry game identity (I7 — CA-W2). */
 export const ongoingGameItemSchema = gameItemCommonSchema.extend({
+  fenBeforeYourMove: z.string(),
   payTxid: z.string().nullable(),
 });
 export type OngoingGameItem = z.infer<typeof ongoingGameItemSchema>;

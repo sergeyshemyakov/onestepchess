@@ -344,7 +344,8 @@ export function registerHumanRoutes(
       if (
         claim.moveUci === null ||
         claim.moveSan === null ||
-        claim.movedAt === null
+        claim.movedAt === null ||
+        claim.fenBefore === null
       )
         throw new Error(`moved claim ${claim.id} lacks move data`);
       const entry = entryByClaim.get(claim.id);
@@ -357,7 +358,11 @@ export function registerHumanRoutes(
         movedAt: new Date(claim.movedAt).toISOString(),
       };
       if (query.status === "ongoing")
-        return { ...common, payTxid: entry?.payTxid ?? null };
+        return {
+          ...common,
+          fenBeforeYourMove: claim.fenBefore,
+          payTxid: entry?.payTxid ?? null,
+        };
       if (
         game.result === null ||
         game.termination === null ||

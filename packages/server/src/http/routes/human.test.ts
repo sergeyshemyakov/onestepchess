@@ -155,6 +155,7 @@ function seedGame(
     })
     .run();
   const claimIds = new Map<string, string>();
+  let fenBefore = STARTING_FEN;
   for (const move of args.moves) {
     seedCounter += 1;
     const claimId = `clm_h_${seedCounter}`;
@@ -171,6 +172,7 @@ function seedGame(
         status,
         createdAt: (args.createdAt ?? 0) + move.ply,
         deadline: (args.createdAt ?? 0) + move.ply + 600_000,
+        fenBefore,
         ...(status === "moved"
           ? {
               movedAt: (args.createdAt ?? 0) + move.ply + 1,
@@ -182,6 +184,7 @@ function seedGame(
           : {}),
       })
       .run();
+    if (status === "moved") fenBefore = move.fenAfter;
     if (!move.demo && status === "moved") {
       db.insert(schema.stakeEntries)
         .values({
@@ -579,12 +582,14 @@ describe("profile, game history, and public replay reads (§6.3)", () => {
       expect(Object.keys(card).sort()).toEqual([
         "claimedAt",
         "demo",
+        "fenBeforeYourMove",
         "movedAt",
         "payTxid",
         "stakeMicroUsdc",
         "yourMove",
         "yourSide",
       ]);
+      expect(card.fenBeforeYourMove).toBe(STARTING_FEN);
     }
     expect(ongoingStaked.payTxid).toMatch(/^ptx_/);
     expect(ongoingDemo.payTxid).toBeNull();

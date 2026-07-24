@@ -22,6 +22,13 @@
       "when": 1784400000000,
       "tag": "0002_release2_incentives",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1784912400000,
+      "tag": "0003_ongoing_move_position",
+      "breakpoints": true
     }
   ]
 }

@@ -107,6 +107,7 @@ export const claims = sqliteTable(
     movedPly: integer("moved_ply"),
     moveUci: text("move_uci"),
     moveSan: text("move_san"),
+    fenBefore: text("fen_before"),
     fenAfter: text("fen_after"),
     nudgeDueAt: integer("nudge_due_at"),
     nudgeSentAt: integer("nudge_sent_at"),

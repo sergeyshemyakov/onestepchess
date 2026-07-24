@@ -104,6 +104,8 @@ export function ongoingItemFixture(
     yourMove: { uci: "e2e4", san: "e4" },
     yourSide: "white",
     demo: false,
+    fenBeforeYourMove:
+      "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
     stakeMicroUsdc: 10_000,
     claimedAt: "2026-07-20T10:00:00Z",
     movedAt: "2026-07-20T10:01:00Z",

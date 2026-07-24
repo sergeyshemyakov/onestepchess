@@ -21,7 +21,6 @@ import { explorerTxUrl } from "../lib/explorer.js";
 import { parseUci } from "../lib/fen.js";
 import { formatLocalTime, formatMicroUsdc } from "../lib/format.js";
 import {
-  findMoveContextFen,
   readLastSeenFinishedAt,
   writeLastSeenFinishedAt,
 } from "../lib/storage.js";
@@ -47,14 +46,6 @@ function ActivePane(props: {
     );
   }
   const uci = parseUci(hero.yourMove.uci);
-  // Cached claim position from this device's own commit (I7 stays intact
-  // server-side); miss → redacted empty board as before.
-  const contextFen = findMoveContextFen({
-    uci: hero.yourMove.uci,
-    side: hero.yourSide,
-    demo: hero.demo,
-    movedAt: hero.movedAt,
-  });
   return (
     <div data-testid="active-pane">
       <div className="herocard" data-testid="active-hero">
@@ -63,7 +54,7 @@ function ActivePane(props: {
           to={uci.to}
           san={hero.yourMove.san}
           side={hero.yourSide}
-          {...(contextFen === null ? {} : { fen: contextFen })}
+          fen={hero.fenBeforeYourMove}
         />
         <dl className="qv-fields">
           <dt>your move</dt>

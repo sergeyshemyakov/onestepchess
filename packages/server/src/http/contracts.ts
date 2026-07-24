@@ -182,6 +182,7 @@ const gameCardCommon = z.object({
 });
 
 const ongoingGameCard = gameCardCommon.extend({
+  fenBeforeYourMove: z.string(),
   payTxid: z.string().nullable(),
 });
 

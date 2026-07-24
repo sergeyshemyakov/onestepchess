@@ -34,11 +34,10 @@ function pieceFromSan(san: string, side: Side): Piece {
 }
 
 /** F-W3 active-game board loop: the user's move replayed forever with the
- * scanline type-in FX (UI suggestions "type" mode). With a `fen` (the cached
- * claim position) the base board renders the real position minus the actors
- * the overlay animates — every other piece stays put; without one it renders
- * the redacted empty board, since ongoing items carry no position on
- * purpose (I7). `prefers-reduced-motion` renders the final frame statically. */
+ * scanline type-in FX (UI suggestions "type" mode). With a `fen` the base
+ * board renders the pre-move position minus the actors the overlay animates;
+ * without one, as allowed by the shared CONFIRM surface, it renders only the
+ * mover. `prefers-reduced-motion` renders the final frame statically. */
 export function BoardLoop(props: {
   readonly from: string;
   readonly to: string;
