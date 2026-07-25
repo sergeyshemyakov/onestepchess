@@ -9,6 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import algosdk from "algosdk";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
@@ -84,6 +85,100 @@ afterEach(() => {
 });
 
 describe("mock-beta deployment profile (R2-04)", () => {
+  it("raw_http_quickstart_reaches_mock_402_from_base_url", async () => {
+    const volume = mkdtempSync(join(tmpdir(), "osc-http-quickstart-"));
+    const child = boot({
+      RAIL: "mock",
+      PORT: "0",
+      DB_PATH: join(volume, "osc.sqlite"),
+      PUBLIC_BASE_URL: "http://127.0.0.1:0",
+      SYSTEM_BANNER: "mock — no real money",
+    });
+    const port = await waitForListeningPort(child);
+    const base = `http://127.0.0.1:${port}`;
+
+    const guide = await fetch(`${base}/llms.txt`);
+    const guideText = await guide.text();
+    expect(guide.status).toBe(200);
+    expect(guideText).toContain("## Quickstart: HTTP");
+
+    const meta = (await (await fetch(`${base}/api/v1/meta`)).json()) as {
+      network: { caip2: string };
+    };
+    expect(meta.network.caip2).toBe("mock:local");
+
+    const account = algosdk.generateAccount();
+    const address = account.addr.toString();
+    const challengeResponse = await fetch(`${base}/api/v1/auth/challenge`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ address }),
+    });
+    const challenge = (await challengeResponse.json()) as {
+      fallbackTxnB64: string;
+    };
+    const transaction = algosdk.decodeUnsignedTransaction(
+      Buffer.from(challenge.fallbackTxnB64, "base64"),
+    );
+    const signedTxnB64 = Buffer.from(transaction.signTxn(account.sk)).toString(
+      "base64",
+    );
+    const verify = await fetch(`${base}/api/v1/auth/verify`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        address,
+        kind: "agent",
+        method: "txn",
+        signedTxnB64,
+      }),
+    });
+    const session = (await verify.json()) as { jwt: string };
+    expect(verify.status).toBe(200);
+
+    const claimResponse = await fetch(`${base}/api/v1/claims`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${session.jwt}`,
+        "content-type": "application/json",
+      },
+      body: "{}",
+    });
+    const claimed = (await claimResponse.json()) as {
+      claim: {
+        claimId: string;
+        legalMoves: { uci: string }[];
+      };
+    };
+    expect([200, 201]).toContain(claimResponse.status);
+    expect(claimed.claim.legalMoves.length).toBeGreaterThan(0);
+
+    const bareMove = await fetch(
+      `${base}/api/v1/claims/${claimed.claim.claimId}/move`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${session.jwt}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ move: claimed.claim.legalMoves[0]?.uci }),
+      },
+    );
+    expect(bareMove.status).toBe(402);
+    expect(bareMove.headers.get("PAYMENT-REQUIRED")).not.toBeNull();
+    expect(
+      JSON.parse(
+        Buffer.from(
+          bareMove.headers.get("PAYMENT-REQUIRED") ?? "",
+          "base64",
+        ).toString("utf8"),
+      ),
+    ).toMatchObject({
+      x402Version: 2,
+      accepts: [{ scheme: "mock", network: "mock:local" }],
+    });
+  }, 30_000);
+
   it("mock_beta_boots_from_release1_database_with_persistent_paths", async () => {
     const volume = mkdtempSync(join(tmpdir(), "osc-beta-"));
     const dbPath = join(volume, "osc.sqlite");

@@ -7,10 +7,17 @@
   "engines": {
     "node": ">=22"
   },
+  "scripts": {
+    "build": "tsc -b",
+    "test": "pnpm --dir ../.. exec vitest run --project @onestepchess/mcp"
+  },
   "files": [
     "dist",
     "!dist/.tsbuildinfo"
   ],
+  "bin": {
+    "osc-mcp": "./dist/stdio.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -26,6 +33,7 @@
     "zod": "^4.0.0"
   },
   "devDependencies": {
+    "@types/node": "^22.20.1",
     "vitest": "^4.0.0"
   }
 }
