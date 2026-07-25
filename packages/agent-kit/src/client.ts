@@ -191,11 +191,21 @@ export function createOscClient(options: OscClientOptions): OscClient {
   }
 
   async function getMeta(): Promise<Meta> {
-    metaPromise ??= (async () => {
-      const response = await execute("/meta");
-      if (!response.ok) throw await decodeOscApiError(response);
-      return parse(response, metaSchema, "GET /meta");
-    })();
+    if (metaPromise === undefined) {
+      const pending = (async () => {
+        const response = await execute("/meta");
+        if (!response.ok) throw await decodeOscApiError(response);
+        return parse(response, metaSchema, "GET /meta");
+      })();
+      // Cache meta for the client's lifetime once it resolves, but drop a
+      // rejected fetch so a transient failure does not permanently brick every
+      // later meta/auth/move call (mirrors how authenticate() clears its
+      // in-flight promise on settle).
+      pending.catch(() => {
+        if (metaPromise === pending) metaPromise = undefined;
+      });
+      metaPromise = pending;
+    }
     return metaPromise;
   }
 

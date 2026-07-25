@@ -712,6 +712,28 @@ describe("agent-kit wire client and authentication", () => {
     expect(authCount).toBe(1);
   });
 
+  it("osc_client_recovers_after_a_transient_meta_failure", async () => {
+    let metaCalls = 0;
+    const fetch = vi.fn<typeof globalThis.fetch>(async (input) => {
+      const path = new URL(input.toString()).pathname;
+      if (path.endsWith("/meta")) {
+        metaCalls += 1;
+        return metaCalls === 1
+          ? json({ error: "INTERNAL", hint: "blip", docs: "" }, 503)
+          : json(meta);
+      }
+      throw new Error(`unexpected ${path}`);
+    });
+    const client = createOscClient({
+      serverUrl: "https://osc.example",
+      signer: signer().signer,
+      fetch,
+    });
+    await expect(client.meta()).rejects.toMatchObject({ code: "INTERNAL" });
+    await expect(client.meta()).resolves.toEqual(meta);
+    expect(metaCalls).toBe(2);
+  });
+
   it("agent_package_is_esm_barrel_only_and_has_no_private_workspace_dependency", () => {
     const packageJson = JSON.parse(
       readFileSync(resolve(import.meta.dirname, "../package.json"), "utf8"),
