@@ -37,6 +37,8 @@ runs the same four and all must pass locally first.
   this repo. Columns: Backlog → Ready → In Progress → In Review → Done.
 - Use the `gh` CLI to read and update cards (`gh issue view <id>`,
   `gh issue comment`, `gh project item-edit`).
+- In Codex, run `gh` with escalated host access because the sandbox cannot
+  read macOS Keychain credentials even when terminal authentication works.
 - Only pick up cards in Ready; move your card to In Progress when you start
   and to In Review when the PR is open.
 - Project: repo `sergeyshemyakov/onestepchess`, GitHub Project #2 "One Step
