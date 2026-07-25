@@ -30,6 +30,9 @@ export type LifecycleDeps = {
   readonly config: () => ServerConfig;
   readonly rng: Rng;
   readonly logger: Logger;
+  readonly alerts?: {
+    emit(type: string, payload?: Record<string, unknown>): Promise<boolean>;
+  };
 };
 
 export type ApplyPlyResult = {
@@ -304,6 +307,7 @@ export function registerLifecycle(deps: LifecycleDeps): LifecycleApi {
       timers.disarm("gameStall", gameId);
       timers.disarm("minNextClaim", gameId);
       deps.logger.warn({ gameId }, "stall abort");
+      void deps.alerts?.emit("stall_abort", { gameId });
       void coordinator.dispatch({
         type: "GameFinished",
         payload: { gameId },

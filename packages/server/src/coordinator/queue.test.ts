@@ -126,7 +126,7 @@ describe("coordinator command queue", () => {
     expect(executed).toBe(false);
   });
 
-  it("executes a queued human claim command before a queued agent claim command", async () => {
+  it("claim_command_priority_is_human_then_agent_then_deprioritized", async () => {
     const { coordinator } = setup();
     const order: string[] = [];
     coordinator.register("ClaimRequested", (_ctx, payload) => {

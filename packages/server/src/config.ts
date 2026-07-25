@@ -103,6 +103,15 @@ const envSchema = z.object({
   PUBLIC_BASE_URL: z.url().optional(),
   JWT_SECRET: z.string().min(16).optional(),
   ADMIN_TOKEN: z.string().min(1).optional(),
+  ADMIN_ADDRESSES: z
+    .string()
+    .transform((value) =>
+      value
+        .split(",")
+        .map((address) => address.trim())
+        .filter((address) => address.length > 0),
+    )
+    .default([]),
   TREASURY_MNEMONIC: z.string().min(1).optional(),
   TURNSTILE_SECRET: z.string().min(1).optional(),
   SYSTEM_BANNER: z.string().min(1).optional(),

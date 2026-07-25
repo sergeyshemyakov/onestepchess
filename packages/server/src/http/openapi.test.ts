@@ -37,7 +37,7 @@ function docApp() {
 }
 
 describe("/api/v1/openapi.json (F12)", () => {
-  it("openapi_contains_every_public_human_route_and_no_admin_route", async () => {
+  it("admin_routes_are_absent_from_public_openapi_and_discovery", async () => {
     const res = await docApp().request("/api/v1/openapi.json");
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("application/json");
