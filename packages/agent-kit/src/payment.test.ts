@@ -248,6 +248,22 @@ describe("agent-kit payments and budgets", () => {
       address: payer.addr.toString(),
       sign: signing,
     };
+    const symbolicMockTreasury = "MOCK_TREASURY";
+    expect(
+      assertTrustedPayment({
+        paymentRequired: paymentRequired({ payTo: symbolicMockTreasury }),
+        claim,
+        meta: {
+          ...mockMeta,
+          network: {
+            ...mockMeta.network,
+            treasuryAddress: symbolicMockTreasury,
+          },
+        },
+        resourceUrl: moveUrl,
+        expectNetwork: "mock",
+      }).payTo,
+    ).toBe(symbolicMockTreasury);
     const cases: Array<{
       required?: PaymentRequired;
       meta?: Meta;

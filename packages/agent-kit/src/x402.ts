@@ -82,8 +82,9 @@ export function assertTrustedPayment(input: {
     mismatch("resource", input.resourceUrl, input.paymentRequired.resource.url);
   }
   if (
-    !algosdk.isValidAddress(requirement.payTo) ||
-    requirement.payTo !== input.meta.network.treasuryAddress
+    requirement.payTo !== input.meta.network.treasuryAddress ||
+    (requirement.network !== "mock:local" &&
+      !algosdk.isValidAddress(requirement.payTo))
   ) {
     mismatch("payTo", input.meta.network.treasuryAddress, requirement.payTo);
   }

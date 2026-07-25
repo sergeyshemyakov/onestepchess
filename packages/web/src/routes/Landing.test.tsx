@@ -123,7 +123,7 @@ it("landing_demo_board_opens_in_an_overlay_pane", async () => {
   expect(client.createClaim).toHaveBeenCalledTimes(1);
 });
 
-it("landing_uses_only_meta_and_session_probe_before_interaction", async () => {
+it("web_agent_tab_uses_meta_docs_and_index_has_discovery_hooks", async () => {
   // -- API count: exactly /meta + the session boot probe, nothing else.
   const client = guestClient();
   const view = renderLanding(client);
@@ -166,6 +166,27 @@ it("landing_uses_only_meta_and_session_probe_before_interaction", async () => {
   expect(
     agentTab.querySelector(`a[href="${metaFixture.docs.repo}"]`),
   ).not.toBeNull();
+  expect(
+    agentTab.querySelector(
+      `a[href="https://www.npmjs.com/package/${encodeURIComponent(metaFixture.docs.mcpPackage)}"]`,
+    ),
+  ).not.toBeNull();
+  expect(
+    agentTab.querySelector(
+      `a[href="https://www.npmjs.com/package/${encodeURIComponent(metaFixture.docs.agentKitPackage)}"]`,
+    ),
+  ).not.toBeNull();
+  expect(agentTab.textContent).toContain(
+    new URL("/api/v1", metaFixture.docs.llms).toString().replace(/\/$/, ""),
+  );
+  const html = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "../../index.html"),
+    "utf8",
+  );
+  expect(html).toContain("Agent? You don't need this UI. Start at /llms.txt");
+  expect(html).toContain(
+    '<link rel="alternate" type="text/markdown" href="/llms.txt"',
+  );
   // -- Config-gated content: promo strip present (not dismissed), stats
   //    strip absent without meta.stats.
   expect(screen.getByTestId("champ-promo")).not.toBeNull();
@@ -320,3 +341,7 @@ it("splits the landing into functional + decorative panes with a tower banner st
   const ctas = split.querySelector(".ctas");
   expect(ctas?.querySelectorAll(".bigplay").length).toBe(3);
 });
+
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";

@@ -18,6 +18,9 @@ import { Replayer } from "../replay/Replayer.jsx";
 function HowItWorks(props: { readonly meta: Meta }) {
   const [tab, setTab] = useState<"human" | "agent">("human");
   const docs = props.meta.docs;
+  const apiBase = new URL("/api/v1", docs.llms).toString().replace(/\/$/, "");
+  const npmPackage = (name: string) =>
+    `https://www.npmjs.com/package/${encodeURIComponent(name)}`;
   return (
     <section className="howitworks" id="rules" data-testid="how-it-works">
       <div className="tabrow" role="tablist">
@@ -50,15 +53,19 @@ function HowItWorks(props: { readonly meta: Meta }) {
           <p className="console">
             &gt; npx -y {docs.mcpPackage}
             {"\n"}&gt; # or speak x402 directly:
-            {"\n"}&gt; curl -X POST /api/v1/claims # → claim + legal moves
-            {"\n"}&gt; curl -X POST /api/v1/claims/:id/move # → 402
+            {"\n"}&gt; curl -X POST {apiBase}/claims # → claim + legal moves
+            {"\n"}&gt; curl -X POST {apiBase}/claims/:id/move # → 402
             PAYMENT-REQUIRED
             {"\n"}&gt; # sign the group, retry with PAYMENT-SIGNATURE → receipt
           </p>
           <p>
             <a href={docs.llms}>llms.txt</a> ·{" "}
-            <a href={docs.openapi}>openapi</a> · {docs.mcpPackage} ·{" "}
-            {docs.agentKitPackage} ·{" "}
+            <a href={docs.openapi}>openapi</a> ·{" "}
+            <a href={npmPackage(docs.mcpPackage)}>{docs.mcpPackage}</a> ·{" "}
+            <a href={npmPackage(docs.agentKitPackage)}>
+              {docs.agentKitPackage}
+            </a>{" "}
+            ·{" "}
             <a href={docs.repo} target="_blank" rel="noopener noreferrer">
               repo ↗
             </a>

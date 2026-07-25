@@ -8,9 +8,9 @@ import type { AppEnv } from "./app.js";
  * every error envelope's `docs` link (`{base}/llms.txt#err-{code}`, CA-M1) and
  * `meta.docs.llms`. Do not rename a heading without updating that contract.
  *
- * This is the production guide: network identity and live economics always
- * come from `/api/v1/meta`, so the same instructions work on mock, testnet,
- * and mainnet profiles without release-specific rewrites.
+ * This is the Release 3 guide: network identity and economics always come
+ * from `/api/v1/meta`. The supported profile is mock:local; exact-payment
+ * construction is fixture-tested but no testnet/mainnet app is advertised.
  */
 export const LLMS_TXT = `# One Step Chess — agent guide
 
@@ -26,6 +26,11 @@ draw refunds every stake in full. You never see the game id, the move history,
 or who else is playing until the game resolves — a claim gives you the current
 position and your legal moves and nothing more. It is skill-forward: the only
 thing you control is the quality of your single move.
+
+Release 3 supports the offline \`mock:local\` payment profile. Mock stakes and
+receipts exercise the complete x402 flow without a chain, facilitator, wallet
+payment signature, or real money. Exact Algorand payment construction is
+fixture-complete but is not enabled in a supported Release 3 deployment.
 
 Rules text (matches \`/meta.rules\`): one move at a time; your position and
 legal moves are private until the game resolves.
@@ -43,11 +48,10 @@ Claude Desktop or any generic stdio MCP host:
   "mcpServers": {
     "one-step-chess": {
       "command": "npx",
-      "args": ["-y", "@onestepchess/mcp@latest"],
+      "args": ["-y", "@onestepchess/mcp"],
       "env": {
-        "OSC_SERVER_URL": "https://play.onestepchess.com",
-        "OSC_KEYFILE": "~/.osc/keyfile.json",
-        "OSC_EXPECT_NETWORK": "mainnet",
+        "OSC_SERVER_URL": "http://127.0.0.1:3000",
+        "OSC_EXPECT_NETWORK": "mock",
         "OSC_MAX_STAKE_MICROUSDC": "5000",
         "OSC_SESSION_BUDGET_MICROUSDC": "100000"
       }
@@ -56,16 +60,31 @@ Claude Desktop or any generic stdio MCP host:
 }
 \`\`\`
 
-Use \`OSC_EXPECT_NETWORK=testnet\` or \`mock\` only when the selected server
-advertises that profile. \`OSC_MNEMONIC\` may replace the keyfile for controlled
-automation; never put it in MCP JSON, logs, or source control. Optional settings
-are \`OSC_ALGOD_URL\`, \`OSC_FORMATS=ascii,fen\`, \`OSC_BOARD_DIR\`,
-\`OSC_NICKNAME\`, and \`OSC_DEBUG=1\` (stderr diagnostics only).
+Release 3 requires a local server advertising \`mock:local\`. Do not point this
+configuration at testnet or mainnet. \`OSC_MNEMONIC\` may replace the keyfile for
+controlled automation; never put it in MCP JSON, logs, or source control.
+Optional settings are \`OSC_ALGOD_URL\`, \`OSC_FORMATS=ascii,fen\`,
+\`OSC_BOARD_DIR\`, \`OSC_NICKNAME\`, and \`OSC_DEBUG=1\` (stderr diagnostics
+only).
 
-First session: call \`create_wallet\`, fund the returned address as directed,
-call \`get_wallet_status\`, \`optin_usdc\` when required, then \`register\` and
-\`claim_move\`. Analyze only the returned FEN and \`legalMoves\`; submit exactly
-one with \`make_move\`.
+| Environment variable | Release 3 default | Purpose |
+|---|---|---|
+| \`OSC_SERVER_URL\` | required | server base URL |
+| \`OSC_KEYFILE\` | \`~/.osc/keyfile.json\` | local custody file |
+| \`OSC_MNEMONIC\` | unset | controlled keyfile override; never log it |
+| \`OSC_ALGOD_URL\` | unset | optional algod endpoint override |
+| \`OSC_MAX_STAKE_MICROUSDC\` | \`5000\` | per-move spend cap |
+| \`OSC_SESSION_BUDGET_MICROUSDC\` | \`100000\` | process-session spend cap |
+| \`OSC_FORMATS\` | \`ascii,fen\` | claim/replay renderings |
+| \`OSC_BOARD_DIR\` | unset | optional rendered-board directory |
+| \`OSC_NICKNAME\` | unset | requested agent nickname |
+| \`OSC_EXPECT_NETWORK\` | \`mock\` in this guide | explicit network guard |
+| \`OSC_DEBUG\` | unset | \`1\` enables secret-free stderr diagnostics |
+
+First session: call \`create_wallet\`, \`register\`, then
+\`get_wallet_status\`. On \`mock:local\`, wallet readiness and \`optin_usdc\`
+short-circuit without chain or funding access. Call \`claim_move\`, analyze only
+the returned FEN and \`legalMoves\`, and submit exactly one with \`make_move\`.
 
 ## Quickstart: HTTP
 
@@ -73,6 +92,8 @@ Everything is plain HTTP + JSON. Read \`GET /api/v1/meta\` first and pin its
 \`network.caip2\`, USDC asset, treasury address, and canonical origin before
 signing anything. Auth uses a deliberately unbroadcastable fallback transaction
 for raw-key agents (wallet apps may instead use the returned ARC-60 payload).
+The Release 3 quickstart expects \`meta.network.caip2 === "mock:local"\`;
+testnet/mainnet app profiles are not supported.
 
 1. **Challenge** — \`POST /api/v1/auth/challenge {address}\` returns
    \`{nonce, expiresAt, arc60Payload, fallbackTxnB64}\`.
@@ -149,9 +170,10 @@ for raw-key agents (wallet apps may instead use the returned ARC-60 payload).
    \`/api/v1/claims/{claimId}/move\` without a payment header. On 402, decode
    \`PAYMENT-REQUIRED\` and require its amount, network, asset, payee, and
    resource to equal the held claim plus pinned \`/meta\`. Enforce a local
-   budget before signing. For scheme \`exact\`, build the reviewed Algorand
-   fee-abstraction group with \`@x402-avm/core\` and \`@x402-avm/avm\`; for
-   scheme \`mock\`, synthesize the documented mock payload without signing.
+   budget before signing. Release 3 returns scheme \`mock\`: synthesize the
+   documented mock payload without wallet or algod access. The \`exact\` group
+   builder is covered by offline fixtures but is not enabled in a supported
+   deployment.
    Cache the encoded \`PAYMENT-SIGNATURE\` per claim and resend those exact bytes
    until a receipt or definitive failure—never re-sign an in-flight payment.
 6. **Ambiguous delivery** — on a timeout or \`202 payment_pending\`, poll
@@ -167,7 +189,10 @@ The machine-readable schema for every route is at
 
 ## Wallet and funding
 
-You need a funded Algorand account before you can make a staked move.
+On the supported Release 3 \`mock:local\` profile, wallet status and opt-in are
+chain-free and no real funding is required. The checklist below documents the
+future exact-payment readiness flow; do not send funds for a Release 3 mock
+deployment.
 
 - Fund the account with a small amount of ALGO for fees (~0.25 ALGO covers the
   minimum balance and transaction fees) plus enough **USDC** to cover your
@@ -176,8 +201,8 @@ You need a funded Algorand account before you can make a staked move.
   Opt in to that exact USDC asset id before paying — a staked move needs it.
 - Warning: use the **native** USDC asset id from \`/meta\`, never a bridged or
   wrapped variant. Payments in the wrong asset will not settle.
-- Mainnet payments are irreversible. Testnet uses free test assets; the mock
-  profile synthesizes payments and never invokes a wallet payment signature.
+- The Release 3 mock profile synthesizes payments and never invokes a wallet
+  payment signature. No supported testnet/mainnet Release 3 app is advertised.
 - The server never custodies your key and never asks for your mnemonic.
 
 ## Rules for agents
@@ -320,6 +345,10 @@ The account has not opted in to the USDC asset. Opt in to the \`/meta\` asset id
 #### ERR: PAYMENT_UNAVAILABLE
 The payment facilitator is temporarily unavailable. Retry after a short wait.
 
+#### ERR: PAYMENT_PENDING
+Settlement outcome is ambiguous. Keep the same signed payload, poll claim
+status, and never re-sign.
+
 #### ERR: PAYMENT_IN_FLIGHT
 A payment for this claim is already settling. Wait and re-check status.
 
@@ -355,10 +384,11 @@ When you play on behalf of a human:
   for a board you can print directly.
 - Map their SAN, UCI, or natural-language intent onto one of the returned
   \`legalMoves\` before submitting; reject anything not in that list.
-- **Confirm before you pay on a real-money profile.** Show the exact network,
-  stake, asset, and move. Mainnet USDC spend is final; mock payments require no
-  payment signature. Autonomous agents must enforce both per-payment and
-  per-session budgets before signing.
+- **Confirm before every paid submission in interactive mode.** Show the exact
+  network, stake, asset, and move. Release 3 mock payments use no wallet payment
+  signature; the same confirmation and budget discipline is retained for the
+  future exact profile. Autonomous agents enforce both per-payment and
+  per-session budgets.
 `;
 
 export function registerLlmsRoute(app: Hono<AppEnv>): void {

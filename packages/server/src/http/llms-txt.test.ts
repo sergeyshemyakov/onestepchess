@@ -1,4 +1,9 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { PassThrough } from "node:stream";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { startStdio } from "../../../mcp/src/stdio-server.js";
 import { createLogger } from "../logger.js";
 import { createApp, ERROR_STATUS } from "./app.js";
 import { LLMS_TXT, registerLlmsRoute } from "./llms-txt.js";
@@ -37,16 +42,16 @@ const PINNED_SECTIONS = [
 const REQUIRED_ERROR_CODES = [
   ...Object.keys(ERROR_STATUS),
   "NO_BOARDS",
+  "PAYMENT_PENDING",
   "BUDGET_EXCEEDED",
 ];
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "../../../..");
 
 describe("/llms.txt (agent spec §9)", () => {
-  it("llms_txt_has_stable_headings_and_every_error_anchor", () => {
+  it("llms_txt_has_exact_sections_unique_anchors_and_every_error", () => {
     const sectionHeadings = headings("##").filter((h) => !h.startsWith("##"));
 
-    for (const section of PINNED_SECTIONS) {
-      expect(sectionHeadings).toContain(section);
-    }
+    expect(sectionHeadings).toEqual(PINNED_SECTIONS);
 
     const errorHeadings = headings("####");
     for (const code of REQUIRED_ERROR_CODES) {
@@ -68,7 +73,101 @@ describe("/llms.txt (agent spec §9)", () => {
     expect(LLMS_TXT).toContain("OSC_SERVER_URL");
     expect(LLMS_TXT).toContain('method: "txn"');
     expect(LLMS_TXT).toContain("fallbackTxnB64");
-    expect(LLMS_TXT).not.toMatch(/not yet published/i);
+    expect(LLMS_TXT).toContain('meta.network.caip2 === "mock:local"');
+    expect(LLMS_TXT).toContain(
+      "exact` group\n   builder is covered by offline fixtures",
+    );
+    expect(LLMS_TXT).not.toMatch(
+      /https:\/\/play\.onestepchess\.com|OSC_EXPECT_NETWORK": "mainnet"/,
+    );
+  });
+
+  it("every_server_error_docs_url_resolves_to_llms_anchor", () => {
+    const anchors = new Set(
+      headings("####").map((heading) => `#${slug(heading)}`),
+    );
+    for (const code of REQUIRED_ERROR_CODES) {
+      const docs = new URL(
+        `https://osc.example/llms.txt#err-${code.toLowerCase()}`,
+      );
+      expect(docs.pathname, code).toBe("/llms.txt");
+      expect(anchors.has(docs.hash), code).toBe(true);
+    }
+  });
+
+  it("mcp_quickstart_configuration_is_copy_paste_runnable", async () => {
+    const block = LLMS_TXT.match(
+      /## Quickstart: MCP[\s\S]*?```json\n([\s\S]*?)\n```/,
+    )?.[1];
+    expect(block).toBeDefined();
+    const config = JSON.parse(block ?? "{}") as {
+      mcpServers: {
+        "one-step-chess": {
+          command: string;
+          args: string[];
+          env: Record<string, string>;
+        };
+      };
+    };
+    const documented = config.mcpServers["one-step-chess"];
+    expect(documented.command).toBe("npx");
+    expect(documented.args).toEqual(["-y", "@onestepchess/mcp"]);
+    expect(documented.env.OSC_EXPECT_NETWORK).toBe("mock");
+
+    const stdin = new PassThrough();
+    const stdout = new PassThrough();
+    const output = new Promise<string>((resolve) => {
+      stdout.once("data", (chunk: Buffer) => resolve(chunk.toString()));
+    });
+    const server = await startStdio({
+      env: {
+        ...documented.env,
+        OSC_KEYFILE: "/tmp/osc-documented-config-test/keyfile.json",
+      },
+      stdin,
+      stdout,
+      stderr: new PassThrough(),
+    });
+    stdin.write(
+      `${JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          clientInfo: { name: "documented-config-test", version: "1" },
+        },
+      })}\n`,
+    );
+    const response = JSON.parse(await output) as {
+      result: { serverInfo: { name: string } };
+    };
+    expect(response.result.serverInfo.name).toBe("onestepchess");
+    await server.close();
+  });
+
+  it("skill_and_readmes_reference_only_public_surfaces", () => {
+    const files = [
+      "README.md",
+      "packages/agent-kit/README.md",
+      "packages/mcp/README.md",
+      "skills/one-step-chess/SKILL.md",
+    ];
+    const copy = files.map((file) =>
+      readFileSync(join(REPO_ROOT, file), "utf8"),
+    );
+    for (const [index, text] of copy.entries()) {
+      expect(text, files[index]).toMatch(/\/llms\.txt/);
+      expect(text, files[index]).not.toMatch(
+        /\/Users\/|docs\/spec|docs\/adr|TREASURY_MNEMONIC|JWT_SECRET|ADMIN_TOKEN|private bot/i,
+      );
+      expect(text, files[index]).not.toMatch(
+        /Release 3 supports (testnet|mainnet)|live exact payments are enabled|OSC_EXPECT_NETWORK["=: ]+mainnet/i,
+      );
+    }
+    expect(copy[3]).toContain("name: one-step-chess");
+    expect(copy[3]).toContain("final, no undo");
   });
 
   it("serves /llms.txt as text/markdown", async () => {
