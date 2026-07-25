@@ -7,10 +7,16 @@
   "engines": {
     "node": ">=22"
   },
+  "scripts": {
+    "test": "pnpm --dir ../.. exec vitest run --project @onestepchess/agent-kit"
+  },
   "files": [
     "dist",
     "!dist/.tsbuildinfo"
   ],
+  "bin": {
+    "osc-agent": "./dist/cli.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -27,6 +33,7 @@
     "zod": "^4.0.0"
   },
   "devDependencies": {
+    "@types/node": "^22.20.1",
     "vitest": "^4.0.0"
   }
 }
