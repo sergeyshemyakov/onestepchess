@@ -341,7 +341,7 @@ describe("payout executor — batch cap (F7, rail 17-cap never hit)", () => {
 });
 
 describe("payout executor — boot resume (F1 step 6)", () => {
-  it("recovers a submitted-but-unconfirmed batch after a restart", async () => {
+  it("payout_retry_and_restart_reuse_durable_prepared_bytes", async () => {
     const shared = createMockRailState({ usdcMicroUsdc: INITIAL });
     const stack = makeStack({}, shared);
     seedGame(stack.db, stack.now(), "gm_boot");

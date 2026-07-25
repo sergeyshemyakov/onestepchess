@@ -26,6 +26,9 @@ export type ResolutionDeps = {
     recordPayoutQueued(count?: number): void;
   };
   readonly publicStats?: { recordGameFinished(): void };
+  readonly alerts?: {
+    emit(type: string, payload?: Record<string, unknown>): Promise<boolean>;
+  };
   /** Injectable so a test seam can force an I4 conservation violation; the
    * server re-checks conservation independently of core before writing jobs. */
   readonly resolve?: typeof coreResolve;
@@ -47,189 +50,197 @@ type GameResolvedEntry =
     };
 
 export function registerResolution(deps: ResolutionDeps): void {
-  const resolve = deps.resolve ?? coreResolve;
-  const { db } = deps;
-
   deps.coordinator.register(
     "GameFinished",
-    (ctx, payload: { gameId: string }) => {
-      const game = db
-        .select()
-        .from(schema.games)
-        .where(eq(schema.games.id, payload.gameId))
-        .get();
-      if (game === undefined) return { resolved: false as const };
-      // The resolved_at marker — not the presence of jobs — is the sole
-      // idempotency guard, so all-demo/zero-job games are covered too (F7).
-      if (game.resolvedAt !== null) return { resolved: false as const };
-      if (game.status !== "finished" && game.status !== "aborted")
-        return { resolved: false as const };
-      if (game.result === null)
-        throw new Error(`terminal game ${game.id} has no result`);
-
-      const stakeRows = db
-        .select()
-        .from(schema.stakeEntries)
-        .where(eq(schema.stakeEntries.gameId, game.id))
-        .all();
-      const entries: ResolveEntry[] = stakeRows.map((row) => ({
-        entryId: row.id,
-        player: row.player,
-        side: row.side,
-        kind: row.kind,
-        amountMicroUsdc: row.amount,
-      }));
-      const rules = parseGameRules(game.rulesJson);
-      const resolution = resolve(entries, game.result as GameResult, rules);
-
-      const paid = resolution.payouts.reduce(
-        (sum, c) => sum + c.amountMicroUsdc,
-        0,
-      );
-      const take =
-        resolution.take.feeMicroUsdc +
-        resolution.take.dustMicroUsdc +
-        resolution.take.surplusMicroUsdc;
-      const staked = stakeRows.reduce((sum, row) => sum + row.amount, 0);
-      if (paid + take !== staked) {
-        // I4 violated: write no jobs, pause with a durable cause + error row so
-        // the settled stakes stay safe until a human investigates (F7 step 1).
-        const cause = `conservation:${game.id}`;
-        const state = db.select().from(schema.systemState).get();
-        const causes: string[] =
-          state === undefined
-            ? []
-            : (JSON.parse(state.pauseCausesJson) as string[]);
-        if (!causes.includes(cause)) causes.push(cause);
-        db.update(schema.systemState)
-          .set({ pauseCausesJson: JSON.stringify(causes), updatedAt: ctx.now })
-          .where(eq(schema.systemState.id, 1))
-          .run();
-        db.insert(schema.errorLog)
-          .values({
-            ts: ctx.now,
-            level: "error",
-            code: "conservation",
-            requestId: null,
-            contextJson: JSON.stringify({
-              gameId: game.id,
-              paid,
-              take,
-              staked,
-            }),
-          })
-          .run();
-        ctx.appendEvent("system_banner", null, {
-          mode: "paused",
-          banner: state?.banner ?? null,
-        });
-        deps.logger.error(
-          { gameId: game.id, paid, take, staked },
-          "resolution conservation violation — pausing",
-        );
-        return { resolved: false as const, paused: true as const };
-      }
-
-      const payoutByEntry = new Map<string, number>();
-      for (const row of stakeRows) payoutByEntry.set(row.id, 0);
-      const jobByRecipient = new Map<string, number>();
-      for (const c of resolution.payouts) {
-        payoutByEntry.set(
-          c.entryId,
-          (payoutByEntry.get(c.entryId) ?? 0) + c.amountMicroUsdc,
-        );
-        jobByRecipient.set(
-          c.player,
-          (jobByRecipient.get(c.player) ?? 0) + c.amountMicroUsdc,
-        );
-      }
-
-      const reason = game.result === "aborted" ? "refund" : "resolution";
-      for (const [recipient, amount] of jobByRecipient) {
-        if (amount <= 0) continue;
-        db.insert(schema.payoutJobs)
-          .values({
-            id: newId("pj_"),
-            gameId: game.id,
-            recipient,
-            amount,
-            reason,
-            status: "pending",
-            createdAt: ctx.now,
-          })
-          .run();
-      }
-
-      // Every entry's payout_amount is materialized, explicit zero included.
-      for (const row of stakeRows) {
-        db.update(schema.stakeEntries)
-          .set({ payoutAmount: payoutByEntry.get(row.id) ?? 0 })
-          .where(eq(schema.stakeEntries.id, row.id))
-          .run();
-      }
-
-      // Protocol take moves treasury → protocol as paired rows; the −treasury
-      // payout rows are written later, on payout confirmation (F7 step 3).
-      const takes: readonly ["fee" | "dust" | "surplus", number][] = [
-        ["fee", resolution.take.feeMicroUsdc],
-        ["dust", resolution.take.dustMicroUsdc],
-        ["surplus", resolution.take.surplusMicroUsdc],
-      ];
-      for (const [refType, amount] of takes) {
-        if (amount <= 0) continue;
-        appendLedgerEntry(db, {
-          ts: ctx.now,
-          account: "treasury",
-          deltaMicrousdc: -amount,
-          refType,
-          refId: game.id,
-        });
-        appendLedgerEntry(db, {
-          ts: ctx.now,
-          account: "protocol",
-          deltaMicrousdc: amount,
-          refType,
-          refId: game.id,
-        });
-      }
-
-      materializeReplayAndStats(db, game, stakeRows);
-      // Non-monetary points for staked human participants (F15 step 1); written
-      // in the same transaction, entirely downstream of the payout math above so
-      // it can never influence jobs or ledger rows (I11).
-      const config = deps.config?.();
-      if (config !== undefined) {
-        awardResolutionPoints(
-          db,
-          ctx.now,
-          game.result as GameResult,
-          stakeRows,
-          {
-            pointsMove: config.POINTS_MOVE,
-            pointsWin: config.POINTS_WIN,
-          },
-        );
-      }
-      emitGameResolved(db, ctx, game, stakeRows, payoutByEntry);
-
-      // resolved_at is written last — the idempotency marker only appears once
-      // every job/ledger/event row for this game is durably committed.
-      db.update(schema.games)
-        .set({ resolvedAt: ctx.now })
-        .where(eq(schema.games.id, game.id))
-        .run();
-
-      ctx.afterCommit(() => {
-        deps.metrics?.recordGameFinished();
-        deps.publicStats?.recordGameFinished();
-        if (jobByRecipient.size > 0) {
-          deps.metrics?.recordPayoutQueued(jobByRecipient.size);
-        }
-      });
-
-      return { resolved: true as const, jobs: jobByRecipient.size };
-    },
+    (ctx, payload: { gameId: string }) =>
+      resolveTerminalGame(deps, ctx, payload.gameId),
   );
+}
+
+export function resolveTerminalGame(
+  deps: ResolutionDeps,
+  ctx: CommandContext,
+  gameId: string,
+) {
+  const resolve = deps.resolve ?? coreResolve;
+  const { db } = deps;
+  const game = db
+    .select()
+    .from(schema.games)
+    .where(eq(schema.games.id, gameId))
+    .get();
+  if (game === undefined) return { resolved: false as const };
+  // The resolved_at marker — not the presence of jobs — is the sole
+  // idempotency guard, so all-demo/zero-job games are covered too (F7).
+  if (game.resolvedAt !== null) return { resolved: false as const };
+  if (game.status !== "finished" && game.status !== "aborted")
+    return { resolved: false as const };
+  if (game.result === null)
+    throw new Error(`terminal game ${game.id} has no result`);
+
+  const stakeRows = db
+    .select()
+    .from(schema.stakeEntries)
+    .where(eq(schema.stakeEntries.gameId, game.id))
+    .all();
+  const entries: ResolveEntry[] = stakeRows.map((row) => ({
+    entryId: row.id,
+    player: row.player,
+    side: row.side,
+    kind: row.kind,
+    amountMicroUsdc: row.amount,
+  }));
+  const rules = parseGameRules(game.rulesJson);
+  const resolution = resolve(entries, game.result as GameResult, rules);
+
+  const paid = resolution.payouts.reduce(
+    (sum, c) => sum + c.amountMicroUsdc,
+    0,
+  );
+  const take =
+    resolution.take.feeMicroUsdc +
+    resolution.take.dustMicroUsdc +
+    resolution.take.surplusMicroUsdc;
+  const staked = stakeRows.reduce((sum, row) => sum + row.amount, 0);
+  if (paid + take !== staked) {
+    // I4 violated: write no jobs, pause with a durable cause + error row so
+    // the settled stakes stay safe until a human investigates (F7 step 1).
+    const cause = `conservation:${game.id}`;
+    const state = db.select().from(schema.systemState).get();
+    const causes: string[] =
+      state === undefined
+        ? []
+        : (JSON.parse(state.pauseCausesJson) as string[]);
+    if (!causes.includes(cause)) causes.push(cause);
+    db.update(schema.systemState)
+      .set({ pauseCausesJson: JSON.stringify(causes), updatedAt: ctx.now })
+      .where(eq(schema.systemState.id, 1))
+      .run();
+    db.insert(schema.errorLog)
+      .values({
+        ts: ctx.now,
+        level: "error",
+        code: "conservation",
+        requestId: null,
+        contextJson: JSON.stringify({
+          gameId: game.id,
+          paid,
+          take,
+          staked,
+        }),
+      })
+      .run();
+    ctx.appendEvent("system_banner", null, {
+      mode: "paused",
+      banner: state?.banner ?? null,
+    });
+    deps.logger.error(
+      { gameId: game.id, paid, take, staked },
+      "resolution conservation violation — pausing",
+    );
+    ctx.afterCommit(() => {
+      void deps.alerts?.emit("conservation_violation", {
+        gameId: game.id,
+        paid,
+        take,
+        staked,
+      });
+    });
+    return { resolved: false as const, paused: true as const };
+  }
+
+  const payoutByEntry = new Map<string, number>();
+  for (const row of stakeRows) payoutByEntry.set(row.id, 0);
+  const jobByRecipient = new Map<string, number>();
+  for (const c of resolution.payouts) {
+    payoutByEntry.set(
+      c.entryId,
+      (payoutByEntry.get(c.entryId) ?? 0) + c.amountMicroUsdc,
+    );
+    jobByRecipient.set(
+      c.player,
+      (jobByRecipient.get(c.player) ?? 0) + c.amountMicroUsdc,
+    );
+  }
+
+  const reason = game.result === "aborted" ? "refund" : "resolution";
+  for (const [recipient, amount] of jobByRecipient) {
+    if (amount <= 0) continue;
+    db.insert(schema.payoutJobs)
+      .values({
+        id: newId("pj_"),
+        gameId: game.id,
+        recipient,
+        amount,
+        reason,
+        status: "pending",
+        createdAt: ctx.now,
+      })
+      .run();
+  }
+
+  // Every entry's payout_amount is materialized, explicit zero included.
+  for (const row of stakeRows) {
+    db.update(schema.stakeEntries)
+      .set({ payoutAmount: payoutByEntry.get(row.id) ?? 0 })
+      .where(eq(schema.stakeEntries.id, row.id))
+      .run();
+  }
+
+  // Protocol take moves treasury → protocol as paired rows; the −treasury
+  // payout rows are written later, on payout confirmation (F7 step 3).
+  const takes: readonly ["fee" | "dust" | "surplus", number][] = [
+    ["fee", resolution.take.feeMicroUsdc],
+    ["dust", resolution.take.dustMicroUsdc],
+    ["surplus", resolution.take.surplusMicroUsdc],
+  ];
+  for (const [refType, amount] of takes) {
+    if (amount <= 0) continue;
+    appendLedgerEntry(db, {
+      ts: ctx.now,
+      account: "treasury",
+      deltaMicrousdc: -amount,
+      refType,
+      refId: game.id,
+    });
+    appendLedgerEntry(db, {
+      ts: ctx.now,
+      account: "protocol",
+      deltaMicrousdc: amount,
+      refType,
+      refId: game.id,
+    });
+  }
+
+  materializeReplayAndStats(db, game, stakeRows);
+  // Non-monetary points for staked human participants (F15 step 1); written
+  // in the same transaction, entirely downstream of the payout math above so
+  // it can never influence jobs or ledger rows (I11).
+  const config = deps.config?.();
+  if (config !== undefined) {
+    awardResolutionPoints(db, ctx.now, game.result as GameResult, stakeRows, {
+      pointsMove: config.POINTS_MOVE,
+      pointsWin: config.POINTS_WIN,
+    });
+  }
+  emitGameResolved(db, ctx, game, stakeRows, payoutByEntry);
+
+  // resolved_at is written last — the idempotency marker only appears once
+  // every job/ledger/event row for this game is durably committed.
+  db.update(schema.games)
+    .set({ resolvedAt: ctx.now })
+    .where(eq(schema.games.id, game.id))
+    .run();
+
+  ctx.afterCommit(() => {
+    deps.metrics?.recordGameFinished();
+    deps.publicStats?.recordGameFinished();
+    if (jobByRecipient.size > 0) {
+      deps.metrics?.recordPayoutQueued(jobByRecipient.size);
+    }
+  });
+
+  return { resolved: true as const, jobs: jobByRecipient.size };
 }
 
 function materializeReplayAndStats(

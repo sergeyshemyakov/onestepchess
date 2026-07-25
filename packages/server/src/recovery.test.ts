@@ -158,7 +158,7 @@ describe("paid-move boot recovery (F1)", () => {
     ).toEqual({ status: "expired" });
   });
 
-  it("commits a confirmed payment and reconstructs its durable receipt", async () => {
+  it("boot_recovery_converges_every_settling_and_outgoing_state", async () => {
     const stack = setup();
     const claim = await settlingIntent(stack);
     stack.rail.control.setTxStatus("mockpay_recovery", {

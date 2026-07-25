@@ -25,6 +25,9 @@ export type PayoutExecutorDeps = {
     recordPayoutConfirmed(count?: number): void;
     recordPayoutFailed(count?: number): void;
   };
+  readonly alerts?: {
+    emit(type: string, payload?: Record<string, unknown>): Promise<boolean>;
+  };
 };
 
 const POLL_MS = 1_000;
@@ -194,7 +197,13 @@ export function registerPayoutCommands(deps: PayoutExecutorDeps): void {
         .where(eq(schema.payoutBatches.id, payload.batchId))
         .run();
       if (failed > 0) {
-        ctx.afterCommit(() => deps.metrics?.recordPayoutFailed(failed));
+        ctx.afterCommit(() => {
+          deps.metrics?.recordPayoutFailed(failed);
+          void deps.alerts?.emit("payout_exhausted", {
+            batchId: payload.batchId,
+            failed,
+          });
+        });
       }
     },
   );

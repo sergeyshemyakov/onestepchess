@@ -1,3 +1,8 @@
+import {
+  claimStatusViewSchema,
+  claimViewSchema,
+  moveReceiptSchema,
+} from "@onestepchess/agent-kit";
 import { createRng } from "@onestepchess/core";
 import {
   buildMockHeader,
@@ -118,12 +123,13 @@ function setup(
 async function addPlayer(
   stack: ReturnType<typeof setup>,
   address: string,
+  kind: "human" | "agent" = "human",
 ): Promise<void> {
   stack.database.db
     .insert(schema.players)
     .values({
       address,
-      kind: "human",
+      kind,
       nickname: address,
       createdAt: stack.now(),
     })
@@ -135,24 +141,29 @@ async function openClaim(
   stack: ReturnType<typeof setup>,
   address: string,
   demo = false,
+  kind: "human" | "agent" = "human",
 ): Promise<ClaimRecord> {
   const result = await stack.coordinator.dispatch<
-    { player: string; kind: "human"; demo: boolean },
+    { player: string; kind: "human" | "agent"; demo: boolean },
     { claim: ClaimRecord | null }
   >({
     type: "ClaimRequested",
-    payload: { player: address, kind: "human", demo },
-    claimClass: "human",
+    payload: { player: address, kind, demo },
+    claimClass: kind,
   });
   if (result.kind !== "ok" || result.result.claim === null)
     throw new Error("claim unavailable");
   return result.result.claim;
 }
 
-function session(stack: ReturnType<typeof setup>, address: string): string {
+function session(
+  stack: ReturnType<typeof setup>,
+  address: string,
+  kind: "human" | "agent" = "human",
+): string {
   return signSession(JWT_SECRET, {
     sub: address,
-    kind: "human",
+    kind,
     jti: `jti-${address}`,
     iat: Math.floor(stack.now() / 1_000),
     exp: Math.floor(stack.now() / 1_000) + 3_600,
@@ -195,6 +206,55 @@ afterEach(() => {
 });
 
 describe("staked claim moves (F4)", () => {
+  it("agent_surfaces_are_position_only_and_schema_compatible", async () => {
+    const stack = setup();
+    await addPlayer(stack, "agent-one", "agent");
+    const claim = await openClaim(stack, "agent-one", false, "agent");
+    const authorization = `Bearer ${session(stack, "agent-one", "agent")}`;
+
+    const currentResponse = await stack.app.request("/api/v1/claims/current", {
+      headers: { Authorization: authorization },
+    });
+    const current = (await currentResponse.json()) as { claim: unknown };
+    const parsedClaim = claimViewSchema.parse(current.claim);
+    expect(parsedClaim).not.toHaveProperty("gameId");
+    expect(parsedClaim).not.toHaveProperty("name");
+    expect(parsedClaim).not.toHaveProperty("ply");
+    expect(parsedClaim).not.toHaveProperty("history");
+
+    const header = paymentHeader(
+      stack.rail,
+      claim,
+      "agent-one",
+      "agent-contract",
+    );
+    const movedResponse = await stack.app.request(
+      `/api/v1/claims/${claim.id}/move`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: authorization,
+          "Content-Type": "application/json",
+          "PAYMENT-SIGNATURE": header,
+        },
+        body: JSON.stringify({ move: "e2e4" }),
+      },
+    );
+    moveReceiptSchema.parse(await movedResponse.json());
+    expect(
+      stack.database.db
+        .select({ kind: schema.stakeEntries.kind })
+        .from(schema.stakeEntries)
+        .get()?.kind,
+    ).toBe("agent");
+
+    const statusResponse = await stack.app.request(
+      `/api/v1/claims/${claim.id}/status`,
+      { headers: { Authorization: authorization } },
+    );
+    claimStatusViewSchema.parse(await statusResponse.json());
+  });
+
   it("returns a durable paid receipt, updates both ledger views, and replays byte-identically", async () => {
     const metrics = {
       recordClaimCreated: vi.fn(),

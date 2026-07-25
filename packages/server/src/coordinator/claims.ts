@@ -180,6 +180,14 @@ function moveClaim(
     .where(eq(schema.claims.id, args.claim.id))
     .run();
   if (args.txid !== null) {
+    const player = deps.db
+      .select({ kind: schema.players.kind })
+      .from(schema.players)
+      .where(eq(schema.players.address, args.claim.player))
+      .get();
+    if (player === undefined || player.kind === "guest") {
+      throw new Error(`paid claim ${args.claim.id} has no staking player`);
+    }
     deps.db
       .insert(schema.stakeEntries)
       .values({
@@ -188,7 +196,7 @@ function moveClaim(
         claimId: args.claim.id,
         player: args.claim.player,
         side: args.claim.side,
-        kind: "human",
+        kind: player.kind,
         amount: args.claim.stakeMicrousdc,
         payTxid: args.txid,
         ply: applied.ply,

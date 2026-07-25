@@ -2,6 +2,9 @@ import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { serve } from "@hono/node-server";
 import { createMockRail } from "@onestepchess/rail-mock";
+import { AdminReadCache } from "./admin/cache.js";
+import { registerAdminCommands } from "./admin/commands.js";
+import { registerAdminRoutes } from "./admin/routes.js";
 import {
   createTurnstileVerifier,
   type TurnstileVerifier,
@@ -41,6 +44,13 @@ import { backfillPoints } from "./incentives/points.js";
 import { PublicStats } from "./incentives/stats.js";
 import { createLogger } from "./logger.js";
 import { Metrics, registerMetricsRoute } from "./metrics.js";
+import { OperationalAlerts } from "./operations/alerts.js";
+import {
+  OperationalState,
+  probeFacilitator,
+  registerOperationalCommands,
+  runReconciliation,
+} from "./operations/reconciliation.js";
 import {
   registerPayoutCommands,
   runPayoutExecutor,
@@ -50,6 +60,12 @@ import {
   recoverUnresolvedTerminalGames,
 } from "./recovery.js";
 
+export * from "./admin/auth.js";
+export * from "./admin/cache.js";
+export * from "./admin/commands.js";
+export * from "./admin/config-metadata.js";
+export * from "./admin/read-models.js";
+export * from "./admin/routes.js";
 export * from "./auth/challenge.js";
 export * from "./auth/genesis.js";
 export * from "./auth/jwt.js";
@@ -90,6 +106,9 @@ export * from "./logger.js";
 export * from "./markup.js";
 export * from "./metrics.js";
 export * from "./names.js";
+export * from "./operations/alerts.js";
+export * from "./operations/pause.js";
+export * from "./operations/reconciliation.js";
 export * from "./payouts/executor.js";
 export * from "./recovery.js";
 export * from "./replays.js";
@@ -126,7 +145,7 @@ export async function main(): Promise<void> {
     })
     .from(schema.configOverrides)
     .all();
-  const config = applyConfigOverrides(loaded.config, overrideRows);
+  let config = applyConfigOverrides(loaded.config, overrideRows);
 
   if (loaded.env.RAIL !== "mock") {
     // rail-avm wiring lands with the move-path slice; Release 1 runs on the
@@ -135,7 +154,16 @@ export async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  const rail = createMockRail();
+  const storedBook = (
+    sqlite
+      .prepare(
+        "SELECT coalesce(sum(balance_microusdc), 0) AS amount FROM ledger_balances WHERE account IN ('treasury', 'protocol')",
+      )
+      .get() as { amount: number }
+  ).amount;
+  const rail = createMockRail(
+    storedBook === 0 ? {} : { initialTreasury: { usdcMicroUsdc: storedBook } },
+  );
 
   const now = Date.now();
   if (
@@ -156,6 +184,33 @@ export async function main(): Promise<void> {
   const views = new CoordinatorViews();
   views.rebuild(db, now);
   const coordinator = new Coordinator({ sqlite, db, logger, views });
+  const adminCache = new AdminReadCache(
+    Date.now,
+    () => config.ADMIN_CACHE_TTL_SECONDS,
+  );
+  const alerts = new OperationalAlerts({
+    url: loaded.env.ALERT_WEBHOOK_URL,
+    dedupeSeconds: () => config.ALERT_DEDUPE_SECONDS,
+    now: Date.now,
+    transport: (url, init) => fetch(url, init),
+    logger,
+    secrets: secretValues(loaded.env),
+  });
+  if (currentMode(db) === "paused") {
+    void alerts.emit("boot_paused");
+  }
+  const operationalState = new OperationalState();
+  const operationalDeps = {
+    coordinator,
+    db,
+    rail,
+    config: () => config,
+    now: Date.now,
+    alerts,
+    state: operationalState,
+    secrets: secretValues(loaded.env),
+  } as const;
+  registerOperationalCommands(operationalDeps);
   const events = new EventStreamService({
     sqlite,
     db,
@@ -197,6 +252,7 @@ export async function main(): Promise<void> {
     config: () => config,
     rng: Math.random,
     logger,
+    alerts,
   });
   let turnstile: TurnstileVerifier;
   if (loaded.env.TURNSTILE_SECRET !== undefined) {
@@ -224,13 +280,29 @@ export async function main(): Promise<void> {
     publicStats,
   } as const;
   registerClaimCommands(claimDeps);
-  registerResolution({
+  const resolutionDeps = {
     coordinator,
     db,
     logger,
     config: () => config,
     metrics,
     publicStats,
+    alerts,
+  } as const;
+  registerResolution(resolutionDeps);
+  registerAdminCommands({
+    coordinator,
+    db,
+    views,
+    timers,
+    config: () => config,
+    setConfig: (next) => {
+      config = next;
+    },
+    baseConfig: loaded.config,
+    resolution: resolutionDeps,
+    alerts,
+    cache: adminCache,
   });
   const payoutDeps = {
     coordinator,
@@ -240,6 +312,7 @@ export async function main(): Promise<void> {
     now: Date.now,
     logger,
     metrics,
+    alerts,
   } as const;
   registerPayoutCommands(payoutDeps);
   let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -275,6 +348,12 @@ export async function main(): Promise<void> {
   // Resume payout batches and pay out any freshly-recovered resolutions
   // (F1 step 6) before serving.
   await runPayouts();
+  await probeFacilitator(operationalDeps);
+  try {
+    await runReconciliation(operationalDeps, "boot");
+  } catch (error) {
+    logger.error({ err: error }, "boot reconciliation unavailable");
+  }
   // Deterministic, idempotent points backfill of pre-incentive history (F15
   // step 6); a no-op once every terminal game already has its award rows.
   backfillPoints(db, now, {
@@ -307,6 +386,18 @@ export async function main(): Promise<void> {
     events.prune();
   }, EVENT_PRUNE_INTERVAL_MS);
   eventPruneInterval.unref();
+  const facilitatorInterval = setInterval(() => {
+    void probeFacilitator(operationalDeps).catch((error) => {
+      logger.error({ err: error }, "facilitator probe command failed");
+    });
+  }, 60_000);
+  facilitatorInterval.unref();
+  const reconciliationInterval = setInterval(() => {
+    void runReconciliation(operationalDeps, "scheduled").catch((error) => {
+      logger.error({ err: error }, "scheduled reconciliation failed");
+    });
+  }, config.RECONCILE_INTERVAL_MINUTES * 60_000);
+  reconciliationInterval.unref();
 
   // Nightly online snapshot at BACKUP_HOUR_UTC into a persistent-volume dir
   // (server spec §4). Default: a `backups/` sibling of the DB file.
@@ -322,7 +413,16 @@ export async function main(): Promise<void> {
           retentionDays: config.BACKUP_RETENTION_DAYS,
           now: Date.now,
           logger,
-        }).finally(scheduleBackup);
+        })
+          .then((result) => {
+            if (!result.ok) {
+              return alerts.emit("backup_failure", {
+                message: result.error.message,
+              });
+            }
+            return undefined;
+          })
+          .finally(scheduleBackup);
       },
       nextBackupDelayMs(Date.now(), config.BACKUP_HOUR_UTC),
     );
@@ -416,6 +516,24 @@ export async function main(): Promise<void> {
     mode,
     adminToken: loaded.env.ADMIN_TOKEN,
   });
+  registerAdminRoutes(app, {
+    db,
+    jwtSecret: loaded.env.JWT_SECRET,
+    adminToken: loaded.env.ADMIN_TOKEN,
+    adminAddresses: loaded.env.ADMIN_ADDRESSES,
+    now: Date.now,
+    rail,
+    views,
+    config: () => config,
+    baseConfig: loaded.config,
+    state: operationalState,
+    metrics,
+    clientCount: () => events.clientCount,
+    secrets: secretValues(loaded.env),
+    coordinator,
+    cache: adminCache,
+    reconciliation: operationalDeps,
+  });
   // Static SPA fallback is registered last so its `*` route never shadows an
   // API, discovery, or `/llms.txt` route (server spec §6.6).
   registerStaticRoutes(app, {
@@ -435,6 +553,8 @@ export async function main(): Promise<void> {
     clearInterval(heartbeatInterval);
     clearInterval(nudgeInterval);
     clearInterval(eventPruneInterval);
+    clearInterval(facilitatorInterval);
+    clearInterval(reconciliationInterval);
     if (backupTimer !== undefined) clearTimeout(backupTimer);
     if (recoveryTimer !== undefined) clearTimeout(recoveryTimer);
     timers.disarmAll();

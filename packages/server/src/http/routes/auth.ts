@@ -440,6 +440,9 @@ export function registerAuthRoutes(
     if (player === undefined) {
       throw new Error("player row missing after registration");
     }
+    if (player.banned) {
+      throw new AppError("BANNED", { hint: "account banned" });
+    }
 
     let linkedGuestClaims: number | undefined;
     if (guest !== null && deps.coordinator !== undefined) {

@@ -27,7 +27,7 @@ function tempDir(prefix: string): string {
 const logger = createLogger({ level: "silent" });
 
 describe("SQLite backup (server spec §4)", () => {
-  it("backup_is_incremental_atomic_retained_and_non_pausing", async () => {
+  it("backup_schedule_retains_snapshots_and_alerts_without_pause", async () => {
     const dbDir = tempDir("osc-db-");
     const sqlite = new Database(join(dbDir, "osc.sqlite"));
     sqlite.exec("CREATE TABLE t(x); INSERT INTO t VALUES (1),(2),(3);");

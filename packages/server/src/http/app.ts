@@ -77,6 +77,7 @@ export type AppEnv = {
     requestId: string;
     /** Set by sessionAuth middleware on authenticated routes only. */
     session: SessionInfo;
+    adminActor: string;
   };
 };
 

@@ -1,8 +1,9 @@
 import { createRng } from "@onestepchess/core";
 import { createMockRail } from "@onestepchess/rail-mock";
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type ServerConfig, serverConfigSchema } from "../config.js";
-import { type OpenedDatabase, openDatabase } from "../db/open.js";
+import { type OpenedDatabase, openDatabase, schema } from "../db/open.js";
 import { createLogger } from "../logger.js";
 import { ChessAdapterRegistry } from "./chess-registry.js";
 import { registerClaimCommands } from "./claims.js";
@@ -77,12 +78,13 @@ function setup(overrides: Record<string, unknown> = {}) {
 async function player(
   stack: ReturnType<typeof setup>,
   address: string,
+  kind: "human" | "agent" = "human",
 ): Promise<void> {
   stack.database.sqlite
     .prepare(
-      "INSERT INTO players(address, kind, nickname, created_at, banned) VALUES (?, 'human', ?, ?, false)",
+      "INSERT INTO players(address, kind, nickname, created_at, banned) VALUES (?, ?, ?, ?, false)",
     )
-    .run(address, address, Date.now());
+    .run(address, kind, address, Date.now());
   await stack.coordinator.dispatch({ type: "PoolTick", payload: {} });
   await stack.coordinator.onIdle();
 }
@@ -91,15 +93,21 @@ async function claim(
   stack: ReturnType<typeof setup>,
   address: string,
   demo = false,
+  kind: "human" | "agent" = "human",
 ) {
   const result = await stack.coordinator.dispatch({
     type: "ClaimRequested",
-    payload: { player: address, kind: "human" as const, demo },
-    claimClass: "human",
+    payload: { player: address, kind, demo },
+    claimClass: kind,
   });
   if (result.kind !== "ok") throw new Error("claim deprioritized");
   return result.result as {
-    claim: { id: string; gameId: string } | null;
+    claim: {
+      id: string;
+      gameId: string;
+      stakeMicrousdc: number;
+      deadline: number;
+    } | null;
     created: boolean;
     quota?: boolean;
     retryAfterSeconds?: number;
@@ -182,6 +190,82 @@ describe("claim issuance (F3/F5)", () => {
       retryAfterSeconds: 3600,
     });
     expect(demo.created).toBe(true);
+  });
+
+  it("agent_claim_terms_use_agent_and_endspiel_quota_ttl_and_stake", async () => {
+    const stack = setup({
+      GAME_POOL_TARGET: 1,
+      QUOTA_AGENT: 1,
+      AGENT_STAKE: 1_234,
+      ENDSPIEL_STAKE: 234,
+      CLAIM_TTL_AGENT: 90,
+      CLAIM_TTL_ENDSPIEL: 30,
+    });
+    await player(stack, "agent-normal", "agent");
+    const normal = await claim(stack, "agent-normal", false, "agent");
+    expect(normal.claim).toMatchObject({ stakeMicrousdc: 1_234 });
+    expect(normal.claim?.deadline).toBe(Date.now() + 90_000);
+
+    stack.database.db
+      .update(schema.claims)
+      .set({ deadline: Date.now() })
+      .where(eq(schema.claims.id, normal.claim?.id as string))
+      .run();
+    await stack.coordinator.dispatch({
+      type: "ExpireClaim",
+      payload: { claimId: normal.claim?.id },
+    });
+    expect(await claim(stack, "agent-normal", false, "agent")).toMatchObject({
+      claim: null,
+      quota: true,
+      retryAfterSeconds: 3_600,
+    });
+
+    await player(stack, "agent-end", "agent");
+    stack.database.db
+      .update(schema.games)
+      .set({ status: "endspiel", endspielPly: 1 })
+      .where(eq(schema.games.id, normal.claim?.gameId as string))
+      .run();
+    stack.views.rebuild(stack.database.db, Date.now());
+    const endspiel = await claim(stack, "agent-end", false, "agent");
+    expect(endspiel.claim).toMatchObject({ stakeMicrousdc: 234 });
+    expect(endspiel.claim?.deadline).toBe(Date.now() + 30_000);
+  });
+
+  it("endspiel_excludes_humans_and_accepts_only_agents_after_threshold", async () => {
+    const stack = setup({
+      GAME_POOL_TARGET: 1,
+      CLAIM_TTL_ENDSPIEL: 30,
+      ENDSPIEL_STAKE: 200,
+    });
+    await player(stack, "human");
+    await player(stack, "agent-one", "agent");
+    await player(stack, "agent-two", "agent");
+    const game = [...stack.views.games.values()][0];
+    if (game === undefined) throw new Error("game unavailable");
+    stack.database.db
+      .update(schema.games)
+      .set({ status: "endspiel", endspielPly: 1 })
+      .where(eq(schema.games.id, game.id))
+      .run();
+    stack.views.rebuild(stack.database.db, Date.now());
+
+    expect((await claim(stack, "human")).claim).toBeNull();
+    const first = await claim(stack, "agent-one", false, "agent");
+    expect(first.claim).toMatchObject({ stakeMicrousdc: 200 });
+    stack.database.db
+      .update(schema.claims)
+      .set({ deadline: Date.now() })
+      .where(eq(schema.claims.id, first.claim?.id as string))
+      .run();
+    await stack.coordinator.dispatch({
+      type: "ExpireClaim",
+      payload: { claimId: first.claim?.id },
+    });
+    expect(
+      (await claim(stack, "agent-two", false, "agent")).claim,
+    ).toMatchObject({ stakeMicrousdc: 200 });
   });
 
   it("expires a claim, frees the slot, and defers while an intent is in flight", async () => {

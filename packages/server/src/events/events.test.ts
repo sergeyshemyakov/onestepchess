@@ -409,7 +409,7 @@ describe("resumable SSE and live human events", () => {
     expect(stack.events.clientCount).toBe(0);
   });
 
-  it("game_available_nudge_honors_priority_cap_and_once_per_move", async () => {
+  it("agent_nudges_require_agent_claimability_and_never_preempt_humans", async () => {
     const stack = setup();
     const addresses = ["human-staked", "human-demo", "agent-one", "agent-two"];
     seedPlayer(stack, "human-staked");

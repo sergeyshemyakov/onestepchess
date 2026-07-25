@@ -2,12 +2,13 @@ import { randomBytes } from "node:crypto";
 import * as ed from "@noble/ed25519";
 import { createMockRail, type MockRail } from "@onestepchess/rail-mock";
 import algosdk from "algosdk";
+import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { sha256 } from "../../auth/ed25519.js";
 import type { TurnstileResult } from "../../auth/turnstile.js";
 import { createTurnstileVerifier } from "../../auth/turnstile.js";
 import { serverConfigSchema } from "../../config.js";
-import { type OpenedDatabase, openDatabase } from "../../db/open.js";
+import { type OpenedDatabase, openDatabase, schema } from "../../db/open.js";
 import { createLogger } from "../../logger.js";
 import { createApp } from "../app.js";
 import { registerAuthRoutes, sessionAuth } from "./auth.js";
@@ -286,7 +287,7 @@ describe("registration matrix (F2)", () => {
     expect(ok.status).toBe(200);
   });
 
-  it("agents get an auto-assigned word-list nickname", async () => {
+  it("agent_registration_is_turnstile_free_kind_immutable_and_ban_checked", async () => {
     const stack = setup();
     const identity = nobleIdentity();
     const proof = await makeProof(stack, identity);
@@ -301,6 +302,34 @@ describe("registration matrix (F2)", () => {
     };
     expect(body.player.kind).toBe("agent");
     expect(body.player.nickname).toMatch(/^[a-z]+-[a-z]+-\d{3}$/);
+
+    const reloginProof = await makeProof(stack, identity);
+    const relogin = await postJson(stack, "/api/v1/auth/verify", {
+      address: identity.address,
+      kind: "human",
+      nickname: "cannot-change-kind",
+      turnstileToken: "not-used",
+      ...reloginProof,
+    });
+    expect(relogin.status).toBe(200);
+    expect(
+      ((await relogin.json()) as { player: { kind: string } }).player.kind,
+    ).toBe("agent");
+
+    stack.database.db
+      .update(schema.players)
+      .set({ banned: true })
+      .where(eq(schema.players.address, identity.address))
+      .run();
+    const bannedProof = await makeProof(stack, identity);
+    const banned = await postJson(stack, "/api/v1/auth/verify", {
+      address: identity.address,
+      ...bannedProof,
+    });
+    expect(banned.status).toBe(403);
+    expect((await banned.json()) as { error: string }).toMatchObject({
+      error: "BANNED",
+    });
   });
 
   it("kind is immutable on later verifies", async () => {
