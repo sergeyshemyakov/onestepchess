@@ -2,13 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { type ApiClient, ApiError } from "../api/client.js";
 import type { PlayerView, ProfileView } from "../api/schemas.js";
+import { copyText } from "../lib/clipboard.js";
 import { formatMicroAlgo, formatMicroUsdc } from "../lib/format.js";
 import { readSfx, writeSfx } from "../lib/storage.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
-
-function copyToClipboard(value: string): void {
-  navigator.clipboard?.writeText(value).catch(() => undefined);
-}
 
 /** F-W9 wallet popover. Balances are fetched only while it is open — the
  * only surface that ever requests them (`?include=balances`); a slow fetch
@@ -86,7 +83,7 @@ export function WalletPopover(props: {
           type="button"
           className="btn mini"
           onClick={() => {
-            copyToClipboard(props.player.address);
+            void copyText(props.player.address);
             setCopiedWhat("address");
           }}
         >
@@ -185,7 +182,7 @@ export function WalletPopover(props: {
             type="button"
             className="btn mini"
             onClick={() => {
-              copyToClipboard(
+              void copyText(
                 `${window.location.origin}/?ref=${profile.refCode}`,
               );
               setCopiedWhat("invite");

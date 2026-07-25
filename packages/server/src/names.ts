@@ -65,3 +65,15 @@ export function generateName(rng: Rng): string {
     .padStart(3, "0");
   return `${pick(rng, ADJECTIVES)}-${pick(rng, PIECES)}-${number}`;
 }
+
+export function generateUniqueName(
+  rng: Rng,
+  isTaken: (candidate: string) => boolean,
+  description: string,
+): string {
+  for (let attempt = 0; attempt < 1_000; attempt += 1) {
+    const candidate = generateName(rng);
+    if (!isTaken(candidate)) return candidate;
+  }
+  throw new Error(`word list exhausted generating ${description}`);
+}

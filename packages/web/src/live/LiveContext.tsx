@@ -100,6 +100,51 @@ function isWin(payload: SseEventMap["game_resolved"]): boolean {
   return payload.yourEntries.some((entry) => entry.side === payload.result);
 }
 
+type ResolutionEntry = SseEventMap["game_resolved"]["yourEntries"][number];
+type StakedResolutionEntry = Extract<ResolutionEntry, { demo: false }>;
+
+function resolutionNotice(payload: SseEventMap["game_resolved"]): {
+  readonly text: string;
+  readonly kind: "info" | "lose";
+  readonly share:
+    | { readonly gameId: string; readonly yourPly: number }
+    | undefined;
+} {
+  const win = isWin(payload);
+  const allDemo = payload.yourEntries.every((entry) => entry.demo);
+  const stakedWin = payload.yourEntries.find(
+    (entry): entry is StakedResolutionEntry =>
+      !entry.demo && entry.side === payload.result,
+  );
+  const share =
+    win && stakedWin !== undefined && payload.gameId !== undefined
+      ? { gameId: payload.gameId, yourPly: stakedWin.ply }
+      : undefined;
+
+  if (allDemo) {
+    return {
+      text: "game resolved — nothing staked, nothing counted",
+      kind: win ? "info" : "lose",
+      share,
+    };
+  }
+  if (win) {
+    return {
+      text: `✓ you won · ${formatMicroUsdc(payload.totalPayoutMicroUsdc)}`,
+      kind: "info",
+      share,
+    };
+  }
+  if (payload.result === "draw" || payload.result === "aborted") {
+    return {
+      text: `game resolved · ${payload.result}`,
+      kind: "lose",
+      share,
+    };
+  }
+  return { text: "✗ the game was lost", kind: "lose", share };
+}
+
 export function LiveProvider(props: {
   readonly client: ApiClient;
   readonly eventSourceFactory?: EventSourceFactory;
@@ -245,36 +290,16 @@ export function LiveProvider(props: {
       }
     });
     on("game_resolved", (payload) => {
-      const win = isWin(payload);
-      const allDemo = payload.yourEntries.every((entry) => entry.demo);
-      const stakedWin = payload.yourEntries.find(
-        (entry) => !entry.demo && entry.side === payload.result,
-      );
+      const notice = resolutionNotice(payload);
+      const share = notice.share;
       const action =
-        win &&
-        stakedWin !== undefined &&
-        !stakedWin.demo &&
-        payload.gameId !== undefined
-          ? {
+        share === undefined
+          ? undefined
+          : {
               label: "share ▸",
-              onClick: () =>
-                setShare({
-                  gameId: payload.gameId as string,
-                  yourPly: stakedWin.ply,
-                }),
-            }
-          : undefined;
-      push(
-        allDemo
-          ? "game resolved — nothing staked, nothing counted"
-          : win
-            ? `✓ you won · ${formatMicroUsdc(payload.totalPayoutMicroUsdc)}`
-            : payload.result === "draw" || payload.result === "aborted"
-              ? `game resolved · ${payload.result}`
-              : "✗ the game was lost",
-        win ? "info" : "lose",
-        action,
-      );
+              onClick: () => setShare(share),
+            };
+      push(notice.text, notice.kind, action);
       refreshGamesProfile();
     });
     on("payout_confirmed", (payload) => {

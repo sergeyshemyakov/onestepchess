@@ -7,6 +7,7 @@ import type { StatusCode } from "hono/utils/http-status";
 import type { ServerConfig } from "../config.js";
 import type { Db } from "../db/open.js";
 import { schema } from "../db/open.js";
+import { escapeMarkup } from "../markup.js";
 import type { AppEnv } from "./app.js";
 
 /** Cloudflare Turnstile's fixed script/frame/connect origin (server spec
@@ -39,15 +40,6 @@ export type StaticDeps = {
 const OG_PLACEHOLDER = "<!-- osc:og -->";
 const OG_PITCH =
   "Strangers and machines share a chess game — you play exactly one of its moves.";
-
-function htmlEscape(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
 
 /** Replace the web shell's OG placeholder with escaped unfurl tags for a
  * terminal replay (F16 step 2). Unknown and non-terminal ids return the shell
@@ -85,9 +77,9 @@ function injectReplayOg(
         : `${game.result[0]?.toUpperCase()}${game.result.slice(1)} won`;
   const description = `${outcome} · ${game.termination}. ${OG_PITCH}`;
   const tags = [
-    `<meta property="og:title" content="${htmlEscape(game.name)}">`,
-    `<meta property="og:description" content="${htmlEscape(description)}">`,
-    `<meta property="og:image" content="${htmlEscape(cardUrl)}">`,
+    `<meta property="og:title" content="${escapeMarkup(game.name)}">`,
+    `<meta property="og:description" content="${escapeMarkup(description)}">`,
+    `<meta property="og:image" content="${escapeMarkup(cardUrl)}">`,
     `<meta name="twitter:card" content="summary_large_image">`,
   ].join("\n    ");
   return html.replace(OG_PLACEHOLDER, tags);

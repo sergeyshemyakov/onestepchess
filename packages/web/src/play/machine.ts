@@ -80,6 +80,41 @@ export type PlayEvent =
   | { readonly type: "ACK" }
   | { readonly type: "RESTORE"; readonly state: PlayState };
 
+function modeState(
+  state: Pick<PlayState, "demo" | "guest">,
+  phase: PlayPhase,
+): PlayState {
+  return {
+    phase,
+    demo: state.demo,
+    ...(state.guest === true ? { guest: true } : {}),
+  };
+}
+
+function focusState(claim: ClaimView, guest: PlayState["guest"]): PlayState {
+  return {
+    phase: "FOCUS",
+    demo: claim.demo,
+    ...(guest === true ? { guest: true } : {}),
+    claim,
+    selected: null,
+  };
+}
+
+function withoutPaymentHeader(state: PlayState): PlayState {
+  const { paymentHeader: _dropped, ...rest } = state;
+  return rest;
+}
+
+function receiptState(state: PlayState, receipt: MoveReceipt): PlayState {
+  return {
+    ...withoutPaymentHeader(state),
+    phase: "RECEIPT",
+    receipt,
+    ...(state.phase === "SETTLING" ? { settlePoll: false } : {}),
+  };
+}
+
 export function playReducer(state: PlayState, event: PlayEvent): PlayState {
   if (event.type === "RESTORE") return event.state;
 
@@ -142,13 +177,7 @@ export function playReducer(state: PlayState, event: PlayEvent): PlayState {
     case "CLAIMING":
       switch (event.type) {
         case "CLAIM_READY":
-          return {
-            phase: "FOCUS",
-            demo: event.claim.demo,
-            ...(state.guest === true ? { guest: true } : {}),
-            claim: event.claim,
-            selected: null,
-          };
+          return focusState(event.claim, state.guest);
         case "GUEST_GATE_FAILED":
           return {
             phase: "GUEST_GATE",
@@ -170,17 +199,11 @@ export function playReducer(state: PlayState, event: PlayEvent): PlayState {
           };
         case "QUOTA_OUT":
           return {
-            phase: "QUOTA_OUT",
-            demo: state.demo,
-            ...(state.guest === true ? { guest: true } : {}),
+            ...modeState(state, "QUOTA_OUT"),
             retryAfterSeconds: event.retryAfterSeconds,
           };
         case "PAUSED":
-          return {
-            phase: "PAUSED",
-            demo: state.demo,
-            ...(state.guest === true ? { guest: true } : {}),
-          };
+          return modeState(state, "PAUSED");
         default:
           return state;
       }
@@ -188,7 +211,7 @@ export function playReducer(state: PlayState, event: PlayEvent): PlayState {
     case "FOCUS":
       switch (event.type) {
         case "RECEIPT":
-          return { ...state, phase: "RECEIPT", receipt: event.receipt };
+          return receiptState(state, event.receipt);
         case "SELECT":
           return { ...state, selected: event.square };
         case "MOVE_CHOSEN":
@@ -201,13 +224,7 @@ export function playReducer(state: PlayState, event: PlayEvent): PlayState {
         case "CLAIM_EXPIRED":
           return terminalExpired(state);
         case "CLAIM_REFRESHED":
-          return {
-            phase: "FOCUS",
-            demo: event.claim.demo,
-            ...(state.guest === true ? { guest: true } : {}),
-            claim: event.claim,
-            selected: null,
-          };
+          return focusState(event.claim, state.guest);
         default:
           return state;
       }
@@ -215,8 +232,7 @@ export function playReducer(state: PlayState, event: PlayEvent): PlayState {
     case "CONFIRM":
       switch (event.type) {
         case "RECEIPT": {
-          const { paymentHeader: _dropped, ...rest } = state;
-          return { ...rest, phase: "RECEIPT", receipt: event.receipt };
+          return receiptState(state, event.receipt);
         }
         case "CHANGE_MOVE": {
           const { chosenMove: _dropped, ...rest } = state;
@@ -229,13 +245,7 @@ export function playReducer(state: PlayState, event: PlayEvent): PlayState {
         case "CLAIM_EXPIRED":
           return terminalExpired(state);
         case "CLAIM_REFRESHED":
-          return {
-            phase: "FOCUS",
-            demo: event.claim.demo,
-            ...(state.guest === true ? { guest: true } : {}),
-            claim: event.claim,
-            selected: null,
-          };
+          return focusState(event.claim, state.guest);
         default:
           return state;
       }
@@ -243,8 +253,7 @@ export function playReducer(state: PlayState, event: PlayEvent): PlayState {
     case "SIGNING":
       switch (event.type) {
         case "RECEIPT": {
-          const { paymentHeader: _dropped, ...rest } = state;
-          return { ...rest, phase: "RECEIPT", receipt: event.receipt };
+          return receiptState(state, event.receipt);
         }
         case "HEADER_READY":
           return { ...state, phase: "SETTLING", paymentHeader: event.header };
@@ -260,13 +269,7 @@ export function playReducer(state: PlayState, event: PlayEvent): PlayState {
     case "SETTLING":
       switch (event.type) {
         case "RECEIPT": {
-          const { paymentHeader: _dropped, ...rest } = state;
-          return {
-            ...rest,
-            phase: "RECEIPT",
-            receipt: event.receipt,
-            settlePoll: false,
-          };
+          return receiptState(state, event.receipt);
         }
         case "PAYMENT_PENDING":
           return {
@@ -279,13 +282,15 @@ export function playReducer(state: PlayState, event: PlayEvent): PlayState {
         case "PAYMENT_FAILED": {
           // Claim keeps ticking; the envelope hint renders in CONFIRM.
           // A definitively failed payment never resends its old bytes.
-          const { paymentHeader: _dropped, ...rest } = state;
-          return { ...rest, phase: "CONFIRM", error: event.envelope };
+          return {
+            ...withoutPaymentHeader(state),
+            phase: "CONFIRM",
+            error: event.envelope,
+          };
         }
         case "PAYMENT_UNAVAILABLE": {
-          const { paymentHeader: _dropped, ...rest } = state;
           return {
-            ...rest,
+            ...withoutPaymentHeader(state),
             phase: "CONFIRM",
             error: null,
             retryAfterSeconds: event.retryAfterSeconds,
@@ -309,9 +314,5 @@ export function playReducer(state: PlayState, event: PlayEvent): PlayState {
 }
 
 function terminalExpired(state: PlayState): PlayState {
-  return {
-    phase: "EXPIRED",
-    demo: state.demo,
-    ...(state.guest === true ? { guest: true } : {}),
-  };
+  return modeState(state, "EXPIRED");
 }

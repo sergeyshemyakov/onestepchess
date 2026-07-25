@@ -1309,20 +1309,6 @@ svg.pc {
 .qv-fields dd {
   margin: 0;
 }
-.activelist {
-  list-style: none;
-  padding: 0;
-  display: grid;
-  gap: 6px;
-}
-.activerow {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  align-items: baseline;
-  border: 1px solid var(--line);
-  padding: 6px 10px;
-}
 .finishedgrid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
@@ -1344,6 +1330,14 @@ svg.pc {
 }
 .fincard:hover {
   background: color-mix(in oklab, var(--ph) 8%, transparent);
+}
+/* Active cards match finished cards in size but are not clickable — ongoing
+ * games have no quick-view (I7). */
+.fincard.ongoing {
+  cursor: default;
+}
+.fincard.ongoing:hover {
+  background: none;
 }
 .pager {
   margin-top: 10px;

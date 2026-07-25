@@ -1,10 +1,10 @@
-import { lazy, Suspense, useEffect } from "react";
+import { lazy, Suspense, useCallback, useEffect } from "react";
 import { Navigate, Route, Routes } from "react-router";
 import type { ApiClient } from "./api/client.js";
 import type { PlayerView } from "./api/schemas.js";
 import type { EventSourceFactory } from "./api/sse.js";
 import { SessionProvider, useSession } from "./auth/SessionContext.jsx";
-import { AppShell } from "./components/AppShell.jsx";
+import { BootSkeleton } from "./components/BootSkeleton.jsx";
 import { ToastProvider, useToasts } from "./components/Toasts.jsx";
 import { clearRef, writeGuestDemo } from "./lib/storage.js";
 import { LiveProvider } from "./live/LiveContext.jsx";
@@ -54,29 +54,22 @@ function AuthBridge(props: { readonly handlers: AuthHandlers }) {
   return null;
 }
 
-function BootSkeleton() {
-  return (
-    <AppShell>
-      <p className="console" style={{ padding: "40px 22px" }}>
-        &gt; connecting<span className="blink">▊</span>
-      </p>
-    </AppShell>
-  );
-}
-
 function useSignedIn() {
   const { signedIn } = useSession();
   const { push } = useToasts();
-  return (player: PlayerView, linkedGuestClaims?: number) => {
-    writeGuestDemo(null);
-    clearRef();
-    signedIn(player);
-    if ((linkedGuestClaims ?? 0) > 0) {
-      push(
-        "your demo game is linked — the outcome will land in your finished pane",
-      );
-    }
-  };
+  return useCallback(
+    (player: PlayerView, linkedGuestClaims?: number) => {
+      writeGuestDemo(null);
+      clearRef();
+      signedIn(player);
+      if ((linkedGuestClaims ?? 0) > 0) {
+        push(
+          "your demo game is linked — the outcome will land in your finished pane",
+        );
+      }
+    },
+    [push, signedIn],
+  );
 }
 
 function Home(props: { readonly client: ApiClient }) {

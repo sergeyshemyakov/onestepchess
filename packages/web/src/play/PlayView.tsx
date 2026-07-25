@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import type { Meta, Move } from "../api/schemas.js";
 import { obtainTurnstileToken } from "../auth/turnstile.js";
 import { Board, type BoardFx } from "../board/Board.jsx";
@@ -47,6 +47,27 @@ function CountdownLine(props: {
     return () => clearInterval(tick);
   }, [props.seconds, props.onDone]);
   return <>{props.render(left)}</>;
+}
+
+function StatusDialog(props: {
+  readonly title: string;
+  readonly children: ReactNode;
+  readonly onClose: () => void;
+  readonly closeLabel?: string;
+}) {
+  return (
+    <div className="modalback">
+      <div className="modal" role="dialog" aria-modal="true">
+        <h3>{props.title}</h3>
+        {props.children}
+        <div className="modal-actions single">
+          <button type="button" className="btn mini" onClick={props.onClose}>
+            {props.closeLabel ?? "← back"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export function PlayView(props: {
@@ -152,6 +173,14 @@ export function PlayView(props: {
     state.phase === "SIGNING" ||
     state.phase === "SETTLING" ||
     state.phase === "RECEIPT";
+  const morphVisible =
+    state.phase === "RECEIPT"
+      ? state.chosenMove === undefined || claim !== undefined
+      : (state.phase === "CONFIRM" ||
+          state.phase === "SIGNING" ||
+          state.phase === "SETTLING") &&
+        claim !== undefined &&
+        state.chosenMove !== undefined;
 
   return (
     <div
@@ -176,101 +205,57 @@ export function PlayView(props: {
       ) : null}
 
       {state.phase === "NO_BOARDS" ? (
-        <div className="modalback">
-          <div className="modal" role="dialog" aria-modal="true">
-            <h3>NO BOARDS</h3>
-            <p className="mv">
-              <CountdownLine
-                seconds={Math.max(
-                  1,
-                  Math.ceil(
-                    state.retryAfterSeconds ?? INITIAL_NO_BOARDS_RETRY_SECONDS,
-                  ),
-                )}
-                onDone={() => send({ type: "RETRY" })}
-                render={(left) =>
-                  `NO BOARDS FREE :: retrying in ${formatCountdown(left)}`
-                }
-              />
-            </p>
-            <div className="modal-actions single">
-              <button
-                type="button"
-                className="btn mini"
-                onClick={() => send({ type: "ACK" })}
-              >
-                ← back
-              </button>
-            </div>
-          </div>
-        </div>
+        <StatusDialog title="NO BOARDS" onClose={() => send({ type: "ACK" })}>
+          <p className="mv">
+            <CountdownLine
+              seconds={Math.max(
+                1,
+                Math.ceil(
+                  state.retryAfterSeconds ?? INITIAL_NO_BOARDS_RETRY_SECONDS,
+                ),
+              )}
+              onDone={() => send({ type: "RETRY" })}
+              render={(left) =>
+                `NO BOARDS FREE :: retrying in ${formatCountdown(left)}`
+              }
+            />
+          </p>
+        </StatusDialog>
       ) : null}
 
       {state.phase === "QUOTA_OUT" ? (
-        <div className="modalback">
-          <div className="modal" role="dialog" aria-modal="true">
-            <h3>QUOTA</h3>
-            <p className="mv">OUT OF BOARDS THIS HOUR</p>
-            <p className="sub">
-              next at {nextAtLabel(state.retryAfterSeconds ?? 3_600)}
-            </p>
-            <div className="modal-actions single">
-              <button
-                type="button"
-                className="btn mini"
-                onClick={() => send({ type: "ACK" })}
-              >
-                ← back
-              </button>
-            </div>
-          </div>
-        </div>
+        <StatusDialog title="QUOTA" onClose={() => send({ type: "ACK" })}>
+          <p className="mv">OUT OF BOARDS THIS HOUR</p>
+          <p className="sub">
+            next at {nextAtLabel(state.retryAfterSeconds ?? 3_600)}
+          </p>
+        </StatusDialog>
       ) : null}
 
       {state.phase === "PAUSED" ? (
-        <div className="modalback">
-          <div className="modal" role="dialog" aria-modal="true">
-            <h3>PAUSED</h3>
-            <p className="sub">
-              settlement offline — boards suspended, nothing at risk.
-            </p>
-            <div className="modal-actions single">
-              <button
-                type="button"
-                className="btn mini"
-                onClick={() => send({ type: "ACK" })}
-              >
-                ← back
-              </button>
-            </div>
-          </div>
-        </div>
+        <StatusDialog title="PAUSED" onClose={() => send({ type: "ACK" })}>
+          <p className="sub">
+            settlement offline — boards suspended, nothing at risk.
+          </p>
+        </StatusDialog>
       ) : null}
 
       {state.phase === "EXPIRED" ? (
-        <div className="modalback">
-          <div className="modal" role="dialog" aria-modal="true">
-            <h3>TIME</h3>
-            <p className="mv">POSITION PASSED ON</p>
-            <p className="sub">
-              {state.guest === true
-                ? "nothing charged. log in to keep playing."
-                : "the board went to another player. nothing was charged."}
-            </p>
-            {state.guest === true ? (
-              <OnboardingDoors onWalletIntent={props.onWalletIntent} />
-            ) : null}
-            <div className="modal-actions single">
-              <button
-                type="button"
-                className="btn mini"
-                onClick={() => send({ type: "ACK" })}
-              >
-                back ▸
-              </button>
-            </div>
-          </div>
-        </div>
+        <StatusDialog
+          title="TIME"
+          closeLabel="back ▸"
+          onClose={() => send({ type: "ACK" })}
+        >
+          <p className="mv">POSITION PASSED ON</p>
+          <p className="sub">
+            {state.guest === true
+              ? "nothing charged. log in to keep playing."
+              : "the board went to another player. nothing was charged."}
+          </p>
+          {state.guest === true ? (
+            <OnboardingDoors onWalletIntent={props.onWalletIntent} />
+          ) : null}
+        </StatusDialog>
       ) : null}
 
       {focusVisible && claim !== undefined ? (
@@ -341,11 +326,7 @@ export function PlayView(props: {
                 <Timer
                   deadline={claim.deadline}
                   revealSeconds={meta.timing.timerRevealSeconds}
-                  totalSeconds={
-                    claim.demo || claim.phase === "endspiel"
-                      ? meta.timing.claimTtlSeconds.human
-                      : meta.timing.claimTtlSeconds.human
-                  }
+                  totalSeconds={meta.timing.claimTtlSeconds.human}
                   onExpire={checkExpiry}
                 />
               </p>
@@ -371,21 +352,7 @@ export function PlayView(props: {
         </div>
       ) : null}
 
-      {(state.phase === "CONFIRM" ||
-        state.phase === "SIGNING" ||
-        state.phase === "SETTLING" ||
-        state.phase === "RECEIPT") &&
-      claim !== undefined &&
-      state.chosenMove !== undefined ? (
-        <ConfirmMorph
-          flow={props.flow}
-          meta={meta}
-          onWalletIntent={props.onWalletIntent}
-          acceptedMove={props.acceptedMove}
-        />
-      ) : null}
-
-      {state.phase === "RECEIPT" && state.chosenMove === undefined ? (
+      {morphVisible ? (
         <ConfirmMorph
           flow={props.flow}
           meta={meta}
@@ -679,18 +646,10 @@ function LoginWall(props: {
   readonly onClose: () => void;
 }) {
   return (
-    <div className="modalback">
-      <div className="modal" role="dialog" aria-modal="true">
-        <h3>DEMO WAITING</h3>
-        <p className="sub">{props.message}</p>
-        <OnboardingDoors onWalletIntent={props.onWalletIntent} />
-        <div className="modal-actions single">
-          <button type="button" className="btn mini" onClick={props.onClose}>
-            ← back
-          </button>
-        </div>
-      </div>
-    </div>
+    <StatusDialog title="DEMO WAITING" onClose={props.onClose}>
+      <p className="sub">{props.message}</p>
+      <OnboardingDoors onWalletIntent={props.onWalletIntent} />
+    </StatusDialog>
   );
 }
 

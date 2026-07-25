@@ -7,9 +7,10 @@ import {
   type Side,
   squareIndex,
 } from "../lib/fen.js";
-import { useLoopGate } from "../replay/Replayer.jsx";
+import { useLoopGate } from "../replay/useLoopGate.js";
 import { Board } from "./Board.jsx";
 import { PieceGlyph } from "./pieces.jsx";
+import { useSquareSize } from "./useSquareSize.js";
 
 const EMPTY_FEN = "8/8/8/8/8/8/8/8 w - - 0 1";
 
@@ -47,25 +48,12 @@ export function BoardLoop(props: {
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const live = useLoopGate(hostRef);
+  useSquareSize(hostRef);
   const [phase, setPhase] = useState<Phase>("rest");
   const reduced =
     typeof matchMedia === "function" &&
     matchMedia("(prefers-reduced-motion: reduce)").matches;
   const capture = props.san.includes("x");
-
-  // Overlay glyphs size off --sq like real squares do, but the layer sits
-  // outside the Board (which only sets --sq on itself) — the host has to
-  // carry the variable or glyphs fall back to the 60px root default.
-  useEffect(() => {
-    const host = hostRef.current;
-    if (host === null || typeof ResizeObserver !== "function") return;
-    const refit = () =>
-      host.style.setProperty("--sq", `${host.clientWidth / 8}px`);
-    refit();
-    const observer = new ResizeObserver(refit);
-    observer.observe(host);
-    return () => observer.disconnect();
-  }, []);
 
   useEffect(() => {
     if (!live || reduced) return;

@@ -2,7 +2,7 @@ import type { Rng } from "@onestepchess/core";
 import { eq, sql } from "drizzle-orm";
 import type { Db } from "../db/open.js";
 import { schema } from "../db/open.js";
-import { generateName } from "../names.js";
+import { generateUniqueName } from "../names.js";
 
 // Referral capture (server spec F15 step 3): first touch wins and is immutable,
 // bad/self codes are ignored silently, and a fresh human registration carrying
@@ -29,16 +29,16 @@ export function resolveReferrer(
 /** A unique human invite slug (names.ts style), distinct from every existing
  * ref_code. Humans are minted one at registration. */
 export function freeRefCode(db: Db, rng: Rng): string {
-  for (let attempt = 0; attempt < 1_000; attempt += 1) {
-    const code = generateName(rng);
-    const taken = db
-      .select({ address: schema.players.address })
-      .from(schema.players)
-      .where(eq(schema.players.refCode, code))
-      .get();
-    if (taken === undefined) return code;
-  }
-  throw new Error("word list exhausted generating a ref code");
+  return generateUniqueName(
+    rng,
+    (code) =>
+      db
+        .select({ address: schema.players.address })
+        .from(schema.players)
+        .where(eq(schema.players.refCode, code))
+        .get() !== undefined,
+    "a ref code",
+  );
 }
 
 /** Increment a referrer's joined counter (F15 step 3), in the caller's txn. */

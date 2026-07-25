@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { PaymentRail, Rng } from "@onestepchess/core";
 import algosdk from "algosdk";
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { Hono, MiddlewareHandler } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import {
@@ -12,6 +12,11 @@ import {
   verifyChallengeProof,
 } from "../../auth/challenge.js";
 import { signSession, verifySessionToken } from "../../auth/jwt.js";
+import {
+  freeNickname,
+  NICKNAME_PATTERN,
+  nicknameTaken,
+} from "../../auth/nickname.js";
 import type { TurnstileVerifier } from "../../auth/turnstile.js";
 import type { ServerConfig } from "../../config.js";
 import type { Coordinator } from "../../coordinator/queue.js";
@@ -22,11 +27,13 @@ import {
   freeRefCode,
   resolveReferrer,
 } from "../../incentives/referrals.js";
-import { generateName } from "../../names.js";
 import { type AppEnv, AppError } from "../app.js";
 import { challengeBodySchema, verifyBodySchema } from "../contracts.js";
 import { clientIp } from "../middleware/client-ip.js";
 import { createTokenBucket } from "../middleware/ratelimit.js";
+import { requireTurnstile } from "../turnstile.js";
+import { parseJsonBody } from "../validation.js";
+import { playerView } from "../views.js";
 
 export type AuthRouteDeps = {
   readonly db: Db;
@@ -42,7 +49,6 @@ export type AuthRouteDeps = {
   readonly publicStats?: { recordPlayerRegistered(): void };
 };
 
-const NICKNAME_PATTERN = /^[a-zA-Z0-9_-]{3,24}$/;
 const SESSION_COOKIE = "osc_session";
 const GUEST_COOKIE = "osc_guest";
 
@@ -68,41 +74,16 @@ function throwVerifyFailure(outcome: VerifyOutcome & { ok: false }): never {
   }
 }
 
-function nicknameTaken(db: Db, nickname: string): boolean {
-  return (
-    db
-      .select({ address: schema.players.address })
-      .from(schema.players)
-      .where(sql`${schema.players.nickname} = ${nickname} COLLATE NOCASE`)
-      .get() !== undefined
-  );
-}
-
-function freeNickname(db: Db, rng: Rng): string {
-  for (let attempt = 0; attempt < 1_000; attempt += 1) {
-    const nickname = generateName(rng);
-    if (!nicknameTaken(db, nickname)) {
-      return nickname;
-    }
-  }
-  throw new Error("word list exhausted generating a nickname");
-}
-
-async function parseJsonBody(c: {
-  req: { json: () => Promise<unknown> };
-}): Promise<unknown> {
-  try {
-    return await c.req.json();
-  } catch {
-    throw new AppError("INVALID_REQUEST", { hint: "body must be JSON" });
-  }
-}
-
 function sessionTtlSeconds(config: ServerConfig): number {
   return config.JWT_TTL_HOURS * 3_600;
 }
 
-export function sessionAuth(deps: AuthRouteDeps): MiddlewareHandler<AppEnv> {
+export type SessionAuthDeps = Pick<
+  AuthRouteDeps,
+  "db" | "config" | "publicBaseUrl" | "jwtSecret" | "now"
+>;
+
+export function sessionAuth(deps: SessionAuthDeps): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
     authenticateWallet(deps, c);
     await next();
@@ -110,7 +91,7 @@ export function sessionAuth(deps: AuthRouteDeps): MiddlewareHandler<AppEnv> {
 }
 
 function authenticateWallet(
-  deps: AuthRouteDeps,
+  deps: SessionAuthDeps,
   c: Parameters<MiddlewareHandler<AppEnv>>[0],
 ): void {
   const cookieToken = getCookie(c, SESSION_COOKIE);
@@ -178,7 +159,7 @@ function authenticateWallet(
 }
 
 function guestIdentity(
-  deps: AuthRouteDeps,
+  deps: SessionAuthDeps,
   c: Parameters<MiddlewareHandler<AppEnv>>[0],
   allowLinked = false,
 ): string | null {
@@ -205,14 +186,32 @@ function guestIdentity(
   return claims.sub;
 }
 
+function hasWalletCredentials(
+  c: Parameters<MiddlewareHandler<AppEnv>>[0],
+): boolean {
+  return (
+    getCookie(c, SESSION_COOKIE) !== undefined ||
+    c.req.header("authorization")?.startsWith("Bearer ") === true
+  );
+}
+
+function setGuestSession(
+  c: Parameters<MiddlewareHandler<AppEnv>>[0],
+  address: string,
+): void {
+  c.set("session", {
+    address,
+    kind: "guest",
+    jti: "guest",
+    exp: 0,
+  });
+}
+
 export function guestOrSessionAuth(
-  deps: AuthRouteDeps,
+  deps: SessionAuthDeps,
 ): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
-    const hasWalletToken =
-      getCookie(c, SESSION_COOKIE) !== undefined ||
-      c.req.header("authorization")?.startsWith("Bearer ") === true;
-    if (hasWalletToken) {
+    if (hasWalletCredentials(c)) {
       authenticateWallet(deps, c);
       await next();
       return;
@@ -220,36 +219,23 @@ export function guestOrSessionAuth(
     const guest = guestIdentity(deps, c);
     if (guest === null)
       throw new AppError("UNAUTHENTICATED", { hint: "missing session" });
-    c.set("session", {
-      address: guest,
-      kind: "guest",
-      jti: "guest",
-      exp: 0,
-    });
+    setGuestSession(c, guest);
     await next();
   };
 }
 
 export function optionalGuestOrSessionAuth(
-  deps: AuthRouteDeps,
+  deps: SessionAuthDeps,
 ): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
-    const hasWalletToken =
-      getCookie(c, SESSION_COOKIE) !== undefined ||
-      c.req.header("authorization")?.startsWith("Bearer ") === true;
-    if (hasWalletToken) {
+    if (hasWalletCredentials(c)) {
       authenticateWallet(deps, c);
       await next();
       return;
     }
     const guest = guestIdentity(deps, c);
     if (guest !== null) {
-      c.set("session", {
-        address: guest,
-        kind: "guest",
-        jti: "guest",
-        exp: 0,
-      });
+      setGuestSession(c, guest);
     }
     await next();
   };
@@ -325,21 +311,20 @@ export function registerAuthRoutes(
   };
 
   app.post("/api/v1/auth/challenge", async (c) => {
-    const parsed = challengeBodySchema.safeParse(await parseJsonBody(c));
-    if (!parsed.success) {
-      throw new AppError("INVALID_REQUEST", { hint: "address is required" });
-    }
-    return c.json(createChallenge(challengeDeps, parsed.data.address), 200);
+    const body = await parseJsonBody(
+      challengeBodySchema,
+      c.req,
+      "address is required",
+    );
+    return c.json(createChallenge(challengeDeps, body.address), 200);
   });
 
   app.post("/api/v1/auth/verify", async (c) => {
-    const parsed = verifyBodySchema.safeParse(await parseJsonBody(c));
-    if (!parsed.success) {
-      throw new AppError("INVALID_REQUEST", {
-        hint: "body must carry address plus an arc60 or txn proof",
-      });
-    }
-    const body = parsed.data;
+    const body = await parseJsonBody(
+      verifyBodySchema,
+      c.req,
+      "body must carry address plus an arc60 or txn proof",
+    );
     if (!algosdk.isValidAddress(body.address)) {
       throw new AppError("INVALID_ADDRESS", {
         hint: "not a valid Algorand address",
@@ -405,21 +390,11 @@ export function registerAuthRoutes(
             hint: "human registration requires nickname and turnstileToken",
           });
         }
-        const turnstile = await deps.turnstile(
+        await requireTurnstile(
+          deps.turnstile,
           body.turnstileToken,
           clientIp(c, deps.trustProxyHops),
         );
-        if (turnstile === "unavailable") {
-          throw new AppError("DEPENDENCY_UNAVAILABLE", {
-            hint: "captcha verification unavailable; retry shortly",
-            retryAfterSeconds: 5,
-          });
-        }
-        if (turnstile === "fail") {
-          throw new AppError("TURNSTILE_FAILED", {
-            hint: "captcha verification failed",
-          });
-        }
         turnstileVerifiedAt = now;
       }
       nickname ??= freeNickname(deps.db, deps.rng);
@@ -500,12 +475,7 @@ export function registerAuthRoutes(
     setSessionCookie(c, jwt, ttlSeconds, deps.publicBaseUrl);
     return c.json(
       {
-        player: {
-          address: player.address,
-          kind: player.kind,
-          nickname: player.nickname,
-          createdAt: new Date(player.createdAt).toISOString(),
-        },
+        player: playerView(player),
         jwt,
         ...(linkedGuestClaims === undefined ? {} : { linkedGuestClaims }),
       },

@@ -5,17 +5,20 @@ import type {
   FinishedDemoItem,
   FinishedGameItem,
   FinishedStakedItem,
-  GamesPage,
   Meta,
   OngoingGameItem,
   PlayerView,
 } from "../api/schemas.js";
 import { Board } from "../board/Board.jsx";
+import { BoardLoop } from "../board/BoardLoop.jsx";
 import { AppShell } from "../components/AppShell.jsx";
 import { PlayerStatus } from "../components/PlayerStatus.jsx";
+import { isFinishedStakedItem } from "../games/items.js";
 import { outcomeFor, outcomeGlyph } from "../games/outcome.js";
 import { QuickView } from "../games/QuickView.jsx";
+import { useGamesPage } from "../games/useGamesPage.js";
 import { explorerTxUrl } from "../lib/explorer.js";
+import { parseUci } from "../lib/fen.js";
 import { formatLocalTime, formatMicroUsdc } from "../lib/format.js";
 import { useLiveOptional } from "../live/LiveContext.jsx";
 
@@ -48,9 +51,10 @@ function Pager(props: {
   );
 }
 
-/** F-W5 archive: active rows + finished grid, one route. Grid cards are
+/** F-W5 archive: active grid + finished grid, one route. Finished cards are
  * static — thumbnails render from `finalFen`, replays load only in the
- * quick-view. Active rows carry no game names by design (I7). */
+ * quick-view; active cards loop the player's own move (the only position
+ * they may see). Active cards carry no game names by design (I7). */
 export function Archive(props: {
   readonly client: ApiClient;
   readonly meta: Meta;
@@ -79,41 +83,19 @@ export function Archive(props: {
   const finishedPage =
     Number.isInteger(pageParam) && pageParam >= 1 ? pageParam : 1;
   const [activePage, setActivePage] = useState(1);
-  const [active, setActive] = useState<GamesPage<OngoingGameItem> | null>(null);
-  const [finished, setFinished] = useState<GamesPage<FinishedGameItem> | null>(
-    null,
+  const active = useGamesPage<OngoingGameItem>(
+    client.getOngoingGames,
+    activePage,
+    gamesVersion,
+  );
+  const finished = useGamesPage<FinishedGameItem>(
+    client.getFinishedGames,
+    finishedPage,
+    gamesVersion,
   );
   const [open, setOpen] = useState<
     FinishedStakedItem | FinishedDemoItem | null
   >(null);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies(gamesVersion): live events invalidate the current page without changing its query inputs
-  useEffect(() => {
-    let cancelled = false;
-    client
-      .getOngoingGames(activePage)
-      .then((page) => {
-        if (!cancelled) setActive(page);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [client, activePage, gamesVersion]);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies(gamesVersion): live events invalidate the current page without changing its query inputs
-  useEffect(() => {
-    let cancelled = false;
-    client
-      .getFinishedGames(finishedPage)
-      .then((page) => {
-        if (!cancelled) setFinished(page);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [client, finishedPage, gamesVersion]);
 
   return (
     <AppShell topRight={<PlayerStatus client={client} player={props.player} />}>
@@ -128,40 +110,57 @@ export function Archive(props: {
               no moves in flight.
             </div>
           ) : (
-            <ul className="activelist">
-              {active.items.map((item, index) => (
-                <li
-                  // biome-ignore lint/suspicious/noArrayIndexKey: rows carry no id on purpose (I7) and the list only changes by refetch
-                  key={index}
-                  className="activerow"
-                  data-testid="active-row"
-                >
-                  <span className="mv">{item.yourMove.san}</span>
-                  <span>{item.yourSide}</span>
-                  {item.demo ? (
-                    <span className="chip">DEMO</span>
-                  ) : (
-                    <span>{formatMicroUsdc(item.stakeMicroUsdc)}</span>
-                  )}
-                  <span className="dim">
-                    claimed {formatLocalTime(item.claimedAt)}
-                  </span>
-                  {item.payTxid !== null ? (
-                    <a
-                      href={explorerTxUrl(
-                        props.meta.network.explorerBaseUrl,
-                        item.payTxid,
-                      )}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      tx ↗
-                    </a>
-                  ) : null}
-                  <span className="dim">pending…</span>
-                </li>
-              ))}
-            </ul>
+            <div className="finishedgrid">
+              {active.items.map((item, index) => {
+                const uci = parseUci(item.yourMove.uci);
+                return (
+                  <div
+                    // biome-ignore lint/suspicious/noArrayIndexKey: cards carry no id on purpose (I7) and the list only changes by refetch
+                    key={index}
+                    className="fincard ongoing"
+                    data-testid="active-card"
+                  >
+                    <span className="thumb" aria-hidden="true">
+                      <BoardLoop
+                        from={uci.from}
+                        to={uci.to}
+                        san={item.yourMove.san}
+                        side={item.yourSide}
+                        fen={item.fenBeforeYourMove}
+                      />
+                    </span>
+                    <span>
+                      <span className="mv">{item.yourMove.san}</span> ·{" "}
+                      {item.yourSide}
+                    </span>
+                    {item.demo ? (
+                      <span className="chip">DEMO</span>
+                    ) : (
+                      <span>{formatMicroUsdc(item.stakeMicroUsdc)}</span>
+                    )}
+                    <span className="dim">
+                      claimed {formatLocalTime(item.claimedAt)}
+                      {item.payTxid !== null ? (
+                        <>
+                          {" "}
+                          <a
+                            href={explorerTxUrl(
+                              props.meta.network.explorerBaseUrl,
+                              item.payTxid,
+                            )}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            tx ↗
+                          </a>
+                        </>
+                      ) : null}
+                    </span>
+                    <span className="dim">pending…</span>
+                  </div>
+                );
+              })}
+            </div>
           )}
           {active !== null ? (
             <Pager
@@ -185,8 +184,7 @@ export function Archive(props: {
             <div className="finishedgrid">
               {finished.items.map((item, index) => {
                 const outcome = outcomeFor(item.result, item.yourSide);
-                // `demo` is the discriminator — never field presence (I7).
-                if (item.demo || !("gameId" in item)) {
+                if (!isFinishedStakedItem(item)) {
                   return (
                     <button
                       // biome-ignore lint/suspicious/noArrayIndexKey: demo cards carry no id on purpose (I7)

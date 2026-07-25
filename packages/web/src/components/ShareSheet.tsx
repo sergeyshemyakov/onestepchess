@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { copyText } from "../lib/clipboard.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 
 // F-W12 share sheet — wins only; the entry points (win toast, won staked
@@ -38,8 +39,6 @@ export function ShareSheet(props: {
     refCode: props.refCode,
   });
   const cardSrc = `/api/v1/games/${props.gameId}/card.png?ply=${props.yourPly}`;
-  const canNativeShare =
-    typeof navigator !== "undefined" && typeof navigator.share === "function";
 
   return (
     <div className="modalback">
@@ -79,42 +78,25 @@ export function ShareSheet(props: {
           {url}
         </p>
         <div className="modal-actions pair">
-          {canNativeShare ? (
-            <button
-              type="button"
-              className="btn pri mini"
-              onClick={() => {
-                navigator.share({ text: SHARE_TEXT, url }).catch(() => {
-                  // user dismissed the OS sheet — nothing to do
-                });
-              }}
-            >
-              share ▸
-            </button>
-          ) : (
-            <>
-              <button
-                type="button"
-                className="btn pri mini"
-                onClick={() => {
-                  navigator.clipboard
-                    ?.writeText(url)
-                    .then(() => setCopied(true))
-                    .catch(() => undefined);
-                }}
-              >
-                {copied ? "copied ✓" : "copy link"}
-              </button>
-              <a
-                className="btn mini"
-                href={`https://x.com/intent/post?text=${encodeURIComponent(SHARE_TEXT)}&url=${encodeURIComponent(url)}`}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                post on X ↗
-              </a>
-            </>
-          )}
+          <a
+            className="btn pri mini"
+            href={`https://x.com/intent/post?text=${encodeURIComponent(SHARE_TEXT)}&url=${encodeURIComponent(url)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            share on X ↗
+          </a>
+          <button
+            type="button"
+            className="btn mini"
+            onClick={() => {
+              void copyText(url).then((success) => {
+                if (success) setCopied(true);
+              });
+            }}
+          >
+            {copied ? "copied ✓" : "copy link"}
+          </button>
         </div>
         <div className="modal-actions single">
           <button type="button" className="btn mini" onClick={props.onClose}>

@@ -1,15 +1,22 @@
+import { z } from "zod";
+
 // The complete storage surface (§4.2 + the §13.6 per-tab coach-mark
 // deviation). Nothing else in the app touches Web Storage; signed payment
 // headers and JWTs are never stored anywhere.
 
-export type Theme = "green" | "amber" | "ice";
+const themeSchema = z.enum(["green", "amber", "ice"]);
+export type Theme = z.infer<typeof themeSchema>;
 
-export type ClaimDraft = {
-  readonly claimId: string;
-  readonly moveUci?: string;
-  readonly deadline?: string;
-  readonly savedAt: string;
-};
+const claimDraftSchema = z.object({
+  claimId: z.string(),
+  moveUci: z.string().optional(),
+  deadline: z.string().optional(),
+  savedAt: z.string(),
+});
+export type ClaimDraft = z.infer<typeof claimDraftSchema>;
+
+const guestDemoStateSchema = z.enum(["played", "expired"]);
+export type GuestDemoState = z.infer<typeof guestDemoStateSchema>;
 
 const THEME_KEY = "osc.theme";
 const SFX_KEY = "osc.sfx";
@@ -40,8 +47,9 @@ function safeSet(store: Storage, key: string, value: string | null): void {
 }
 
 export function readTheme(): Theme {
-  const value = safeGet(localStorage, THEME_KEY);
-  return value === "amber" || value === "ice" ? value : "green";
+  return (
+    themeSchema.safeParse(safeGet(localStorage, THEME_KEY)).data ?? "green"
+  );
 }
 
 export function writeTheme(theme: Theme): void {
@@ -61,14 +69,8 @@ export function readClaimDraft(): ClaimDraft | null {
   const raw = safeGet(sessionStorage, DRAFT_KEY);
   if (raw === null) return null;
   try {
-    const parsed: unknown = JSON.parse(raw);
-    if (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      typeof (parsed as ClaimDraft).claimId === "string"
-    ) {
-      return parsed as ClaimDraft;
-    }
+    const parsed = claimDraftSchema.safeParse(JSON.parse(raw));
+    if (parsed.success) return parsed.data;
   } catch {
     // fall through to clearing the corrupt draft
   }
@@ -93,11 +95,11 @@ export function markCoachMarksSeen(): void {
   safeSet(sessionStorage, COACH_KEY, "seen");
 }
 
-export type GuestDemoState = "played" | "expired";
-
 export function readGuestDemo(): GuestDemoState | null {
-  const value = safeGet(localStorage, GUEST_DEMO_KEY);
-  return value === "played" || value === "expired" ? value : null;
+  return (
+    guestDemoStateSchema.safeParse(safeGet(localStorage, GUEST_DEMO_KEY))
+      .data ?? null
+  );
 }
 
 export function writeGuestDemo(value: GuestDemoState | null): void {

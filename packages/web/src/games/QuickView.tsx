@@ -8,6 +8,7 @@ import type {
 } from "../api/schemas.js";
 import { ShareSheet } from "../components/ShareSheet.jsx";
 import { useDialogFocusTrap } from "../components/useDialogFocusTrap.js";
+import { copyText } from "../lib/clipboard.js";
 import { explorerTxUrl } from "../lib/explorer.js";
 import {
   formatLocalTime,
@@ -15,6 +16,7 @@ import {
   formatThinkingTime,
 } from "../lib/format.js";
 import { CachedDigest } from "../replay/CachedDigest.jsx";
+import { isFinishedStakedItem } from "./items.js";
 import { outcomeFor, outcomeGlyph } from "./outcome.js";
 
 export function payoutChip(
@@ -43,10 +45,6 @@ export function QuickView(props: {
   readonly onClose: () => void;
 }) {
   const { item, client } = props;
-  // Discriminate on the pinned `demo` flag, never on field presence — a
-  // regression payload carrying identity fields on a demo item must still
-  // render the demo variant (I7 defense in depth).
-  const staked = !item.demo;
   const [sharing, setSharing] = useState(false);
   const [copied, setCopied] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -54,7 +52,7 @@ export function QuickView(props: {
 
   const outcome = outcomeFor(item.result, item.yourSide);
 
-  if (!staked) {
+  if (!isFinishedStakedItem(item)) {
     return (
       <div className="modalback">
         <div
@@ -81,9 +79,8 @@ export function QuickView(props: {
     );
   }
 
-  const stakedItem = item as FinishedStakedItem;
-  const replayPath = `/replay/${stakedItem.gameId}?ply=${stakedItem.yourPly}`;
-  const chip = payoutChip(stakedItem.payoutStatus);
+  const replayPath = `/replay/${item.gameId}?ply=${item.yourPly}`;
+  const chip = payoutChip(item.payoutStatus);
 
   return (
     <div className="modalback">
@@ -95,28 +92,28 @@ export function QuickView(props: {
         aria-modal="true"
         data-testid="quick-view"
       >
-        <h3>{stakedItem.gameName}</h3>
+        <h3>{item.gameName}</h3>
         <CachedDigest
           client={client}
-          gameId={stakedItem.gameId}
-          highlightPly={stakedItem.yourPly}
+          gameId={item.gameId}
+          highlightPly={item.yourPly}
         />
         <p className="mv">{outcomeGlyph(outcome)}</p>
         <dl className="qv-fields">
           <dt>your move</dt>
           <dd>
-            {stakedItem.yourMove.san} · ply {stakedItem.yourPly}
+            {item.yourMove.san} · ply {item.yourPly}
           </dd>
           <dt>stake</dt>
           <dd>
-            {formatMicroUsdc(stakedItem.stakeMicroUsdc)}
-            {stakedItem.payTxid !== null ? (
+            {formatMicroUsdc(item.stakeMicroUsdc)}
+            {item.payTxid !== null ? (
               <>
                 {" "}
                 <a
                   href={explorerTxUrl(
                     props.meta.network.explorerBaseUrl,
-                    stakedItem.payTxid,
+                    item.payTxid,
                   )}
                   target="_blank"
                   rel="noopener noreferrer"
@@ -128,15 +125,15 @@ export function QuickView(props: {
           </dd>
           <dt>payout</dt>
           <dd>
-            {formatMicroUsdc(stakedItem.payoutMicroUsdc)}
+            {formatMicroUsdc(item.payoutMicroUsdc)}
             {chip !== null ? <span className="chip"> {chip}</span> : null}
-            {stakedItem.payoutTxid !== null ? (
+            {item.payoutTxid !== null ? (
               <>
                 {" "}
                 <a
                   href={explorerTxUrl(
                     props.meta.network.explorerBaseUrl,
-                    stakedItem.payoutTxid,
+                    item.payoutTxid,
                   )}
                   target="_blank"
                   rel="noopener noreferrer"
@@ -147,11 +144,9 @@ export function QuickView(props: {
             ) : null}
           </dd>
           <dt>thinking time</dt>
-          <dd>
-            {formatThinkingTime(stakedItem.claimedAt, stakedItem.movedAt)}
-          </dd>
+          <dd>{formatThinkingTime(item.claimedAt, item.movedAt)}</dd>
           <dt>finished</dt>
-          <dd>{formatLocalTime(stakedItem.finishedAt)}</dd>
+          <dd>{formatLocalTime(item.finishedAt)}</dd>
         </dl>
         <div className="modal-actions pair">
           <Link className="btn mini" to={replayPath}>
@@ -161,10 +156,11 @@ export function QuickView(props: {
             type="button"
             className="btn mini"
             onClick={() => {
-              navigator.clipboard
-                ?.writeText(`${window.location.origin}${replayPath}`)
-                .then(() => setCopied(true))
-                .catch(() => undefined);
+              void copyText(`${window.location.origin}${replayPath}`).then(
+                (success) => {
+                  if (success) setCopied(true);
+                },
+              );
             }}
           >
             {copied ? "copied ✓" : "copy link"}
@@ -186,8 +182,8 @@ export function QuickView(props: {
         </div>
         {sharing ? (
           <ShareSheet
-            gameId={stakedItem.gameId}
-            yourPly={stakedItem.yourPly}
+            gameId={item.gameId}
+            yourPly={item.yourPly}
             refCode={props.refCode}
             onClose={() => setSharing(false)}
           />

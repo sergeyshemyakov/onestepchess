@@ -21,6 +21,45 @@ export type ReferralConfig = {
 };
 
 type StakeEntryRow = typeof schema.stakeEntries.$inferSelect;
+type MoveWinAward = {
+  readonly reason: "move" | "win";
+  readonly amount: number;
+};
+
+function moveWinAwards(
+  result: GameResult,
+  side: "white" | "black",
+  config: MoveWinConfig,
+): MoveWinAward[] {
+  const awards: MoveWinAward[] = [
+    { reason: "move", amount: config.pointsMove },
+  ];
+  if (result === side) {
+    awards.push({ reason: "win", amount: config.pointsWin });
+  }
+  return awards;
+}
+
+function insertMoveWinAwardRows(
+  db: Db,
+  now: number,
+  player: string,
+  claimId: string,
+  awards: readonly MoveWinAward[],
+): void {
+  for (const award of awards) {
+    db.insert(schema.pointAwards)
+      .values({
+        player,
+        amount: award.amount,
+        reason: award.reason,
+        refId: claimId,
+        createdAt: now,
+      })
+      .onConflictDoNothing()
+      .run();
+  }
+}
 
 /** points := SUM(point_awards.amount) for one player, in the caller's txn. */
 function recomputePoints(db: Db, address: string): void {
@@ -68,24 +107,13 @@ function insertMoveWinAwards(
   const touched = new Set<string>();
   for (const row of stakeRows) {
     if (!humans.has(row.player)) continue;
-    const awards: { reason: "move" | "win"; amount: number }[] = [
-      { reason: "move", amount: config.pointsMove },
-    ];
-    if (result === row.side) {
-      awards.push({ reason: "win", amount: config.pointsWin });
-    }
-    for (const award of awards) {
-      db.insert(schema.pointAwards)
-        .values({
-          player: row.player,
-          amount: award.amount,
-          reason: award.reason,
-          refId: row.claimId,
-          createdAt: now,
-        })
-        .onConflictDoNothing()
-        .run();
-    }
+    insertMoveWinAwardRows(
+      db,
+      now,
+      row.player,
+      row.claimId,
+      moveWinAwards(result, row.side, config),
+    );
     touched.add(row.player);
   }
   return touched;
@@ -223,24 +251,13 @@ export function backfillPoints(
     const touched = new Set<string>();
     for (const row of missing) {
       if (row.result === null) continue;
-      const awards: { reason: "move" | "win"; amount: number }[] = [
-        { reason: "move", amount: config.pointsMove },
-      ];
-      if (row.result === row.side) {
-        awards.push({ reason: "win", amount: config.pointsWin });
-      }
-      for (const award of awards) {
-        db.insert(schema.pointAwards)
-          .values({
-            player: row.player,
-            amount: award.amount,
-            reason: award.reason,
-            refId: row.claimId,
-            createdAt: now,
-          })
-          .onConflictDoNothing()
-          .run();
-      }
+      insertMoveWinAwardRows(
+        db,
+        now,
+        row.player,
+        row.claimId,
+        moveWinAwards(row.result, row.side, config),
+      );
       touched.add(row.player);
     }
     for (const player of touched) recomputePoints(db, player);

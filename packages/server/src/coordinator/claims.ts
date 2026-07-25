@@ -9,6 +9,7 @@ import {
 } from "@onestepchess/core";
 import { and, eq, inArray, max, sql } from "drizzle-orm";
 import type { ServerConfig } from "../config.js";
+import { appendLedgerEntry } from "../db/ledger.js";
 import type { Db } from "../db/open.js";
 import { schema } from "../db/open.js";
 import { newId } from "../ids.js";
@@ -18,6 +19,7 @@ import type { ChessAdapterRegistry } from "./chess-registry.js";
 import type { LifecycleApi } from "./lifecycle.js";
 import type { Coordinator } from "./queue.js";
 import type { TimerService } from "./timers.js";
+import { parseGameRules } from "./timers.js";
 import type { CoordinatorViews } from "./views.js";
 
 export type ClaimDeps = {
@@ -44,6 +46,82 @@ export type MoveReceipt = {
   readonly explorerUrl: string | null;
   readonly fenAfterYourMove: string;
 };
+
+type Participation = {
+  readonly gameId: string;
+  readonly side: "white" | "black";
+  readonly lastPly: number;
+};
+
+function loadParticipation(db: Db, player: string): Participation[] {
+  const staked = db
+    .select({
+      gameId: schema.stakeEntries.gameId,
+      side: schema.stakeEntries.side,
+      lastPly: max(schema.stakeEntries.ply),
+    })
+    .from(schema.stakeEntries)
+    .where(eq(schema.stakeEntries.player, player))
+    .groupBy(schema.stakeEntries.gameId, schema.stakeEntries.side)
+    .all();
+  const demo = db
+    .select({
+      gameId: schema.claims.gameId,
+      side: schema.claims.side,
+      lastPly: max(schema.claims.movedPly),
+    })
+    .from(schema.claims)
+    .where(
+      and(
+        eq(schema.claims.player, player),
+        eq(schema.claims.status, "moved"),
+        eq(schema.claims.demo, true),
+      ),
+    )
+    .groupBy(schema.claims.gameId, schema.claims.side)
+    .all();
+
+  const latestByGame = new Map<string, Participation>();
+  for (const row of [...staked, ...demo]) {
+    if (row.lastPly === null) continue;
+    const prior = latestByGame.get(row.gameId);
+    if (prior === undefined || row.lastPly > prior.lastPly) {
+      latestByGame.set(row.gameId, {
+        gameId: row.gameId,
+        side: row.side,
+        lastPly: row.lastPly,
+      });
+    }
+  }
+  return [...latestByGame.values()];
+}
+
+function loadParticipantSides(
+  db: Db,
+  player: string,
+): Map<string, "white" | "black"> {
+  const sides = new Map<string, "white" | "black">();
+  for (const row of db
+    .select({
+      gameId: schema.stakeEntries.gameId,
+      side: schema.stakeEntries.side,
+    })
+    .from(schema.stakeEntries)
+    .where(eq(schema.stakeEntries.player, player))
+    .all()) {
+    sides.set(row.gameId, row.side);
+  }
+  for (const row of db
+    .select({ gameId: schema.claims.gameId, side: schema.claims.side })
+    .from(schema.claims)
+    .where(
+      and(eq(schema.claims.player, player), eq(schema.claims.status, "moved")),
+    )
+    .all()) {
+    sides.set(row.gameId, row.side);
+  }
+  return sides;
+}
 
 export function receiptFor(
   claim: ClaimRecord,
@@ -117,30 +195,14 @@ function moveClaim(
         createdAt: ctx.now,
       })
       .run();
-    deps.db
-      .insert(schema.ledger)
-      .values({
-        ts: ctx.now,
-        account: "treasury",
-        deltaMicrousdc: args.claim.stakeMicrousdc,
-        refType: "stake",
-        refId: args.claim.id,
-        txid: args.txid,
-      })
-      .run();
-    deps.db
-      .insert(schema.ledgerBalances)
-      .values({
-        account: "treasury",
-        balanceMicrousdc: args.claim.stakeMicrousdc,
-      })
-      .onConflictDoUpdate({
-        target: schema.ledgerBalances.account,
-        set: {
-          balanceMicrousdc: sql`${schema.ledgerBalances.balanceMicrousdc} + ${args.claim.stakeMicrousdc}`,
-        },
-      })
-      .run();
+    appendLedgerEntry(deps.db, {
+      ts: ctx.now,
+      account: "treasury",
+      deltaMicrousdc: args.claim.stakeMicrousdc,
+      refType: "stake",
+      refId: args.claim.id,
+      txid: args.txid,
+    });
   }
   ctx.appendEvent("move_accepted", args.claim.player, {
     claimId: args.claim.id,
@@ -196,22 +258,13 @@ function expireClaimIfDue(
     .set({ status: "expired" })
     .where(eq(schema.claims.id, claim.id))
     .run();
-  deps.db
+  const updated = deps.db
     .update(schema.players)
     .set({
-      abandonCount:
-        (deps.db
-          .select({ abandonCount: schema.players.abandonCount })
-          .from(schema.players)
-          .where(eq(schema.players.address, claim.player))
-          .get()?.abandonCount ?? 0) + 1,
+      abandonCount: sql`${schema.players.abandonCount} + 1`,
     })
     .where(eq(schema.players.address, claim.player))
-    .run();
-  const updated = deps.db
-    .select({ abandonCount: schema.players.abandonCount })
-    .from(schema.players)
-    .where(eq(schema.players.address, claim.player))
+    .returning({ abandonCount: schema.players.abandonCount })
     .get();
   if (
     updated !== undefined &&
@@ -422,11 +475,12 @@ export function registerClaimCommands(deps: ClaimDeps): void {
       if (player?.banned) throw new Error("player unavailable");
       const config = deps.config();
       if (payload.kind === "guest") {
-        const consumed = deps.db
-          .select({ id: schema.claims.id })
-          .from(schema.claims)
-          .where(eq(schema.claims.player, payload.player))
-          .all().length;
+        const consumed =
+          deps.db
+            .select({ count: sql<number>`count(*)` })
+            .from(schema.claims)
+            .where(eq(schema.claims.player, payload.player))
+            .get()?.count ?? 0;
         if (consumed >= config.GUEST_CLAIM_ALLOWANCE)
           return { claim: null, created: false, guestUsed: true };
       }
@@ -456,57 +510,10 @@ export function registerClaimCommands(deps: ClaimDeps): void {
         hasOpenClaim: deps.views.openClaimByGame.has(game.id),
         cooldownPlies: game.rules.COOLDOWN_PLIES,
       }));
-      const stakedParticipation = deps.db
-        .select({
-          gameId: schema.stakeEntries.gameId,
-          side: schema.stakeEntries.side,
-          lastPly: max(schema.stakeEntries.ply),
-        })
-        .from(schema.stakeEntries)
-        .where(eq(schema.stakeEntries.player, payload.player))
-        .groupBy(schema.stakeEntries.gameId, schema.stakeEntries.side)
-        .all();
-      const demoParticipation = deps.db
-        .select({
-          gameId: schema.claims.gameId,
-          side: schema.claims.side,
-          lastPly: max(schema.claims.movedPly),
-        })
-        .from(schema.claims)
-        .where(
-          and(
-            eq(schema.claims.player, payload.player),
-            eq(schema.claims.status, "moved"),
-            eq(schema.claims.demo, true),
-          ),
-        )
-        .groupBy(schema.claims.gameId, schema.claims.side)
-        .all()
-        .flatMap((row) =>
-          row.lastPly === null
-            ? []
-            : [{ gameId: row.gameId, side: row.side, lastPly: row.lastPly }],
-        );
-      const participationByGame = new Map<
-        string,
-        { gameId: string; side: "white" | "black"; lastPly: number }
-      >();
-      for (const row of [...stakedParticipation, ...demoParticipation]) {
-        if (row.lastPly === null) continue;
-        const prior = participationByGame.get(row.gameId);
-        if (prior === undefined || row.lastPly > prior.lastPly) {
-          participationByGame.set(row.gameId, {
-            gameId: row.gameId,
-            side: row.side,
-            lastPly: row.lastPly,
-          });
-        }
-      }
-      const participation = [...participationByGame.values()];
       const game = selectGame({
         games,
         requesterKind: payload.kind,
-        participation,
+        participation: loadParticipation(deps.db, payload.player),
         now: ctx.now,
         rng: deps.rng,
       });
@@ -622,29 +629,7 @@ export function registerClaimCommands(deps: ClaimDeps): void {
         }
       }
 
-      const existingSides = new Map<string, "white" | "black">();
-      for (const row of deps.db
-        .select({
-          gameId: schema.stakeEntries.gameId,
-          side: schema.stakeEntries.side,
-        })
-        .from(schema.stakeEntries)
-        .where(eq(schema.stakeEntries.player, payload.player))
-        .all()) {
-        existingSides.set(row.gameId, row.side);
-      }
-      for (const row of deps.db
-        .select({ gameId: schema.claims.gameId, side: schema.claims.side })
-        .from(schema.claims)
-        .where(
-          and(
-            eq(schema.claims.player, payload.player),
-            eq(schema.claims.status, "moved"),
-          ),
-        )
-        .all()) {
-        existingSides.set(row.gameId, row.side);
-      }
+      const existingSides = loadParticipantSides(deps.db, payload.player);
 
       let walletHasOpen = deps.views.openClaimByPlayer.has(payload.player);
       let transferred = 0;
@@ -787,7 +772,7 @@ export function legalMove(deps: ClaimDeps, claim: ClaimRecord, input: string) {
   if (game === undefined) throw new Error("claim game missing");
   return normalizeMove(
     deps.registry
-      .get(JSON.parse(game.rulesJson))
+      .get(parseGameRules(game.rulesJson))
       .fromHistory(JSON.parse(game.historyJson)),
     input,
   );

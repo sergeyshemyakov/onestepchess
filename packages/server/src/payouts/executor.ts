@@ -6,7 +6,7 @@ import type {
 import { and, eq, ne } from "drizzle-orm";
 import type { ServerConfig } from "../config.js";
 import type { Coordinator } from "../coordinator/queue.js";
-import { bumpLedgerBalance } from "../db/ledger.js";
+import { appendLedgerEntry } from "../db/ledger.js";
 import type { Db } from "../db/open.js";
 import { schema } from "../db/open.js";
 import { newId } from "../ids.js";
@@ -115,17 +115,14 @@ export function registerPayoutCommands(deps: PayoutExecutorDeps): void {
         .set({ status: "confirmed", txid: payload.txid })
         .where(eq(schema.payoutJobs.id, job.id))
         .run();
-      db.insert(schema.ledger)
-        .values({
-          ts: ctx.now,
-          account: "treasury",
-          deltaMicrousdc: -job.amount,
-          refType: "payout",
-          refId: job.id,
-          txid: payload.txid,
-        })
-        .run();
-      bumpLedgerBalance(db, "treasury", -job.amount);
+      appendLedgerEntry(db, {
+        ts: ctx.now,
+        account: "treasury",
+        deltaMicrousdc: -job.amount,
+        refType: "payout",
+        refId: job.id,
+        txid: payload.txid,
+      });
       ctx.appendEvent("payout_confirmed", job.recipient, {
         gameId: job.gameId,
         txid: payload.txid,
@@ -141,8 +138,8 @@ export function registerPayoutCommands(deps: PayoutExecutorDeps): void {
               ne(schema.payoutJobs.status, "confirmed"),
             ),
           )
-          .all();
-        if (outstanding.length === 0) {
+          .get();
+        if (outstanding === undefined) {
           db.update(schema.payoutBatches)
             .set({ status: "confirmed", updatedAt: ctx.now })
             .where(eq(schema.payoutBatches.id, job.batchId))
@@ -372,7 +369,7 @@ export async function runPayoutExecutor(
         schedule(now + POLL_MS);
       }
     }
-    const confirmedCount = deps.db
+    const confirmed = deps.db
       .select({ id: schema.payoutJobs.id })
       .from(schema.payoutJobs)
       .where(
@@ -381,9 +378,9 @@ export async function runPayoutExecutor(
           eq(schema.payoutJobs.status, "confirmed"),
         ),
       )
-      .all().length;
+      .get();
     // Nothing landed and validity has expired: discard for a fresh preparation.
-    if (missingStale && !stillPending && confirmedCount === 0) {
+    if (missingStale && !stillPending && confirmed === undefined) {
       await deps.coordinator.dispatch({
         type: "PayoutBatchDiscarded",
         payload: { batchId: batch.id },

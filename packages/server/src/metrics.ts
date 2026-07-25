@@ -93,8 +93,7 @@ export class Metrics {
   }
 
   recordClaimCreated(): void {
-    const now = this.now();
-    this.claimsCreated.add(now, now - DAY_MS);
+    this.record(this.claimsCreated);
   }
 
   recordMoveSettled(latencyMs: number): void {
@@ -105,23 +104,19 @@ export class Metrics {
   }
 
   recordGameFinished(): void {
-    const now = this.now();
-    this.gamesFinished.add(now, now - DAY_MS);
+    this.record(this.gamesFinished);
   }
 
   recordFacilitatorError(): void {
-    const now = this.now();
-    this.facilitatorErrors.add(now, now - DAY_MS);
+    this.record(this.facilitatorErrors);
   }
 
   recordQuotaRejection(): void {
-    const now = this.now();
-    this.quotaRejections.add(now, now - DAY_MS);
+    this.record(this.quotaRejections);
   }
 
   recordAuthFailure(): void {
-    const now = this.now();
-    this.authFailures.add(now, now - DAY_MS);
+    this.record(this.authFailures);
   }
 
   recordPayoutQueued(count = 1): void {
@@ -186,6 +181,11 @@ export class Metrics {
       quotaRejections24h: this.quotaRejections.count(cutoff),
       authFailures24h: this.authFailures.count(cutoff),
     };
+  }
+
+  private record(window: RollingWindow<number>): void {
+    const now = this.now();
+    window.add(now, now - DAY_MS);
   }
 }
 

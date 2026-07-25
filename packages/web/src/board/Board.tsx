@@ -7,6 +7,7 @@ import {
   squareName,
 } from "../lib/fen.js";
 import { PieceGlyph } from "./pieces.jsx";
+import { useSquareSize } from "./useSquareSize.js";
 
 export const MIN_BOARD_PX = 320;
 export const MAX_BOARD_PX = 520;
@@ -273,18 +274,7 @@ export function Board(props: BoardProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const fxRef = useRef<HTMLDivElement>(null);
   const lastFxSeq = useRef(0);
-
-  // --sq drives piece/coord sizing; refit batches through ResizeObserver.
-  useEffect(() => {
-    const host = hostRef.current;
-    if (host === null || typeof ResizeObserver !== "function") return;
-    const refit = () =>
-      host.style.setProperty("--sq", `${host.clientWidth / 8}px`);
-    refit();
-    const observer = new ResizeObserver(refit);
-    observer.observe(host);
-    return () => observer.disconnect();
-  }, []);
+  useSquareSize(hostRef);
 
   useEffect(() => {
     const layer = fxRef.current;

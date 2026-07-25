@@ -86,11 +86,12 @@ it("hub_and_archive_never_correlate_ongoing_or_demo_games", async () => {
   expect(screen.getAllByTestId("active-minicard")).toHaveLength(1);
   assertNoGameIdentity(hub.container, identitySeeds);
 
-  // -- Hub finished pane: the staked hero may name its game; the demo
-  //    minicard must not — and must not link anywhere.
+  // -- Hub finished pane: the staked hero labels its game by public id
+  //    (the replay-page label); the demo minicard must not — and must not
+  //    link anywhere.
   fireEvent.click(screen.getByRole("tab", { name: "LAST FINISHED" }));
   await screen.findByTestId("finished-hero");
-  expect(screen.getByText("crimson-rook-217")).not.toBeNull();
+  expect(screen.getByText("Game fin_ok")).not.toBeNull();
   const demoCard = await screen.findByTestId("finished-demo-minicard");
   expect(demoCard.querySelector("a")).toBeNull();
   assertNoGameIdentity(hub.container, identitySeeds);
@@ -106,13 +107,13 @@ it("hub_and_archive_never_correlate_ongoing_or_demo_games", async () => {
   assertNoGameIdentity(rehub.container, identitySeeds);
   rehub.unmount();
 
-  // -- Archive rows, demo cards, and the demo quick-view leak nothing.
+  // -- Archive cards, demo cards, and the demo quick-view leak nothing.
   const archive = render(
     <Providers client={client}>
       <Archive client={client} meta={metaFixture} player={playerFixture} />
     </Providers>,
   );
-  const rows = await screen.findAllByTestId("active-row");
+  const rows = await screen.findAllByTestId("active-card");
   expect(rows).toHaveLength(2);
   await screen.findByTestId("finished-demo-card");
   assertNoGameIdentity(archive.container, identitySeeds);

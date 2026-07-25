@@ -4,10 +4,11 @@ import type { CoordinatorViews } from "../../coordinator/views.js";
 import { schema } from "../../db/open.js";
 import type { PublicStats } from "../../incentives/stats.js";
 import { type AppEnv, AppError } from "../app.js";
-import { type AuthRouteDeps, sessionAuth } from "./auth.js";
+import { playerView } from "../views.js";
+import { type SessionAuthDeps, sessionAuth } from "./auth.js";
 
 export type DiscoveryDeps = Pick<
-  AuthRouteDeps,
+  SessionAuthDeps,
   "db" | "config" | "jwtSecret" | "now"
 > & {
   readonly views: CoordinatorViews;
@@ -90,23 +91,14 @@ export function registerDiscoveryRoutes(
       },
     });
   });
-  app.get(
-    "/api/v1/my/profile",
-    sessionAuth(deps as unknown as AuthRouteDeps),
-    (c) => {
-      const player = deps.db
-        .select()
-        .from(schema.players)
-        .where(eq(schema.players.address, c.get("session").address))
-        .get();
-      if (player === undefined)
-        throw new AppError("UNAUTHENTICATED", { hint: "unknown player" });
-      return c.json({
-        address: player.address,
-        kind: player.kind,
-        nickname: player.nickname,
-        createdAt: new Date(player.createdAt).toISOString(),
-      });
-    },
-  );
+  app.get("/api/v1/my/profile", sessionAuth(deps), (c) => {
+    const player = deps.db
+      .select()
+      .from(schema.players)
+      .where(eq(schema.players.address, c.get("session").address))
+      .get();
+    if (player === undefined)
+      throw new AppError("UNAUTHENTICATED", { hint: "unknown player" });
+    return c.json(playerView(player));
+  });
 }
