@@ -20,10 +20,12 @@ function trimmedFixed(
 
 /** §4.5: ≥ 1 ¢ renders in dollar form ($0.01), below in cent form (0.1 ¢). */
 export function formatMicroUsdc(microUsdc: number): string {
-  if (microUsdc >= MICRO_PER_CENT) {
-    return `$${trimmedFixed(microUsdc / MICRO_PER_DOLLAR, 6, 2)}`;
+  const sign = microUsdc < 0 ? "-" : "";
+  const absolute = Math.abs(microUsdc);
+  if (absolute >= MICRO_PER_CENT) {
+    return `${sign}$${trimmedFixed(absolute / MICRO_PER_DOLLAR, 6, 2)}`;
   }
-  return `${trimmedFixed(microUsdc / MICRO_PER_CENT, 4)} ¢`;
+  return `${sign}${trimmedFixed(absolute / MICRO_PER_CENT, 4)} ¢`;
 }
 
 const MICRO_PER_ALGO = 1_000_000;
