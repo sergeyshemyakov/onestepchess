@@ -19,7 +19,11 @@ import { outcomeFor, outcomeGlyph } from "../games/outcome.js";
 import { payoutChip } from "../games/QuickView.jsx";
 import { explorerTxUrl } from "../lib/explorer.js";
 import { parseUci } from "../lib/fen.js";
-import { formatLocalTime, formatMicroUsdc } from "../lib/format.js";
+import {
+  formatGameLabel,
+  formatLocalTime,
+  formatMicroUsdc,
+} from "../lib/format.js";
 import {
   readLastSeenFinishedAt,
   writeLastSeenFinishedAt,
@@ -155,7 +159,7 @@ function FinishedPane(props: {
           />
           <dl className="qv-fields">
             <dt>game</dt>
-            <dd className="vt">{hero.gameName}</dd>
+            <dd className="vt">{formatGameLabel(hero.gameId)}</dd>
             <dt>result</dt>
             <dd>
               {heroOutcome === null ? null : outcomeGlyph(heroOutcome)}
@@ -223,7 +227,7 @@ function FinishedPane(props: {
                 className="minicard"
                 to={`/replay/${item.gameId}?ply=${item.yourPly}`}
               >
-                <span className="vt">{item.gameName}</span> ·{" "}
+                <span className="vt">{formatGameLabel(item.gameId)}</span> ·{" "}
                 {outcomeGlyph(outcomeFor(item.result, item.yourSide))} ·{" "}
                 {formatMicroUsdc(item.payoutMicroUsdc)}
               </Link>

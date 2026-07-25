@@ -17,7 +17,6 @@ import { ToastProvider, useToasts } from "./Toasts.jsx";
 afterEach(() => {
   cleanup();
   clearReplayCacheForTests();
-  Reflect.deleteProperty(navigator, "share");
   Reflect.deleteProperty(navigator, "clipboard");
 });
 
@@ -116,13 +115,13 @@ it("share_affordances_exist_only_for_owned_staked_wins", async () => {
     }),
   ).toBe("https://osc.example/replay/gm_fin_ok?ply=5&ref=gentle-rook-042");
 
-  // -- Clipboard fallback without navigator.share: copy + X intent.
+  // -- The sheet always offers copy link + the X intent.
   const writeText = vi.fn(async () => undefined);
   Object.defineProperty(navigator, "clipboard", {
     value: { writeText },
     configurable: true,
   });
-  const fallback = render(
+  const sheet = render(
     <ShareSheet
       gameId="gm_fin_ok"
       yourPly={5}
@@ -134,33 +133,16 @@ it("share_affordances_exist_only_for_owned_staked_wins", async () => {
   expect(screen.getByTestId("share-url").textContent).toBe(url);
   fireEvent.click(screen.getByRole("button", { name: "copy link" }));
   expect(writeText).toHaveBeenCalledWith(url);
-  expect(
-    (screen.getByRole("link", { name: /post on X/ }) as HTMLAnchorElement).href,
-  ).toContain(encodeURIComponent(url));
+  const xHref = (
+    screen.getByRole("link", { name: /share on X/ }) as HTMLAnchorElement
+  ).href;
+  expect(xHref).toContain("https://x.com/intent/post");
+  expect(xHref).toContain(encodeURIComponent(url));
+  expect(xHref).toContain(encodeURIComponent(SHARE_TEXT));
 
   // -- Card-image failure keeps the sheet rendered with alt text.
   fireEvent.error(screen.getByAltText(/your win card/));
   expect(screen.getByTestId("share-card-fallback")).not.toBeNull();
   expect(screen.getByTestId("share-sheet")).not.toBeNull();
-  fallback.unmount();
-
-  // -- With navigator.share, the native path is used.
-  const nativeShare = vi.fn(async () => undefined);
-  Object.defineProperty(navigator, "share", {
-    value: nativeShare,
-    configurable: true,
-  });
-  render(
-    <ShareSheet
-      gameId="gm_fin_ok"
-      yourPly={5}
-      refCode={null}
-      onClose={() => undefined}
-    />,
-  );
-  fireEvent.click(screen.getByRole("button", { name: "share ▸" }));
-  expect(nativeShare).toHaveBeenCalledWith({
-    text: SHARE_TEXT,
-    url: `${window.location.origin}/replay/gm_fin_ok?ply=5`,
-  });
+  sheet.unmount();
 });

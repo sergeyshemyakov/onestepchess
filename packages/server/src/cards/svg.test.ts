@@ -16,7 +16,7 @@ function cardSvg(gameId = "gm_uljwmk6itj34"): string {
 it("share_card_displays_game_id_like_the_replay_page", () => {
   const svg = cardSvg();
 
-  expect(svg).toContain(">uljwmk6itj34</text>");
+  expect(svg).toContain(">Game uljwmk6itj34</text>");
   expect(svg).not.toContain("gm_uljwmk6itj34");
 });
 

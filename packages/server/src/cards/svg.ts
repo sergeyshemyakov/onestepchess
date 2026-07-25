@@ -266,7 +266,7 @@ export function buildCardSvg(data: CardData): string {
   ${arrow}
   ${pieces.join("\n  ")}
   <text x="${PANEL_X}" y="215" font-family="Menlo, monospace" font-size="34" fill="${PHOSPHOR}" letter-spacing="4">ONE STEP CHESS</text>
-  <text x="${PANEL_X}" y="285" font-family="Georgia, serif" font-size="52" font-weight="700" fill="${INK_LIGHT}">${escapeMarkup(data.gameId.replace(/^gm_/, ""))}</text>
+  <text x="${PANEL_X}" y="285" font-family="Georgia, serif" font-size="52" font-weight="700" fill="${INK_LIGHT}">Game ${escapeMarkup(data.gameId.replace(/^gm_/, ""))}</text>
   ${author}
   <text x="${PANEL_X}" y="440" font-family="Menlo, monospace" font-size="120" font-weight="700" fill="${outcomeColor}">${escapeMarkup(data.outcome)}</text>
 </svg>`;

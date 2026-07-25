@@ -4,7 +4,7 @@ import type { ApiClient } from "../api/client.js";
 import type { ReplayPly, ReplayView } from "../api/schemas.js";
 import { AppShell } from "../components/AppShell.jsx";
 import { copyText } from "../lib/clipboard.js";
-import { formatMicroUsdc } from "../lib/format.js";
+import { formatGameLabel, formatMicroUsdc } from "../lib/format.js";
 import { toReplayerPlies } from "../replay/plies.js";
 import { Replayer } from "../replay/Replayer.jsx";
 import { useReplay } from "../replay/useReplay.js";
@@ -89,9 +89,7 @@ export function Replay(props: { readonly client: ApiClient }) {
         <div className="replaymain">
           <div className="replayboardcol">
             <header className="replayhead">
-              {/* The URL id, not the word-list name — names collide with
-               * nickname vocabulary and read like a player (playtest round 2). */}
-              <h1>Game {replay.gameId.replace(/^gm_/, "")}</h1>
+              <h1>{formatGameLabel(replay.gameId)}</h1>
             </header>
             <Replayer
               plies={toReplayerPlies(replay.plies)}

@@ -48,6 +48,13 @@ export function formatThinkingTime(
   return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
+/** Public game label — the URL id, not the word-list name: names collide
+ * with nickname vocabulary and read like a player (playtest round 2). Must
+ * match the replay-page heading everywhere a finished game is labeled. */
+export function formatGameLabel(gameId: string): string {
+  return `Game ${gameId.replace(/^gm_/, "")}`;
+}
+
 /** Wire timestamps are ISO UTC; render in the viewer's local time — HH:MM
  * for same-day, date + time otherwise (§4.5). */
 export function formatLocalTime(iso: string, now: Date = new Date()): string {
