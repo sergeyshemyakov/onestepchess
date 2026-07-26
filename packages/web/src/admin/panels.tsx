@@ -431,6 +431,13 @@ export function HealthPanel(props: {
   }, [code, level, page, props.client]);
 
   const overview = props.overview;
+  // Treasury coverage is part of the health verdict, so the badge label and its
+  // colour must derive from the same predicate — otherwise a low-coverage
+  // incident renders red styling while still reading "nominal".
+  const healthy =
+    overview.facilitator.healthy &&
+    overview.reconciliation.ok &&
+    !overview.treasury.belowRefundCoverage;
   return (
     <section className="admin-panel" aria-labelledby="admin-health-title">
       <header>
@@ -438,18 +445,8 @@ export function HealthPanel(props: {
           <h2 id="admin-health-title">HEALTH</h2>
           <p>process, dependency, settlement, treasury, and alerts</p>
         </div>
-        <span
-          className={
-            overview.facilitator.healthy &&
-            overview.reconciliation.ok &&
-            !overview.treasury.belowRefundCoverage
-              ? "admin-health-ok"
-              : "admin-health-bad"
-          }
-        >
-          {overview.facilitator.healthy && overview.reconciliation.ok
-            ? "● nominal"
-            : "◆ attention"}
+        <span className={healthy ? "admin-health-ok" : "admin-health-bad"}>
+          {healthy ? "● nominal" : "◆ attention"}
         </span>
       </header>
       <div className="admin-columns">
