@@ -31,6 +31,11 @@ const Archive = lazy(() =>
     default: module.Archive,
   })),
 );
+const Admin = lazy(() =>
+  import("./admin/AdminPage.jsx").then((module) => ({
+    default: module.AdminRoute,
+  })),
+);
 const NotFound = lazy(() =>
   import("./routes/NotFound.jsx").then((module) => ({
     default: module.NotFound,
@@ -131,6 +136,7 @@ export function ContextualApp(props: {
                   path="/archive"
                   element={<ArchiveRoute client={props.client} />}
                 />
+                <Route path="/admin" element={<Admin />} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </Suspense>

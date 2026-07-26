@@ -288,6 +288,282 @@ export const claimStatusSchema = z.discriminatedUnion("status", [
 ]);
 export type ClaimStatus = z.infer<typeof claimStatusSchema>;
 
+// ---- hidden admin surface (server spec §6.5) ----
+
+const nullableIsoTimestampSchema = isoTimestampSchema.nullable();
+const signedIntegerSchema = z.number().int();
+
+export const adminOverviewSchema = z.object({
+  mode: z.enum(["running", "paused"]),
+  pauseCauses: z.array(z.string()),
+  banner: z.string().nullable(),
+  pool: z.object({
+    target: nonNegativeIntegerSchema,
+    active: nonNegativeIntegerSchema,
+    endspiel: nonNegativeIntegerSchema,
+    claimsOpen: nonNegativeIntegerSchema,
+  }),
+  treasury: z.object({
+    usdcMicroUsdc: nonNegativeIntegerSchema,
+    algoMicroAlgo: nonNegativeIntegerSchema,
+    capMicroUsdc: nonNegativeIntegerSchema,
+    belowRefundCoverage: z.boolean(),
+  }),
+  payouts: z.object({
+    pending: nonNegativeIntegerSchema,
+    prepared: nonNegativeIntegerSchema,
+    submitted: nonNegativeIntegerSchema,
+    failed: nonNegativeIntegerSchema,
+  }),
+  funding: z.object({
+    pending: nonNegativeIntegerSchema,
+    prepared: nonNegativeIntegerSchema,
+    submitted: nonNegativeIntegerSchema,
+    failed: nonNegativeIntegerSchema,
+  }),
+  reconciliation: z.object({
+    lastRunAt: nullableIsoTimestampSchema,
+    bookMicroUsdc: signedIntegerSchema,
+    chainMicroUsdc: signedIntegerSchema,
+    driftMicroUsdc: signedIntegerSchema,
+    inboundToleranceMicroUsdc: nonNegativeIntegerSchema,
+    outboundToleranceMicroUsdc: nonNegativeIntegerSchema,
+    ok: z.boolean(),
+  }),
+  facilitator: z.object({
+    healthy: z.boolean(),
+    lastCheckAt: nullableIsoTimestampSchema,
+  }),
+  live: z.object({
+    uptimeSeconds: nonNegativeIntegerSchema,
+    sseClients: nonNegativeIntegerSchema,
+    settleP50Ms: z.number().nonnegative().nullable(),
+    settleP95Ms: z.number().nonnegative().nullable(),
+  }),
+});
+export type AdminOverview = z.infer<typeof adminOverviewSchema>;
+
+const adminPnlItemSchema = z.object({
+  address: z.string(),
+  nickname: z.string(),
+  pnlMicroUsdc: signedIntegerSchema,
+});
+
+export const adminActivitySchema = z.object({
+  window: z.enum(["24h", "7d", "30d", "all"]),
+  fromAt: nullableIsoTimestampSchema,
+  toAt: isoTimestampSchema,
+  counts: z.object({
+    activeHumans: nonNegativeIntegerSchema,
+    activeAgents: nonNegativeIntegerSchema,
+    demoOnlyPlayers: nonNegativeIntegerSchema,
+    registrations: nonNegativeIntegerSchema,
+    humanMoves: nonNegativeIntegerSchema,
+    agentMoves: nonNegativeIntegerSchema,
+    demoMoves: nonNegativeIntegerSchema,
+    claimsCreated: nonNegativeIntegerSchema,
+    claimsMoved: nonNegativeIntegerSchema,
+    claimsExpired: nonNegativeIntegerSchema,
+    gamesFinished: nonNegativeIntegerSchema,
+  }),
+  money: z.object({
+    stakeVolumeMicroUsdc: nonNegativeIntegerSchema,
+    payoutVolumeMicroUsdc: nonNegativeIntegerSchema,
+    protocolTakeMicroUsdc: signedIntegerSchema,
+    treasuryNetFlowMicroUsdc: signedIntegerSchema,
+  }),
+  tripwires: z.object({
+    claimMovePctHuman: z.number().nullable(),
+    claimMovePctAgent: z.number().nullable(),
+    demoSharePct: z.number().nullable(),
+    demoToStakedPct: z.number().nullable(),
+    humanMoveLatencyP50Seconds: z.number().nullable(),
+    humanMoveLatencyP95Seconds: z.number().nullable(),
+    quotaSaturationPct: z.number().nullable(),
+    topWinners: z.array(adminPnlItemSchema),
+    topLosers: z.array(adminPnlItemSchema),
+  }),
+});
+export type AdminActivity = z.infer<typeof adminActivitySchema>;
+export type AdminActivityWindow = AdminActivity["window"];
+
+export const adminGameSummarySchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  status: z.string(),
+  ply: nonNegativeIntegerSchema,
+  result: z.string().nullable(),
+  stakePotMicroUsdc: nonNegativeIntegerSchema,
+  claimsOpen: nonNegativeIntegerSchema,
+  createdAt: isoTimestampSchema,
+  finishedAt: nullableIsoTimestampSchema,
+});
+export type AdminGameSummary = z.infer<typeof adminGameSummarySchema>;
+
+export const adminClaimSchema = z.object({
+  id: z.string(),
+  player: z.string(),
+  nickname: z.string().nullable(),
+  side: z.string(),
+  demo: z.boolean(),
+  status: z.string(),
+  stakeMicroUsdc: nonNegativeIntegerSchema,
+  move: moveSchema.nullable(),
+  claimedAt: isoTimestampSchema,
+  deadline: isoTimestampSchema,
+  movedAt: nullableIsoTimestampSchema,
+});
+export type AdminClaim = z.infer<typeof adminClaimSchema>;
+
+export const adminGameDossierSchema = z.object({
+  game: adminGameSummarySchema.extend({
+    fen: z.string(),
+    pgn: z.string(),
+    termination: z.string().nullable(),
+    endspielPly: z.number().int().positive().nullable(),
+    rules: z.record(z.string(), z.unknown()),
+  }),
+  claims: z.array(adminClaimSchema),
+  stakes: z.array(
+    z.object({
+      id: z.string(),
+      player: z.string(),
+      side: z.string(),
+      kind: z.string(),
+      amountMicroUsdc: nonNegativeIntegerSchema,
+      payTxid: z.string(),
+      ply: nonNegativeIntegerSchema,
+    }),
+  ),
+  resolution: z
+    .object({
+      payoutsMicroUsdc: nonNegativeIntegerSchema,
+      feeMicroUsdc: signedIntegerSchema,
+      dustMicroUsdc: signedIntegerSchema,
+      surplusMicroUsdc: signedIntegerSchema,
+      conserved: z.boolean(),
+    })
+    .nullable(),
+  payoutJobs: z.array(
+    z.object({
+      id: z.string(),
+      recipient: z.string(),
+      amountMicroUsdc: nonNegativeIntegerSchema,
+      status: z.string(),
+      txid: z.string().nullable(),
+      attempts: nonNegativeIntegerSchema,
+    }),
+  ),
+});
+export type AdminGameDossier = z.infer<typeof adminGameDossierSchema>;
+
+export const adminPlayerSchema = z.object({
+  address: z.string(),
+  nickname: z.string().nullable(),
+  kind: z.string(),
+  banned: z.boolean(),
+  quotaOverride: nonNegativeIntegerSchema.nullable(),
+  abandonCount: nonNegativeIntegerSchema,
+  deprioritizedUntil: nullableIsoTimestampSchema,
+  stats: z.object({
+    moves: nonNegativeIntegerSchema,
+    wins: nonNegativeIntegerSchema,
+    draws: nonNegativeIntegerSchema,
+    losses: nonNegativeIntegerSchema,
+    winratePct: z.number().nullable(),
+  }),
+  netPnlMicroUsdc: signedIntegerSchema,
+  points: nonNegativeIntegerSchema.optional(),
+  referredBy: z.string().nullable().optional(),
+  referrals: z
+    .object({
+      joined: nonNegativeIntegerSchema,
+      qualified: nonNegativeIntegerSchema,
+    })
+    .optional(),
+  quota: z.object({
+    staked: quotaWindowSchema,
+    demo: quotaWindowSchema,
+  }),
+  recentClaims: z.array(adminClaimSchema),
+});
+export type AdminPlayer = z.infer<typeof adminPlayerSchema>;
+
+export const adminErrorSchema = z.object({
+  id: nonNegativeIntegerSchema,
+  at: isoTimestampSchema,
+  level: z.string(),
+  code: z.string(),
+  requestId: z.string().nullable(),
+  context: z.record(z.string(), z.unknown()),
+});
+export type AdminError = z.infer<typeof adminErrorSchema>;
+
+export const adminConfigItemSchema = z.object({
+  key: z.string(),
+  defaultValue: z.unknown(),
+  overrideValue: z.unknown().nullable(),
+  effectiveValue: z.unknown(),
+  effect: z.enum(["immediate", "new_claims", "new_games", "restart"]),
+  editable: z.boolean(),
+  updatedAt: nullableIsoTimestampSchema,
+  updatedBy: z.string().nullable(),
+});
+export type AdminConfigItem = z.infer<typeof adminConfigItemSchema>;
+
+export const adminConfigSchema = z.object({
+  revision: nonNegativeIntegerSchema,
+  items: z.array(adminConfigItemSchema),
+  history: z.array(
+    z.object({
+      id: nonNegativeIntegerSchema,
+      at: isoTimestampSchema,
+      actor: z.string(),
+      action: z.string(),
+      payload: z.record(z.string(), z.unknown()),
+    }),
+  ),
+});
+export type AdminConfig = z.infer<typeof adminConfigSchema>;
+
+export const adminBonusSchema = z.object({
+  address: z.string(),
+  nickname: z.string().nullable(),
+  status: z.string(),
+  claimIp: z.string(),
+  claimedAt: isoTimestampSchema,
+  fundedAt: nullableIsoTimestampSchema,
+  algoTxid: z.string().nullable(),
+  usdcTxid: z.string().nullable(),
+  lifetimeStakedMoves: nonNegativeIntegerSchema,
+  points: nonNegativeIntegerSchema,
+  referredBy: z.string().nullable(),
+});
+export type AdminBonus = z.infer<typeof adminBonusSchema>;
+
+export const adminBonusesSchema = gamesPageSchema(adminBonusSchema).extend({
+  todayClaimed: nonNegativeIntegerSchema,
+  dailyCap: nonNegativeIntegerSchema,
+  totalClaimed: nonNegativeIntegerSchema,
+  totalAlgoMicro: nonNegativeIntegerSchema,
+  totalUsdcMicro: nonNegativeIntegerSchema,
+  available: z.boolean().optional(),
+  reason: z.string().optional(),
+});
+export type AdminBonuses = z.infer<typeof adminBonusesSchema>;
+
+export const adminPauseStateSchema = z.object({
+  mode: z.enum(["running", "paused"]),
+  causes: z.array(z.string()),
+  banner: z.string().nullable(),
+});
+
+export const adminConfigMutationSchema = z.object({
+  ok: z.literal(true),
+  effect: z.string(),
+  revision: nonNegativeIntegerSchema,
+});
+
 // ---- x402 V2 wire shapes (rail spec §5.1/§5.2/§5.4) ----
 
 export const paymentRequirementsSchema = z.object({

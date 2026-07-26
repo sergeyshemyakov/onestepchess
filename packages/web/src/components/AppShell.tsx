@@ -66,6 +66,8 @@ export function AppShell(props: {
   readonly belowBar?: ReactNode;
   /** Public replay is intentionally independent of `/meta` (§6 F-W6). */
   readonly showSystemBanner?: boolean;
+  /** Operations is a dashboard, not a CRT stage (§7). */
+  readonly dashboard?: boolean;
 }) {
   const live = useShellLive();
   const location = useLocation();
@@ -78,9 +80,9 @@ export function AppShell(props: {
     live?.playSurfaceVisible !== true;
 
   return (
-    <div className="crt">
-      <div className="overlay scan" />
-      <div className="overlay vig" />
+    <div className={props.dashboard === true ? "crt admin-shell" : "crt"}>
+      {props.dashboard === true ? null : <div className="overlay scan" />}
+      {props.dashboard === true ? null : <div className="overlay vig" />}
       <div className="appbar">
         <Link className="brand" to="/" aria-label="ONE STEP CHESS home">
           <KnightMark />

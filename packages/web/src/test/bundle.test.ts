@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -76,6 +76,17 @@ function walk(entry: string): {
   return { files, packages };
 }
 
+function sourceFiles(directory: string): readonly string[] {
+  return readdirSync(directory).flatMap((entry) => {
+    const path = join(directory, entry);
+    if (statSync(path).isDirectory()) return sourceFiles(path);
+    if (!/\.(ts|tsx)$/.test(entry) || /\.test\.(ts|tsx)$/.test(entry)) {
+      return [];
+    }
+    return [path];
+  });
+}
+
 describe("root bundle static import graph (§5.6)", () => {
   const graph = walk(join(SRC, "main.tsx"));
 
@@ -114,6 +125,34 @@ describe("root bundle static import graph (§5.6)", () => {
       expect(normalized).not.toContain("/live/LiveContext");
       expect(normalized).not.toContain("/auth/SessionContext");
       expect(normalized).not.toContain("/ContextualApp");
+    }
+  });
+
+  it("public_components_never_reference_admin_route_or_chunk", () => {
+    const references = sourceFiles(SRC).filter((file) =>
+      readFileSync(file, "utf8").includes("/admin"),
+    );
+    const violations = references.filter((file) => {
+      const normalized = file.replaceAll("\\", "/");
+      return (
+        !normalized.endsWith("/ContextualApp.tsx") &&
+        !normalized.includes("/admin/")
+      );
+    });
+    expect(violations).toEqual([]);
+
+    for (const entry of [
+      join(SRC, "main.tsx"),
+      join(SRC, "routes/Landing.tsx"),
+      join(SRC, "routes/Replay.tsx"),
+      join(SRC, "routes/Start.tsx"),
+    ]) {
+      const publicGraph = walk(entry);
+      expect(
+        [...publicGraph.files].filter((file) =>
+          file.replaceAll("\\", "/").includes("/admin/"),
+        ),
+      ).toEqual([]);
     }
   });
 
