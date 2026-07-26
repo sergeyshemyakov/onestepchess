@@ -30,6 +30,7 @@ import {
 import {
   assertTrustedPayment,
   buildPaymentHeader,
+  type CachedPayment,
   decodePaymentRequired,
   decodePaymentResponse,
   PaymentCache,
@@ -143,6 +144,45 @@ export function createOscClient(options: OscClientOptions): OscClient {
   let authPromise: Promise<void> | undefined;
 
   const url = (path: string) => `${serverUrl}/api/v1${path}`;
+
+  function paymentSigner(): Signer {
+    if (options.signer !== undefined) return options.signer;
+    throw new OscClientError(
+      "NO_WALLET",
+      "a signer is required for a staked move",
+    );
+  }
+
+  async function buildCachedPayment(
+    claim: ClaimView,
+    challengeHeader: string,
+    resourceUrl: string,
+  ): Promise<CachedPayment> {
+    const paymentRequired = decodePaymentRequired(challengeHeader);
+    const requirement = assertTrustedPayment({
+      paymentRequired,
+      claim,
+      meta: await getMeta(),
+      resourceUrl,
+      ...(options.expectNetwork === undefined
+        ? {}
+        : { expectNetwork: options.expectNetwork }),
+    });
+    const headerBytes = await buildPaymentHeader({
+      paymentRequired,
+      requirement,
+      signer: paymentSigner(),
+      ...(options.algodUrl === undefined ? {} : { algodUrl: options.algodUrl }),
+      ...(options.nonce === undefined ? {} : { nonce: options.nonce }),
+    });
+    const payment = {
+      claimId: claim.claimId,
+      headerBytes,
+      amountMicroUsdc: claim.stakeMicroUsdc,
+    };
+    paymentCache.set(payment);
+    return payment;
+  }
 
   async function execute(
     path: string,
@@ -423,40 +463,13 @@ export function createOscClient(options: OscClientOptions): OscClient {
       const challengeHeader = response.headers.get("PAYMENT-REQUIRED");
       if (cached === undefined && error.code === "PAYMENT_REQUIRED") {
         if (challengeHeader === null) throw error;
-        const paymentRequired = decodePaymentRequired(challengeHeader);
-        const requirement = assertTrustedPayment({
-          paymentRequired,
-          claim,
-          meta: await getMeta(),
-          resourceUrl,
-          ...(options.expectNetwork === undefined
-            ? {}
-            : { expectNetwork: options.expectNetwork }),
-        });
         budget.reserve(claimId, claim.stakeMicroUsdc);
         try {
-          const headerBytes = await buildPaymentHeader({
-            paymentRequired,
-            requirement,
-            signer:
-              options.signer ??
-              (() => {
-                throw new OscClientError(
-                  "NO_WALLET",
-                  "a signer is required for a staked move",
-                );
-              })(),
-            ...(options.algodUrl === undefined
-              ? {}
-              : { algodUrl: options.algodUrl }),
-            ...(options.nonce === undefined ? {} : { nonce: options.nonce }),
-          });
-          cached = {
-            claimId,
-            headerBytes,
-            amountMicroUsdc: claim.stakeMicroUsdc,
-          };
-          paymentCache.set(cached);
+          cached = await buildCachedPayment(
+            claim,
+            challengeHeader,
+            resourceUrl,
+          );
           continue;
         } catch (buildError) {
           budget.release(claimId);
@@ -473,39 +486,8 @@ export function createOscClient(options: OscClientOptions): OscClient {
         rebuilds += 1;
         paymentCache.delete(claimId);
         cached = undefined;
-        const paymentRequired = decodePaymentRequired(challengeHeader);
-        const requirement = assertTrustedPayment({
-          paymentRequired,
-          claim,
-          meta: await getMeta(),
-          resourceUrl,
-          ...(options.expectNetwork === undefined
-            ? {}
-            : { expectNetwork: options.expectNetwork }),
-        });
         budget.reserve(claimId, claim.stakeMicroUsdc);
-        const headerBytes = await buildPaymentHeader({
-          paymentRequired,
-          requirement,
-          signer:
-            options.signer ??
-            (() => {
-              throw new OscClientError(
-                "NO_WALLET",
-                "a signer is required for a staked move",
-              );
-            })(),
-          ...(options.algodUrl === undefined
-            ? {}
-            : { algodUrl: options.algodUrl }),
-          ...(options.nonce === undefined ? {} : { nonce: options.nonce }),
-        });
-        cached = {
-          claimId,
-          headerBytes,
-          amountMicroUsdc: claim.stakeMicroUsdc,
-        };
-        paymentCache.set(cached);
+        cached = await buildCachedPayment(claim, challengeHeader, resourceUrl);
         continue;
       }
 

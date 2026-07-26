@@ -1,5 +1,12 @@
 import { z } from "zod";
 import {
+  ApiError,
+  jsonRequestInit,
+  parseJson,
+  responseError,
+  retryAfterSecondsFrom,
+} from "./http.js";
+import {
   type ChallengeResponse,
   type ClaimStatus,
   type ClaimView,
@@ -7,7 +14,6 @@ import {
   claimStatusSchema,
   claimViewSchema,
   type ErrorEnvelope,
-  errorEnvelopeSchema,
   type FinishedGameItem,
   finishedGameItemSchema,
   type GamesPage,
@@ -28,49 +34,13 @@ import {
   verifyResponseSchema,
 } from "./schemas.js";
 
+export {
+  ApiError,
+  decodeEnvelope,
+  retryAfterSecondsFrom,
+} from "./http.js";
+
 const claimEnvelopeSchema = z.object({ claim: claimViewSchema });
-
-/** Non-2xx JSON decoded to the pinned envelope plus transport facts. */
-export class ApiError extends Error {
-  constructor(
-    readonly status: number,
-    readonly envelope: ErrorEnvelope,
-    readonly retryAfterSeconds: number | null,
-    readonly headers: Headers,
-  ) {
-    super(`${envelope.error}: ${envelope.hint}`);
-    this.name = "ApiError";
-  }
-
-  get code(): string {
-    return this.envelope.error;
-  }
-}
-
-export function retryAfterSecondsFrom(headers: Headers): number | null {
-  const raw = headers.get("Retry-After");
-  if (raw === null) return null;
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
-}
-
-/** Decode a non-2xx JSON body to the envelope; a malformed body still
- * yields a displayable envelope instead of a crash (§9 resilience). */
-export async function decodeEnvelope(
-  response: Response,
-): Promise<ErrorEnvelope> {
-  try {
-    const parsed = errorEnvelopeSchema.safeParse(await response.json());
-    if (parsed.success) return parsed.data;
-  } catch {
-    // non-JSON body — fall through
-  }
-  return {
-    error: "INTERNAL",
-    hint: `unexpected response (${response.status})`,
-    docs: "",
-  };
-}
 
 export type CreateClaimResult =
   | {
@@ -127,46 +97,18 @@ export function createApiClient(options: ApiClientOptions = {}) {
       readonly suppressAuthHook?: boolean;
     } = {},
   ): Promise<Response> {
-    const response = await fetchFn(`/api/v1${path}`, {
-      method: init.method ?? "GET",
-      credentials: "same-origin",
-      headers: {
-        ...(init.body === undefined
-          ? {}
-          : { "content-type": "application/json" }),
-        ...init.headers,
-      },
-      ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
-    });
+    const response = await fetchFn(`/api/v1${path}`, jsonRequestInit(init));
     if (!response.ok && response.status !== 204) {
       if (response.status === 401 && init.suppressAuthHook !== true) {
         options.onUnauthorized?.();
       }
-      throw new ApiError(
-        response.status,
-        await decodeEnvelope(response),
-        retryAfterSecondsFrom(response.headers),
-        response.headers,
-      );
+      throw await responseError(response);
     }
     return response;
   }
 
   async function json<T>(response: Response, schema: z.ZodType<T>): Promise<T> {
-    const parsed = schema.safeParse(await response.json());
-    if (!parsed.success) {
-      throw new ApiError(
-        response.status,
-        {
-          error: "INTERNAL",
-          hint: "response failed wire validation",
-          docs: "",
-        },
-        null,
-        response.headers,
-      );
-    }
-    return parsed.data;
+    return parseJson(response, schema);
   }
 
   return {
