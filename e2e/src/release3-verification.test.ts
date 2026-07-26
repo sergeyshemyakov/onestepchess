@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -122,11 +123,22 @@ describe.sequential("Release 3 soak verification", () => {
     expect(report.noRealMoney).toBe(true);
     expect(report.profile).toBe("mock:local");
     expect(report.final.secretFindings).toBe(0);
+    // `pnpm build` runs after `pnpm test` in CI, so the web dist may not exist
+    // yet. The built index.html only adds hashed asset tags to the checked-in
+    // source, so auditing the source when the build is absent catches the same
+    // authored-string risks and keeps this gate order-independent.
+    const webBuilt = new URL(
+      "../../packages/web/dist/index.html",
+      import.meta.url,
+    );
+    const webIndex = existsSync(webBuilt)
+      ? webBuilt
+      : new URL("../../packages/web/index.html", import.meta.url);
     const files = [
       new URL("../../README.md", import.meta.url),
       new URL("../../packages/agent-kit/README.md", import.meta.url),
       new URL("../../packages/mcp/README.md", import.meta.url),
-      new URL("../../packages/web/dist/index.html", import.meta.url),
+      webIndex,
     ];
     const forbidden = [
       "TREASURY_MNEMONIC=",

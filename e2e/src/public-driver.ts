@@ -199,10 +199,15 @@ export function createPublicHumanDriver(
       body: { demo: false },
     });
     if (response.status === 204) return null;
-    const body = await expectJson<{ readonly claim: ClaimView }>(
-      response,
-      response.status,
-    );
+    // POST /claims answers 201 for a fresh claim and 200 when it returns the
+    // caller's already-open claim; any other status is a real server error and
+    // must surface rather than be parsed as a claim.
+    if (response.status !== 200 && response.status !== 201) {
+      throw new Error(
+        `public human claim returned ${response.status}: ${await response.text()}`,
+      );
+    }
+    const body = (await response.json()) as { readonly claim: ClaimView };
     return body.claim;
   };
 
