@@ -8,6 +8,7 @@
   "scripts": {
     "test": "pnpm --dir .. exec vitest run --project @onestepchess/e2e",
     "test:e2e": "playwright test",
+    "release3_soak_64x100x10000": "tsx src/release3-soak.ts release3_soak_64x100x10000",
     "smoke:t1": "pnpm --dir .. exec tsx e2e/src/t1-chain-smoke.ts"
   },
   "devDependencies": {

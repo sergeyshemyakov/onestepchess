@@ -354,6 +354,37 @@ describe("Release 3 reconciliation and recovery", () => {
     expect(stack.transport).toHaveBeenCalledTimes(1);
   });
 
+  it("reconciliation_drift_recovers_only_its_pause_cause_after_clean_probe", async () => {
+    const stack = setup();
+    await runReconciliation(stack.reconciliation, "boot");
+    await jsonRequest(stack, "/api/v1/admin/pause", "POST", {
+      banner: "Investigating",
+    });
+    stack.rail.control.setBalances(stack.rail.treasuryAddress, {
+      usdcMicroUsdc: 999_000,
+    });
+    expect(
+      await runReconciliation(stack.reconciliation, "scheduled"),
+    ).toMatchObject({ ok: false, driftMicroUsdc: 1_000 });
+
+    stack.rail.control.setBalances(stack.rail.treasuryAddress, {
+      usdcMicroUsdc: 1_000_000,
+    });
+    expect(
+      await runReconciliation(stack.reconciliation, "scheduled"),
+    ).toMatchObject({ ok: true, driftMicroUsdc: 0 });
+    expect(readPauseState(stack.database.db)).toMatchObject({
+      mode: "paused",
+      causes: ["manual"],
+    });
+
+    await jsonRequest(stack, "/api/v1/admin/resume", "POST");
+    expect(readPauseState(stack.database.db)).toMatchObject({
+      mode: "running",
+      causes: [],
+    });
+  });
+
   it("pause_causes_recover_independently_without_stranding_money", async () => {
     const stack = setup();
     await runReconciliation(stack.reconciliation, "boot");
@@ -744,6 +775,89 @@ describe("Release 3 admin mutations", () => {
         .where(eq(schema.payoutJobs.id, "pj_failed"))
         .get(),
     ).toMatchObject({ status: "pending", attempts: 0 });
+  });
+
+  it("diagnose_pause_retry_reconcile_resume", async () => {
+    const stack = setup();
+    const gameId = seedGame(stack, "gm_operator_drill");
+    stack.database.db
+      .insert(schema.payoutJobs)
+      .values({
+        id: "pj_operator_drill",
+        gameId,
+        recipient: "alice",
+        amount: 100,
+        reason: "refund",
+        status: "failed",
+        attempts: 10,
+        createdAt: stack.now(),
+      })
+      .run();
+
+    const overview = await stack.app.request("/api/v1/admin/overview", {
+      headers: tokenHeaders(),
+    });
+    expect(overview.status).toBe(200);
+    expect(
+      stack.database.db
+        .select()
+        .from(schema.payoutJobs)
+        .where(eq(schema.payoutJobs.id, "pj_operator_drill"))
+        .get(),
+    ).toMatchObject({ status: "failed", attempts: 10 });
+
+    const pause = await jsonRequest(stack, "/api/v1/admin/pause", "POST", {
+      banner: "operator drill — payout repair",
+    });
+    expect(pause.status).toBe(200);
+    expect(readPauseState(stack.database.db).mode).toBe("paused");
+
+    // The fixture failure is one-shot: reaching this step represents removing
+    // the diagnosed mock cause before the operator re-arms durable work.
+    const retry = await jsonRequest(
+      stack,
+      "/api/v1/admin/payouts/pj_operator_drill/retry",
+      "POST",
+    );
+    expect(retry.status).toBe(200);
+    expect(
+      stack.database.db
+        .select()
+        .from(schema.payoutJobs)
+        .where(eq(schema.payoutJobs.id, "pj_operator_drill"))
+        .get(),
+    ).toMatchObject({ status: "pending", attempts: 0 });
+
+    const reconcile = await jsonRequest(
+      stack,
+      "/api/v1/admin/reconcile",
+      "POST",
+    );
+    expect(reconcile.status).toBe(200);
+    expect(await reconcile.json()).toMatchObject({ ok: true });
+
+    const resume = await jsonRequest(stack, "/api/v1/admin/resume", "POST");
+    expect(resume.status).toBe(200);
+    expect(readPauseState(stack.database.db).mode).toBe("running");
+    const drillActions = stack.database.db
+      .select()
+      .from(schema.auditLog)
+      .all()
+      .map((entry) => entry.action)
+      .filter((action) =>
+        [
+          "system.pause",
+          "payout.retry",
+          "treasury.reconcile",
+          "system.resume",
+        ].includes(action),
+      );
+    expect(drillActions).toEqual([
+      "system.pause",
+      "payout.retry",
+      "treasury.reconcile",
+      "system.resume",
+    ]);
   });
 
   it("every_admin_mutation_is_one_command_one_transaction_one_audit_record", async () => {

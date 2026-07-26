@@ -117,3 +117,59 @@ Discovery and hardening surfaces to verify after deploy:
 The WalletConnect project id and Turnstile keys are public deployment values;
 record the exact CSP relay origin from the wallet smoke before allowlisting any
 additional origin (server spec §6.6).
+
+## Release 3 mock operations profile
+
+Release 3 remains `RAIL=mock` and must display `mock staging — no real USDC`.
+Do not set `TREASURY_MNEMONIC` or advertise a testnet/mainnet application
+profile. In addition to the Release 2 settings, configure `ADMIN_ADDRESSES`
+with the operator wallets, set `ADMIN_TOKEN` only for the runbook/metrics
+client, and keep `BACKUP_DIR` on the persistent volume.
+
+Run the load and recovery gate outside CI:
+
+```bash
+pnpm --filter @onestepchess/e2e release3_soak_64x100x10000 \
+  ../docs/verification/release3-soak-report.json
+```
+
+The command fixes `GAME_POOL_TARGET=64`, 100 distinct deterministic agent
+wallets, 10,000 accepted public-client moves, seed `20260726`, and persistent
+restarts every 2,500 moves. It is mock-only and fails if the report violates
+its zod schema. Review every `final` counter and latency budget before using
+the report as release evidence.
+
+### Operator drill: `diagnose_pause_retry_reconcile_resume`
+
+The drill uses only the hidden admin UI or its corresponding admin HTTP
+routes. The operator must not edit SQLite or invoke an internal coordinator
+command.
+
+1. In **HEALTH**, confirm the injected payout is exhausted and copy its public
+   payout id. Check **ERRORS** for the bounded, redacted context and confirm
+   treasury/reconciliation state in **ACTIVITY**.
+2. Use the pinned global control and complete both pause interactions. Confirm
+   `/api/v1/meta.status.mode` is `paused` and the incident banner is visible.
+3. Have the drill facilitator remove the one-shot mock payout failure. This is
+   the only out-of-band fault-fixture action; it is not a service repair.
+4. In the payout dossier, retry the exhausted payout. Confirm its attempt
+   counter is re-armed without replacing already-safe prepared bytes.
+5. Run reconciliation. Continue only when the report says `ok: true`, drift is
+   zero or within the displayed in-flight tolerance, and no unrelated pause
+   cause remains.
+6. Complete both resume interactions. Confirm `/meta` returns `running`, then
+   verify the audit history contains pause, payout retry, reconciliation, and
+   resume in order.
+
+The deterministic route-level rehearsal is:
+
+```bash
+pnpm exec vitest run --project @onestepchess/server \
+  packages/server/src/admin/release3-operations.test.ts \
+  -t diagnose_pause_retry_reconcile_resume
+```
+
+For release sign-off, a person unfamiliar with the implementation must perform
+the six UI steps on mock staging and record their name, timestamp, build
+digest, and any point where the runbook was unclear. The automated rehearsal
+does not replace that human usability gate.
