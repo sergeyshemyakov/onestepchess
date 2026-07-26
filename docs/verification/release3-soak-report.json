@@ -1,0 +1,125 @@
+{
+  "command": "release3_soak_64x100x10000",
+  "profile": "mock:local",
+  "noRealMoney": true,
+  "config": {
+    "gamePoolTarget": 64,
+    "sessions": 100,
+    "acceptedMoves": 10000,
+    "seed": 20260726
+  },
+  "durationMs": 78581.063,
+  "restarts": 3,
+  "churn": {
+    "noBoardResponses": 137895,
+    "expiredClaims": 1,
+    "sseConnectionsOpened": 100,
+    "sseConnectionsClosed": 100
+  },
+  "faults": {
+    "sse_reconnect_reset_churn": {
+      "injected": true,
+      "converged": true,
+      "detail": "100 public-session streams opened and closed"
+    },
+    "claim_expiry": {
+      "injected": true,
+      "converged": true,
+      "detail": "claim clm_dpz8vq21v10c expired without a payment intent"
+    },
+    "ambiguous_settlement_applied": {
+      "injected": true,
+      "converged": true,
+      "detail": "lost applied settle response recovered through public status"
+    },
+    "ambiguous_settlement_unapplied": {
+      "injected": true,
+      "converged": true,
+      "detail": "unapplied ambiguity failed after its finite recovery boundary"
+    },
+    "payout_rejection_recovery": {
+      "injected": true,
+      "converged": true,
+      "detail": "one rejected prepared batch was retried with durable bytes"
+    },
+    "facilitator_health_loss_recovery": {
+      "injected": true,
+      "converged": true,
+      "detail": "paused -> running"
+    },
+    "reconciliation": {
+      "injected": true,
+      "converged": true,
+      "detail": "drift 1000 -> 0 micro-USDC"
+    },
+    "controlled_restart": {
+      "injected": true,
+      "converged": true,
+      "detail": "3 persistent SQLite/shared-rail restarts"
+    },
+    "same_side_cooldown_churn": {
+      "injected": true,
+      "converged": true,
+      "detail": "137895 bounded no-board outcomes under churn"
+    }
+  },
+  "latency": {
+    "claim": {
+      "count": 147894,
+      "p50Ms": 16.297,
+      "p95Ms": 36.842,
+      "maxMs": 249.685
+    },
+    "read": {
+      "count": 20,
+      "p50Ms": 0.441,
+      "p95Ms": 0.51,
+      "maxMs": 0.51
+    },
+    "settle": {
+      "count": 9999,
+      "p50Ms": 164.606,
+      "p95Ms": 246.79,
+      "maxMs": 309.571
+    },
+    "coordinatorCommand": {
+      "count": 189648,
+      "p50Ms": 0.17,
+      "p95Ms": 0.533,
+      "maxMs": 13.656
+    },
+    "serverMoveContribution": {
+      "count": 10000,
+      "p50Ms": 0.587,
+      "p95Ms": 1.445,
+      "maxMs": 7.609
+    }
+  },
+  "resources": {
+    "cpuUserMicros": 77866076,
+    "cpuSystemMicros": 3442232,
+    "rssStartBytes": 277446656,
+    "rssEndBytes": 1295400960,
+    "rssPeakBytes": 1295400960,
+    "sqliteBytes": 27529216,
+    "walBytes": 4297192
+  },
+  "final": {
+    "invariantViolations": 0,
+    "ledgerBalanced": true,
+    "ledgerTotalMicroUsdc": 10144000,
+    "duplicateClientTxids": 0,
+    "duplicatePayouts": 0,
+    "strandedPaymentIntents": 0,
+    "strandedPayoutJobs": 0,
+    "reconciliationClean": true,
+    "structuredLogLines": 189648,
+    "malformedLogLines": 0,
+    "secretFindings": 0
+  },
+  "budgets": {
+    "claimReadP95Under50Ms": true,
+    "coordinatorP95Under10Ms": true,
+    "serverMoveP95Under100Ms": true
+  }
+}

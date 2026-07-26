@@ -17,6 +17,7 @@
     "test:tarballs": "node scripts/package-tarball-smoke.mjs",
     "smoke:mcp": "node scripts/mcp-local-smoke.mjs",
     "test:docker": "./scripts/docker-smoke.sh",
+    "test:release3:docker": "./scripts/release3-docker-smoke.sh",
     "build": "tsc -b && pnpm --filter @onestepchess/web build"
   },
   "devDependencies": {

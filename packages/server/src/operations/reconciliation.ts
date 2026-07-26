@@ -178,12 +178,12 @@ export function registerOperationalCommands(deps: ReconciliationDeps): void {
           .run();
       }
 
+      const reconciliationChanged = updatePauseCause(deps.db, ctx, {
+        cause: "reconciliation",
+        active: !ok,
+      }).changed;
       if (!ok) {
-        const changed = updatePauseCause(deps.db, ctx, {
-          cause: "reconciliation",
-          active: true,
-        }).changed;
-        if (changed) {
+        if (reconciliationChanged) {
           deps.db
             .insert(schema.errorLog)
             .values({
