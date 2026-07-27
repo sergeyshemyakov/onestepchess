@@ -1,9 +1,5 @@
 import type { z } from "zod";
-import {
-  ApiError,
-  decodeEnvelope,
-  retryAfterSecondsFrom,
-} from "../api/client.js";
+import { jsonRequestInit, parseJson, responseError } from "../api/http.js";
 import {
   type AdminActivity,
   type AdminActivityWindow,
@@ -51,43 +47,15 @@ export function createAdminClient(
       readonly headers?: Record<string, string>;
     } = {},
   ): Promise<Response> {
-    const response = await fetchFn(`/api/v1${path}`, {
-      method: init.method ?? "GET",
-      credentials: "same-origin",
-      headers: {
-        ...(init.body === undefined
-          ? {}
-          : { "content-type": "application/json" }),
-        ...init.headers,
-      },
-      ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
-    });
+    const response = await fetchFn(`/api/v1${path}`, jsonRequestInit(init));
     if (!response.ok && response.status !== 304) {
-      throw new ApiError(
-        response.status,
-        await decodeEnvelope(response),
-        retryAfterSecondsFrom(response.headers),
-        response.headers,
-      );
+      throw await responseError(response);
     }
     return response;
   }
 
   async function json<T>(response: Response, schema: z.ZodType<T>): Promise<T> {
-    const parsed = schema.safeParse(await response.json());
-    if (!parsed.success) {
-      throw new ApiError(
-        response.status,
-        {
-          error: "INTERNAL",
-          hint: "response failed wire validation",
-          docs: "",
-        },
-        null,
-        response.headers,
-      );
-    }
-    return parsed.data;
+    return parseJson(response, schema);
   }
 
   return {

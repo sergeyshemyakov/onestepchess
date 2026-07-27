@@ -144,11 +144,24 @@ function exactRequirementMatches(
     required.accepts.length !== 1 ||
     payload.x402Version !== required.x402Version ||
     payload.accepted.scheme !== requirement.scheme ||
-    payload.accepted.network !== requirement.network
+    payload.accepted.network !== requirement.network ||
+    !decodePayment(header).ok
   ) {
     return null;
   }
   return payload;
+}
+
+async function parseJson<T>(
+  response: Response,
+  schema: z.ZodType<T>,
+): Promise<T | null> {
+  try {
+    const result = schema.safeParse(await response.json());
+    return result.success ? result.data : null;
+  } catch {
+    return null;
+  }
 }
 
 async function responseDetail(response: Response): Promise<string | undefined> {
@@ -200,9 +213,9 @@ export function createAvmRail(
         },
       );
       if (!response.ok) return false;
-      const result = supportedSchema.safeParse(await response.json());
-      if (!result.success) return false;
-      const kind = result.data.kinds.find(
+      const result = await parseJson(response, supportedSchema);
+      if (result === null) return false;
+      const kind = result.kinds.find(
         (item) =>
           item.x402Version === 2 &&
           item.scheme === "exact" &&
@@ -213,7 +226,7 @@ export function createAvmRail(
       const signer =
         typeof candidate === "string"
           ? candidate
-          : result.data.signers?.[config.caip2]?.[0];
+          : result.signers?.[config.caip2]?.[0];
       if (signer === undefined || !algosdk.isValidAddress(signer)) return false;
       feePayer = signer;
       return true;
@@ -260,7 +273,7 @@ export function createAvmRail(
     required: PaymentRequired,
   ): Promise<VerifyResult> {
     const paymentPayload = exactRequirementMatches(header, required);
-    if (paymentPayload === null || !decodePayment(header).ok) {
+    if (paymentPayload === null) {
       return { ok: false, reason: "invalid_payment" };
     }
     try {
@@ -280,11 +293,10 @@ export function createAvmRail(
         },
       );
       if (response.status >= 500) return { ok: false, reason: "unavailable" };
-      const result = verifyResponseSchema.safeParse(await response.json());
-      if (!result.success) return { ok: false, reason: "unavailable" };
-      if (result.data.isValid) return { ok: true };
-      const upstreamDetail =
-        result.data.invalidReason ?? result.data.invalidMessage;
+      const result = await parseJson(response, verifyResponseSchema);
+      if (result === null) return { ok: false, reason: "unavailable" };
+      if (result.isValid) return { ok: true };
+      const upstreamDetail = result.invalidReason ?? result.invalidMessage;
       const detail =
         upstreamDetail === undefined ? undefined : redactDetail(upstreamDetail);
       return {
@@ -310,7 +322,7 @@ export function createAvmRail(
     required: PaymentRequired,
   ): Promise<SettleResult> {
     const paymentPayload = exactRequirementMatches(header, required);
-    if (paymentPayload === null || !decodePayment(header).ok) {
+    if (paymentPayload === null) {
       return { ok: false, reason: "rejected", detail: "invalid payment" };
     }
     try {
@@ -330,22 +342,21 @@ export function createAvmRail(
         },
       );
       if (response.status >= 500) return { ok: false, reason: "unavailable" };
-      const result = settleResponseSchema.safeParse(await response.json());
-      if (!result.success) return { ok: false, reason: "unavailable" };
+      const result = await parseJson(response, settleResponseSchema);
+      if (result === null) return { ok: false, reason: "unavailable" };
       if (
-        result.data.success &&
-        result.data.transaction !== undefined &&
-        result.data.network === config.caip2
+        result.success &&
+        result.transaction !== undefined &&
+        result.network === config.caip2
       ) {
         return {
           ok: true,
-          txid: result.data.transaction,
-          confirmedRound: result.data.confirmedRound ?? null,
-          paymentResponseHeader: encodePaymentResponse(result.data.transaction),
+          txid: result.transaction,
+          confirmedRound: result.confirmedRound ?? null,
+          paymentResponseHeader: encodePaymentResponse(result.transaction),
         };
       }
-      const upstreamDetail =
-        result.data.errorReason ?? result.data.errorMessage;
+      const upstreamDetail = result.errorReason ?? result.errorMessage;
       const detail =
         upstreamDetail === undefined ? undefined : redactDetail(upstreamDetail);
       return {
@@ -367,14 +378,13 @@ export function createAvmRail(
         },
       );
       if (!response.ok) throw unavailable("Algod suggested params unavailable");
-      const result = suggestedParamsSchema.safeParse(await response.json());
-      if (!result.success)
+      const result = await parseJson(response, suggestedParamsSchema);
+      if (result === null)
         throw unavailable("Algod suggested params malformed");
-      const firstValid = result.data["last-round"];
+      const firstValid = result["last-round"];
       const lastValid = firstValid + 1_000;
       if (
-        result.data["genesis-hash"] !==
-          config.caip2.slice("algorand:".length) ||
+        result["genesis-hash"] !== config.caip2.slice("algorand:".length) ||
         lastValid < firstValid ||
         lastValid > firstValid + 1_000
       ) {
@@ -384,12 +394,12 @@ export function createAvmRail(
       }
       return {
         flatFee: true,
-        fee: result.data.fee,
-        minFee: result.data["min-fee"],
+        fee: result.fee,
+        minFee: result["min-fee"],
         firstValid,
         lastValid,
-        genesisID: result.data["genesis-id"],
-        genesisHash: Buffer.from(result.data["genesis-hash"], "base64"),
+        genesisID: result["genesis-id"],
+        genesisHash: Buffer.from(result["genesis-hash"], "base64"),
       };
     } catch (error) {
       if (error instanceof RailError) throw error;
@@ -512,15 +522,10 @@ export function createAvmRail(
       ),
     );
     if (pending.ok) {
-      let result: ReturnType<typeof pendingSchema.safeParse>;
-      try {
-        result = pendingSchema.safeParse(await pending.json());
-      } catch {
+      const result = await parseJson(pending, pendingSchema);
+      if (result === null)
         throw unavailable("Algod pending response malformed");
-      }
-      if (!result.success)
-        throw unavailable("Algod pending response malformed");
-      const confirmedRound = result.data["confirmed-round"] ?? 0;
+      const confirmedRound = result["confirmed-round"] ?? 0;
       return confirmedRound > 0
         ? { status: "confirmed", confirmedRound }
         : { status: "pending" };
@@ -534,17 +539,12 @@ export function createAvmRail(
       ),
     );
     if (indexed.ok) {
-      let result: ReturnType<typeof indexedLookupSchema.safeParse>;
-      try {
-        result = indexedLookupSchema.safeParse(await indexed.json());
-      } catch {
-        throw unavailable("Indexer transaction response malformed");
-      }
-      if (!result.success)
+      const result = await parseJson(indexed, indexedLookupSchema);
+      if (result === null)
         throw unavailable("Indexer transaction response malformed");
       return {
         status: "confirmed",
-        confirmedRound: result.data.transaction["confirmed-round"],
+        confirmedRound: result.transaction["confirmed-round"],
       };
     }
     if (indexed.status !== 404)
@@ -554,14 +554,9 @@ export function createAvmRail(
       endpoint(config.algodUrl, "/v2/status"),
     );
     if (!status.ok) throw unavailable("Algod status query failed");
-    let result: ReturnType<typeof statusSchema.safeParse>;
-    try {
-      result = statusSchema.safeParse(await status.json());
-    } catch {
-      throw unavailable("Algod status response malformed");
-    }
-    if (!result.success) throw unavailable("Algod status response malformed");
-    return { status: "not_found", currentRound: result.data["last-round"] };
+    const result = await parseJson(status, statusSchema);
+    if (result === null) throw unavailable("Algod status response malformed");
+    return { status: "not_found", currentRound: result["last-round"] };
   }
 
   async function findPayoutByNote(jobId: string): Promise<{
@@ -578,14 +573,9 @@ export function createAvmRail(
     url.searchParams.set("note-prefix", expectedNote);
     const response = await getJsonResponse(url.toString());
     if (!response.ok) throw unavailable("Indexer note query failed");
-    let result: ReturnType<typeof noteSearchSchema.safeParse>;
-    try {
-      result = noteSearchSchema.safeParse(await response.json());
-    } catch {
-      throw unavailable("Indexer note response malformed");
-    }
-    if (!result.success) throw unavailable("Indexer note response malformed");
-    const match = result.data.transactions
+    const result = await parseJson(response, noteSearchSchema);
+    if (result === null) throw unavailable("Indexer note response malformed");
+    const match = result.transactions
       .filter((item) => item.note === expectedNote)
       .sort(
         (left, right) =>

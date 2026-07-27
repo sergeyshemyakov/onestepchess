@@ -20,6 +20,28 @@ function iso(value: number | null): string | null {
   return value === null ? null : new Date(value).toISOString();
 }
 
+function claimSummary(
+  claim: typeof schema.claims.$inferSelect,
+  nickname: string | null,
+) {
+  return {
+    id: claim.id,
+    player: claim.player,
+    nickname,
+    side: claim.side,
+    demo: claim.demo,
+    status: claim.status,
+    stakeMicroUsdc: claim.stakeMicrousdc,
+    move:
+      claim.moveUci === null || claim.moveSan === null
+        ? null
+        : { uci: claim.moveUci, san: claim.moveSan },
+    claimedAt: new Date(claim.createdAt).toISOString(),
+    deadline: new Date(claim.deadline).toISOString(),
+    movedAt: iso(claim.movedAt),
+  };
+}
+
 function page<T>(items: readonly T[], pageNumber: number, size = PAGE_SIZE) {
   const total = items.length;
   const pageCount = total === 0 ? 0 : Math.ceil(total / size);
@@ -390,36 +412,21 @@ export function adminGame(deps: AdminReadDeps, gameId: string) {
     .where(eq(schema.claims.gameId, gameId))
     .orderBy(schema.claims.createdAt)
     .all()
-    .map(({ claim, nickname }) => ({
-      id: claim.id,
-      player: claim.player,
-      nickname,
-      side: claim.side,
-      demo: claim.demo,
-      status: claim.status,
-      stakeMicroUsdc: claim.stakeMicrousdc,
-      move:
-        claim.moveUci === null || claim.moveSan === null
-          ? null
-          : { uci: claim.moveUci, san: claim.moveSan },
-      claimedAt: new Date(claim.createdAt).toISOString(),
-      deadline: new Date(claim.deadline).toISOString(),
-      movedAt: iso(claim.movedAt),
-    }));
-  const stakes = deps.db
+    .map(({ claim, nickname }) => claimSummary(claim, nickname));
+  const stakeRows = deps.db
     .select()
     .from(schema.stakeEntries)
     .where(eq(schema.stakeEntries.gameId, gameId))
-    .all()
-    .map((entry) => ({
-      id: entry.id,
-      player: entry.player,
-      side: entry.side,
-      kind: entry.kind,
-      amountMicroUsdc: entry.amount,
-      payTxid: entry.payTxid,
-      ply: entry.ply,
-    }));
+    .all();
+  const stakes = stakeRows.map((entry) => ({
+    id: entry.id,
+    player: entry.player,
+    side: entry.side,
+    kind: entry.kind,
+    amountMicroUsdc: entry.amount,
+    payTxid: entry.payTxid,
+    ply: entry.ply,
+  }));
   const payoutJobs = deps.db
     .select()
     .from(schema.payoutJobs)
@@ -433,14 +440,8 @@ export function adminGame(deps: AdminReadDeps, gameId: string) {
       txid: job.txid,
       attempts: job.attempts,
     }));
-  const payoutAmount = stakes.reduce(
-    (sum, entry) =>
-      sum +
-      (deps.db
-        .select({ value: schema.stakeEntries.payoutAmount })
-        .from(schema.stakeEntries)
-        .where(eq(schema.stakeEntries.id, entry.id))
-        .get()?.value ?? 0),
+  const payoutAmount = stakeRows.reduce(
+    (sum, entry) => sum + (entry.payoutAmount ?? 0),
     0,
   );
   const takeRows = deps.db
@@ -541,22 +542,7 @@ export function adminPlayer(deps: AdminReadDeps, address: string) {
     .orderBy(desc(schema.claims.createdAt))
     .limit(25)
     .all()
-    .map((claim) => ({
-      id: claim.id,
-      player: claim.player,
-      nickname: player.nickname,
-      side: claim.side,
-      demo: claim.demo,
-      status: claim.status,
-      stakeMicroUsdc: claim.stakeMicrousdc,
-      move:
-        claim.moveUci === null || claim.moveSan === null
-          ? null
-          : { uci: claim.moveUci, san: claim.moveSan },
-      claimedAt: new Date(claim.createdAt).toISOString(),
-      deadline: new Date(claim.deadline).toISOString(),
-      movedAt: iso(claim.movedAt),
-    }));
+    .map((claim) => claimSummary(claim, player.nickname));
   const stakedLimit =
     player.quotaOverride ??
     (player.kind === "agent"

@@ -23,6 +23,7 @@ import {
   type MockControl,
   MockControlState,
   type NoteResult,
+  type Scripted,
   type ScriptedSettle,
   type ScriptedSubmit,
   unwrapScripted,
@@ -193,6 +194,20 @@ export function createMockRail(options: MockRailOptions = {}): MockRail {
     if (ms > 0) await sleep(ms);
   }
 
+  async function takeScripted<T>(
+    queue: Scripted<T>[],
+    defaultLatencyMs = 0,
+  ): Promise<T | undefined> {
+    const scripted = queue.shift();
+    if (scripted === undefined) {
+      await delay(defaultLatencyMs);
+      return undefined;
+    }
+    const outcome = unwrapScripted(scripted);
+    await delay(outcome.latencyMs ?? defaultLatencyMs);
+    return outcome.value;
+  }
+
   function settleApplied(header: string): SettleResult & { readonly ok: true } {
     const decoded = decodeMockPayment(header);
     if (!decoded.ok) {
@@ -332,28 +347,22 @@ export function createMockRail(options: MockRailOptions = {}): MockRail {
       if (!matchesMockPaymentRequirement(header, required)) {
         return { ok: false, reason: "invalid_payment" };
       }
-      const scripted = control.verifyQueue.shift();
-      if (scripted === undefined) {
-        await delay(control.verifyLatencyMs);
-        return { ok: true };
-      }
-      const outcome = unwrapScripted(scripted);
-      await delay(outcome.latencyMs ?? control.verifyLatencyMs);
-      return outcome.value;
+      return (
+        (await takeScripted(control.verifyQueue, control.verifyLatencyMs)) ?? {
+          ok: true,
+        }
+      );
     },
 
     async settle(
       header: string,
       _required: PaymentRequired,
     ): Promise<SettleResult> {
-      const scripted = control.settleQueue.shift();
-      if (scripted === undefined) {
-        await delay(control.settleLatencyMs);
-        return settleApplied(header);
-      }
-      const outcome = unwrapScripted(scripted);
-      await delay(outcome.latencyMs ?? control.settleLatencyMs);
-      const value: ScriptedSettle = outcome.value;
+      const value: ScriptedSettle | undefined = await takeScripted(
+        control.settleQueue,
+        control.settleLatencyMs,
+      );
+      if (value === undefined) return settleApplied(header);
       if (value.ok) return settleApplied(header);
       if (value.reason === "unavailable" && value.applied === true)
         settleApplied(header);
@@ -445,14 +454,13 @@ export function createMockRail(options: MockRailOptions = {}): MockRail {
     },
 
     async submitPrepared(prepared: PreparedSubmission): Promise<SendResult> {
-      const scripted = control.preparedQueue.shift();
-      if (scripted === undefined) {
+      const value: ScriptedSubmit | undefined = await takeScripted(
+        control.preparedQueue,
+      );
+      if (value === undefined) {
         applyPrepared(prepared);
         return { ok: true };
       }
-      const outcome = unwrapScripted(scripted);
-      await delay(outcome.latencyMs ?? 0);
-      const value: ScriptedSubmit = outcome.value;
       if (value.ok) {
         applyPrepared(prepared);
         return { ok: true };
@@ -509,11 +517,8 @@ export function createMockRail(options: MockRailOptions = {}): MockRail {
     async submitSignedTransaction(
       _signedTxnB64: string,
     ): Promise<SignedSubmitResult> {
-      const scripted = control.signedQueue.shift();
-      if (scripted !== undefined) {
-        const outcome = unwrapScripted(scripted);
-        await delay(outcome.latencyMs ?? 0);
-        const value = outcome.value;
+      const value = await takeScripted(control.signedQueue);
+      if (value !== undefined) {
         if (!value.ok) {
           if (value.reason === "unavailable" && value.applied === true) {
             const issued = allocateTx();

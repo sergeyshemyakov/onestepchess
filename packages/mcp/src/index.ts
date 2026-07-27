@@ -276,10 +276,16 @@ function annotations(readOnly: boolean, destructive = false) {
   };
 }
 
-function toolDescription(name: (typeof TOOL_CONTRACT)[number]["name"]): string {
+function toolMetadata(
+  name: (typeof TOOL_CONTRACT)[number]["name"],
+  destructive = false,
+) {
   const contract = TOOL_CONTRACT.find((item) => item.name === name);
   if (contract === undefined) throw new Error(`missing tool contract: ${name}`);
-  return contract.description;
+  return {
+    description: contract.description,
+    annotations: annotations(contract.readOnly, destructive),
+  };
 }
 
 export function createMcpServer(options: CreateMcpServerOptions): McpServer {
@@ -313,9 +319,8 @@ export function createMcpServer(options: CreateMcpServerOptions): McpServer {
   server.registerTool(
     "get_rules",
     {
-      description: toolDescription("get_rules"),
+      ...toolMetadata("get_rules"),
       inputSchema: z.object({}),
-      annotations: annotations(true),
     },
     safe(async () => {
       const meta = await options.kit.meta();
@@ -335,9 +340,8 @@ export function createMcpServer(options: CreateMcpServerOptions): McpServer {
   server.registerTool(
     "create_wallet",
     {
-      description: toolDescription("create_wallet"),
+      ...toolMetadata("create_wallet"),
       inputSchema: z.object({}),
-      annotations: annotations(false),
     },
     safe(async () => {
       const result = await options.kit.createWallet();
@@ -351,9 +355,8 @@ export function createMcpServer(options: CreateMcpServerOptions): McpServer {
   server.registerTool(
     "get_wallet_status",
     {
-      description: toolDescription("get_wallet_status"),
+      ...toolMetadata("get_wallet_status"),
       inputSchema: z.object({}),
-      annotations: annotations(true),
     },
     safe(async () => {
       const status = await options.kit.walletStatus();
@@ -376,9 +379,8 @@ export function createMcpServer(options: CreateMcpServerOptions): McpServer {
   server.registerTool(
     "optin_usdc",
     {
-      description: toolDescription("optin_usdc"),
+      ...toolMetadata("optin_usdc"),
       inputSchema: z.object({}),
-      annotations: annotations(false),
     },
     safe(async () => {
       const result = await options.kit.optInUsdc();
@@ -394,9 +396,8 @@ export function createMcpServer(options: CreateMcpServerOptions): McpServer {
   server.registerTool(
     "register",
     {
-      description: toolDescription("register"),
+      ...toolMetadata("register"),
       inputSchema: z.object({ nickname: z.string().min(3).max(24).optional() }),
-      annotations: annotations(false),
     },
     safe(async ({ nickname }) => {
       const profile = await options.kit.register(nickname);
@@ -411,9 +412,8 @@ export function createMcpServer(options: CreateMcpServerOptions): McpServer {
   server.registerTool(
     "whoami",
     {
-      description: toolDescription("whoami"),
+      ...toolMetadata("whoami"),
       inputSchema: z.object({}),
-      annotations: annotations(true),
     },
     safe(async () => {
       const profile = await options.kit.whoami();
@@ -434,9 +434,8 @@ export function createMcpServer(options: CreateMcpServerOptions): McpServer {
   server.registerTool(
     "set_nickname",
     {
-      description: toolDescription("set_nickname"),
+      ...toolMetadata("set_nickname"),
       inputSchema: z.object({ nickname: z.string().min(3).max(24) }),
-      annotations: annotations(false),
     },
     safe(async ({ nickname }) => {
       const profile = await options.kit.setNickname(nickname);
@@ -451,9 +450,8 @@ export function createMcpServer(options: CreateMcpServerOptions): McpServer {
   server.registerTool(
     "claim_move",
     {
-      description: toolDescription("claim_move"),
+      ...toolMetadata("claim_move"),
       inputSchema: z.object({ format: claimFormatSchema.optional() }),
-      annotations: annotations(false),
     },
     safe(async ({ format }) => {
       const result = await options.kit.claim();
@@ -478,9 +476,8 @@ export function createMcpServer(options: CreateMcpServerOptions): McpServer {
   server.registerTool(
     "get_claim",
     {
-      description: toolDescription("get_claim"),
+      ...toolMetadata("get_claim"),
       inputSchema: z.object({ format: claimFormatSchema.optional() }),
-      annotations: annotations(true),
     },
     safe(async ({ format }) => {
       const claim = await options.kit.currentClaim();
@@ -501,12 +498,11 @@ export function createMcpServer(options: CreateMcpServerOptions): McpServer {
   server.registerTool(
     "make_move",
     {
-      description: toolDescription("make_move"),
+      ...toolMetadata("make_move", true),
       inputSchema: z.object({
         claim_id: z.string().min(1),
         move: z.string().min(1),
       }),
-      annotations: annotations(false, true),
     },
     safe(async ({ claim_id, move }) => {
       const receipt = await options.kit.move(claim_id, move);
@@ -540,12 +536,11 @@ export function createMcpServer(options: CreateMcpServerOptions): McpServer {
   server.registerTool(
     "list_my_games",
     {
-      description: toolDescription("list_my_games"),
+      ...toolMetadata("list_my_games"),
       inputSchema: z.object({
         status: z.enum(["ongoing", "finished"]),
         page: z.number().int().positive().optional(),
       }),
-      annotations: annotations(true),
     },
     safe(async ({ status, page }) => {
       const games = await options.kit.myGames({
@@ -564,12 +559,11 @@ export function createMcpServer(options: CreateMcpServerOptions): McpServer {
   server.registerTool(
     "get_replay",
     {
-      description: toolDescription("get_replay"),
+      ...toolMetadata("get_replay"),
       inputSchema: z.object({
         game_id: z.string().min(1),
         format: replayFormatSchema.optional(),
       }),
-      annotations: annotations(true),
     },
     safe(async ({ game_id, format }) => {
       const replay = await options.kit.replay(game_id);

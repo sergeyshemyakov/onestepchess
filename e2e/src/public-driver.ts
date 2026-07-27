@@ -53,6 +53,12 @@ function accountSigner(account: algosdk.Account): Signer {
   };
 }
 
+function selectMove(claim: ClaimView, move?: string): string {
+  const selected = move ?? claim.legalMoves[0]?.uci ?? "";
+  if (selected.length === 0) throw new Error("claim has no legal move");
+  return selected;
+}
+
 export function createPublicAgentDriver(
   options: AgentDriverOptions,
 ): PublicAgentDriver {
@@ -80,9 +86,8 @@ export function createPublicAgentDriver(
       const result = await client.claim();
       return "claim" in result ? null : result;
     },
-    play(claim, move = claim.legalMoves[0]?.uci ?? "") {
-      if (move.length === 0) throw new Error("claim has no legal move");
-      return client.move(claim.claimId, move);
+    play(claim, move) {
+      return client.move(claim.claimId, selectMove(claim, move));
     },
     currentClaim: () => client.currentClaim(),
     claimStatus: (claimId) => client.claimStatus(claimId),
@@ -215,12 +220,12 @@ export function createPublicHumanDriver(
     address,
     register,
     claim,
-    async play(claimView, move = claimView.legalMoves[0]?.uci ?? "") {
-      if (move.length === 0) throw new Error("claim has no legal move");
+    async play(claimView, move) {
+      const selectedMove = selectMove(claimView, move);
       const path = `/claims/${encodeURIComponent(claimView.claimId)}/move`;
       const challengeResponse = await request(path, {
         method: "POST",
-        body: { move },
+        body: { move: selectedMove },
       });
       if (challengeResponse.status !== 402) {
         throw new Error(
@@ -252,7 +257,7 @@ export function createPublicHumanDriver(
       return expectJson<MoveReceipt>(
         await request(path, {
           method: "POST",
-          body: { move },
+          body: { move: selectedMove },
           headers: { "PAYMENT-SIGNATURE": payment },
         }),
       );
