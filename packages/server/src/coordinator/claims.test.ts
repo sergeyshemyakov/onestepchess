@@ -195,6 +195,7 @@ describe("claim issuance (F3/F5)", () => {
   it("agent_claim_terms_use_agent_and_endspiel_quota_ttl_and_stake", async () => {
     const stack = setup({
       GAME_POOL_TARGET: 1,
+      HUMAN_BOARD_RESERVE_PERCENT: 0,
       QUOTA_AGENT: 1,
       AGENT_STAKE: 1_234,
       ENDSPIEL_STAKE: 234,
@@ -266,6 +267,27 @@ describe("claim issuance (F3/F5)", () => {
     expect(
       (await claim(stack, "agent-two", false, "agent")).claim,
     ).toMatchObject({ stakeMicrousdc: 200 });
+  });
+
+  it("reserves the configured share of boards for humans while agents retry", async () => {
+    const stack = setup({
+      GAME_POOL_TARGET: 4,
+      HUMAN_BOARD_RESERVE_PERCENT: 25,
+    });
+    for (const address of ["agent-1", "agent-2", "agent-3", "agent-4"]) {
+      await player(stack, address, "agent");
+    }
+    await player(stack, "human");
+
+    for (const address of ["agent-1", "agent-2", "agent-3"]) {
+      expect((await claim(stack, address, false, "agent")).created).toBe(true);
+    }
+    expect(await claim(stack, "agent-4", false, "agent")).toEqual({
+      claim: null,
+      created: false,
+      retryAfterSeconds: 1,
+    });
+    expect((await claim(stack, "human")).created).toBe(true);
   });
 
   it("expires a claim, frees the slot, and defers while an intent is in flight", async () => {

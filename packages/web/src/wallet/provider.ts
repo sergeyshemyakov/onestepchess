@@ -94,6 +94,65 @@ export type WalletModuleOptions = {
   readonly includeMnemonic?: boolean;
 };
 
+type ConnectableWallet<Account> = {
+  readonly connect: () => Promise<readonly Account[]>;
+  readonly disconnect: () => Promise<void>;
+};
+
+function cancellationType(cause: unknown): string | null {
+  if (
+    typeof cause !== "object" ||
+    cause === null ||
+    !("data" in cause) ||
+    typeof cause.data !== "object" ||
+    cause.data === null ||
+    !("type" in cause.data) ||
+    typeof cause.data.type !== "string"
+  ) {
+    return null;
+  }
+  return cause.data.type;
+}
+
+function isConnectCancellation(cause: unknown): boolean {
+  if (cause instanceof Error && cause.name === "AbortError") return true;
+  const type = cancellationType(cause);
+  return (
+    type === "OPERATION_CANCELLED" ||
+    type === "CONNECT_MODAL_CLOSED" ||
+    type === "CONNECT_CANCELLED"
+  );
+}
+
+function abortFrom(cause: unknown): Error {
+  const error = new Error("wallet connection cancelled", { cause });
+  error.name = "AbortError";
+  return error;
+}
+
+/** Pera/WalletConnect can leave a stale persisted session after an interrupted
+ * handoff. The old UI cleaned it only after surfacing an error, making the
+ * user's second click succeed. Recover once within the original click. */
+export async function connectWithStaleSessionRecovery<Account>(
+  wallet: ConnectableWallet<Account>,
+  recoverStaleSession: boolean,
+): Promise<readonly Account[]> {
+  try {
+    return await wallet.connect();
+  } catch (cause) {
+    if (isConnectCancellation(cause)) throw abortFrom(cause);
+    if (!recoverStaleSession) throw cause;
+    await wallet.disconnect().catch(() => undefined);
+  }
+
+  try {
+    return await wallet.connect();
+  } catch (cause) {
+    if (isConnectCancellation(cause)) throw abortFrom(cause);
+    throw cause;
+  }
+}
+
 export function createWalletModule(
   options: WalletModuleOptions = {},
 ): WalletModule {
@@ -163,7 +222,10 @@ export function createWalletModule(
       await manager.setActiveNetwork(
         id === WalletId.MNEMONIC ? NetworkId.LOCALNET : NetworkId.MAINNET,
       );
-      const accounts = await wallet.connect();
+      const accounts = await connectWithStaleSessionRecovery(
+        wallet,
+        id === WalletId.PERA,
+      );
       const address = wallet.activeAccount?.address ?? accounts[0]?.address;
       if (address === undefined) throw new Error("wallet connected no account");
       const signData = wallet.canSignData

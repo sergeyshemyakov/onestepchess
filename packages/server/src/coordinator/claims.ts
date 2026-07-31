@@ -15,6 +15,7 @@ import { schema } from "../db/open.js";
 import { newId } from "../ids.js";
 import { maybeAwardReferral } from "../incentives/points.js";
 import { bumpRefJoined } from "../incentives/referrals.js";
+import { agentMayClaim, humanBoardCapacity } from "./capacity.js";
 import type { ChessAdapterRegistry } from "./chess-registry.js";
 import type { LifecycleApi } from "./lifecycle.js";
 import type { Coordinator } from "./queue.js";
@@ -527,6 +528,15 @@ export function registerClaimCommands(deps: ClaimDeps): void {
       });
       if (game === null)
         return { claim: null, created: false, retryAfterSeconds: 1 };
+      if (
+        payload.kind === "agent" &&
+        !agentMayClaim(
+          game,
+          humanBoardCapacity(games, config.HUMAN_BOARD_RESERVE_PERCENT),
+        )
+      ) {
+        return { claim: null, created: false, retryAfterSeconds: 1 };
+      }
       const selectedView = deps.views.games.get(game.id);
       if (selectedView === undefined)
         return { claim: null, created: false, retryAfterSeconds: 1 };

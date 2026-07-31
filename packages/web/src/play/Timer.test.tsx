@@ -40,7 +40,7 @@ describe("timer threshold states vs a fake clock (§4.6)", () => {
     const view = renderAt(600);
     const timer = view.container.querySelector(".timer");
     expect(timer?.getAttribute("data-phase")).toBe("quiet");
-    expect(timer?.textContent).toContain("board reserved");
+    expect(timer?.textContent).toContain("board is yours");
     expect(timer?.textContent).not.toMatch(/\d:\d\d/);
     expect(timer?.querySelector(".bar i")).not.toBeNull();
   });

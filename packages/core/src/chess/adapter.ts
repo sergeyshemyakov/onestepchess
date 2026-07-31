@@ -29,11 +29,17 @@ export interface ChessGame extends TurnGame<ChessState, Move> {
   fromHistory(history: readonly Uci[]): ChessState;
   normalizeMove(state: ChessState, input: string): NormalizeResult;
   pieceCount(fen: string): number;
+  materialPoints(fen: string): MaterialPoints;
 }
+
+export type MaterialPoints = {
+  readonly white: number;
+  readonly black: number;
+};
 
 type ChessConfig = Pick<
   CoreConfig,
-  "ENDSPIEL_PLY" | "ENDSPIEL_PIECES" | "MAX_PLIES"
+  "ENDSPIEL_PIECES" | "REPETITION_WIN_MARGIN" | "MAX_PLIES"
 >;
 
 const UCI_PATTERN = /^[a-h][1-8][a-h][1-8][qrbn]?$/;
@@ -70,12 +76,17 @@ function domainMoves(chess: Chess): readonly Move[] {
 const FEN_FACT_CACHE_SIZE = 4_096;
 const fenFactCache = new Map<
   string,
-  { readonly side: Side; readonly pieces: number }
+  {
+    readonly side: Side;
+    readonly pieces: number;
+    readonly material: MaterialPoints;
+  }
 >();
 
 function fenFacts(fen: string): {
   readonly side: Side;
   readonly pieces: number;
+  readonly material: MaterialPoints;
 } {
   const cached = fenFactCache.get(fen);
   if (cached !== undefined) {
@@ -89,12 +100,29 @@ function fenFacts(fen: string): {
   }
   const board = fen.split(" ")[0] ?? "";
   let pieces = 0;
+  let white = 0;
+  let black = 0;
+  const values: Readonly<Record<string, number>> = {
+    p: 1,
+    n: 3,
+    b: 3,
+    r: 5,
+    q: 9,
+    k: 0,
+  };
   for (const char of board) {
     if ((char >= "a" && char <= "z") || (char >= "A" && char <= "Z")) {
       pieces += 1;
+      const value = values[char.toLowerCase()] ?? 0;
+      if (char === char.toUpperCase()) white += value;
+      else black += value;
     }
   }
-  const facts = { side: turn === "w" ? "white" : "black", pieces } as const;
+  const facts = {
+    side: turn === "w" ? "white" : "black",
+    pieces,
+    material: { white, black },
+  } as const;
   fenFactCache.set(fen, facts);
   while (fenFactCache.size > FEN_FACT_CACHE_SIZE) {
     const oldest = fenFactCache.keys().next().value;
@@ -112,6 +140,10 @@ export function sideToMove(fen: string): Side {
 
 export function pieceCount(fen: string): number {
   return fenFacts(fen).pieces;
+}
+
+export function materialPoints(fen: string): MaterialPoints {
+  return fenFacts(fen).material;
 }
 
 export function createChess(
@@ -227,6 +259,18 @@ export function createChess(
         return { over: true, result: "draw", termination: "insufficient" };
       }
       if (chess.isThreefoldRepetition()) {
+        const material = materialPoints(state.fen);
+        const lead =
+          material.white > material.black
+            ? material.white - material.black
+            : material.black - material.white;
+        if (lead >= config.REPETITION_WIN_MARGIN) {
+          return {
+            over: true,
+            result: material.white > material.black ? "white" : "black",
+            termination: "threefold",
+          };
+        }
         return { over: true, result: "draw", termination: "threefold" };
       }
       if (chess.isDrawByFiftyMoves()) {
@@ -238,8 +282,7 @@ export function createChess(
       return { over: false };
     },
     phase(state): Phase {
-      return state.history.length >= config.ENDSPIEL_PLY ||
-        pieceCount(state.fen) <= config.ENDSPIEL_PIECES
+      return pieceCount(state.fen) <= config.ENDSPIEL_PIECES
         ? "endspiel"
         : "normal";
     },
@@ -258,5 +301,6 @@ export function createChess(
       return normalizeLegalMove(movesFor(state), input);
     },
     pieceCount,
+    materialPoints,
   };
 }

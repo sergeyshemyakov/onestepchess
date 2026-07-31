@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   formatCountdown,
+  formatElapsedTime,
+  formatGameDuration,
   formatLocalTime,
   formatMicroUsdc,
   nextAtLabel,
@@ -47,5 +49,14 @@ describe("time rendering (§4.5)", () => {
     const deadline = new Date(1_000_000).toISOString();
     expect(secondsUntil(deadline, 990_000)).toBe(10);
     expect(secondsUntil(deadline, 2_000_000)).toBe(0);
+  });
+
+  it("formats aggregate thinking time and the full game time range", () => {
+    const started = new Date(2026, 6, 17, 9, 47, 0);
+    const finished = new Date(2026, 6, 17, 11, 0, 0);
+    expect(formatElapsedTime(131_000)).toBe("2m 11s");
+    expect(
+      formatGameDuration(started.toISOString(), finished.toISOString()),
+    ).toBe("09:47 - 11:00 (1 hr 13 mins)");
   });
 });

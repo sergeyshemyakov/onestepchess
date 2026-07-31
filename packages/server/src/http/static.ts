@@ -48,7 +48,7 @@ function injectReplayOg(
   html: string,
   deps: StaticDeps,
   path: string,
-  plyQuery: string | undefined,
+  pliesQuery: string | undefined,
 ): string {
   const match = /^\/replay\/([^/]+)$/.exec(path);
   if (match === null || deps.db === undefined) return html;
@@ -66,8 +66,12 @@ function injectReplayOg(
   )
     return html;
 
-  const plyNum = plyQuery === undefined ? Number.NaN : Number(plyQuery);
-  const ply = Number.isInteger(plyNum) && plyNum >= 1 ? String(plyNum) : null;
+  const ply =
+    pliesQuery
+      ?.split(",")
+      .map(Number)
+      .filter((value) => Number.isInteger(value) && value >= 1)
+      .at(-1) ?? null;
   const cardUrl = `${deps.publicBaseUrl}/api/v1/games/${game.id}/card.png${ply === null ? "" : `?ply=${ply}`}`;
   const outcome =
     game.result === "draw"
@@ -76,8 +80,9 @@ function injectReplayOg(
         ? "Aborted"
         : `${game.result[0]?.toUpperCase()}${game.result.slice(1)} won`;
   const description = `${outcome} · ${game.termination}. ${OG_PITCH}`;
+  const gameLabel = `Game ${game.id.replace(/^gm_/, "")}`;
   const tags = [
-    `<meta property="og:title" content="${escapeMarkup(game.name)}">`,
+    `<meta property="og:title" content="${escapeMarkup(gameLabel)}">`,
     `<meta property="og:description" content="${escapeMarkup(description)}">`,
     `<meta property="og:image" content="${escapeMarkup(cardUrl)}">`,
     `<meta name="twitter:card" content="summary_large_image">`,
@@ -270,7 +275,7 @@ export function registerStaticRoutes(
       readFileSync(index, "utf8"),
       deps,
       c.req.path,
-      c.req.query("ply"),
+      c.req.query("plies"),
     );
     return c.body(html, 200, {
       ...headers,

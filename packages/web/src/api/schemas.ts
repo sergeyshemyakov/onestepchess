@@ -141,48 +141,63 @@ export const terminationSchema = z.enum([
   "max_plies",
   "aborted",
 ]);
+export const repetitionAdjudicationSchema = z
+  .object({
+    whiteMaterialPoints: nonNegativeIntegerSchema,
+    blackMaterialPoints: nonNegativeIntegerSchema,
+    winMargin: z.number().int().positive(),
+  })
+  .nullable();
+export type RepetitionAdjudication = z.infer<
+  typeof repetitionAdjudicationSchema
+>;
 
-const gameItemCommonSchema = z.object({
+/** Ongoing entries never carry game identity (I7 — CA-W2). */
+export const ongoingGameItemSchema = z.object({
   yourMove: moveSchema,
   yourSide: sideSchema,
   demo: z.boolean(),
   stakeMicroUsdc: nonNegativeIntegerSchema,
   claimedAt: isoTimestampSchema,
   movedAt: isoTimestampSchema,
-});
-
-/** Ongoing entries never carry game identity (I7 — CA-W2). */
-export const ongoingGameItemSchema = gameItemCommonSchema.extend({
   fenBeforeYourMove: z.string(),
   payTxid: z.string().nullable(),
 });
 export type OngoingGameItem = z.infer<typeof ongoingGameItemSchema>;
 
-export const finishedDemoItemSchema = gameItemCommonSchema.extend({
-  demo: z.literal(true),
+const finishedGameItemCommonSchema = z.object({
+  yourSide: sideSchema,
+  stakeMicroUsdc: nonNegativeIntegerSchema,
+  thinkingTimeMs: nonNegativeIntegerSchema,
+  startedAt: isoTimestampSchema,
   result: gameResultSchema,
   termination: terminationSchema,
+  repetitionAdjudication: repetitionAdjudicationSchema,
+  finishedAt: isoTimestampSchema,
+});
+
+export const finishedDemoItemSchema = finishedGameItemCommonSchema.extend({
+  demo: z.literal(true),
+  yourMoves: z.array(moveSchema).min(1),
   payoutMicroUsdc: z.literal(0),
   payoutStatus: z.null(),
   statsCounted: z.literal(false),
-  finishedAt: isoTimestampSchema,
 });
 export type FinishedDemoItem = z.infer<typeof finishedDemoItemSchema>;
 
-export const finishedStakedItemSchema = gameItemCommonSchema.extend({
+export const finishedStakedItemSchema = finishedGameItemCommonSchema.extend({
   demo: z.literal(false),
   gameId: z.string(),
   gameName: z.string(),
   finalFen: z.string(),
-  result: gameResultSchema,
-  termination: terminationSchema,
-  yourPly: z.number().int().positive(),
-  payTxid: z.string(),
+  yourMoves: z
+    .array(moveSchema.extend({ ply: z.number().int().positive() }))
+    .min(1),
+  payTxid: z.string().nullable(),
   payoutMicroUsdc: nonNegativeIntegerSchema,
   payoutTxid: z.string().nullable(),
   payoutStatus: z.enum(["none", "queued", "confirmed", "failed"]),
   statsCounted: z.literal(true),
-  finishedAt: isoTimestampSchema,
 });
 export type FinishedStakedItem = z.infer<typeof finishedStakedItemSchema>;
 
@@ -228,6 +243,7 @@ export const replayViewSchema = z.object({
   name: z.string(),
   result: gameResultSchema,
   termination: terminationSchema,
+  repetitionAdjudication: repetitionAdjudicationSchema,
   endspielPly: z.number().int().positive().nullable(),
   createdAt: isoTimestampSchema,
   finishedAt: isoTimestampSchema,
@@ -504,6 +520,7 @@ export const adminConfigItemSchema = z.object({
   defaultValue: z.unknown(),
   overrideValue: z.unknown().nullable(),
   effectiveValue: z.unknown(),
+  description: z.string().min(1),
   effect: z.enum(["immediate", "new_claims", "new_games", "restart"]),
   editable: z.boolean(),
   updatedAt: nullableIsoTimestampSchema,

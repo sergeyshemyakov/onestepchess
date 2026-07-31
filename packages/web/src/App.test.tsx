@@ -205,6 +205,69 @@ describe("wallet auth flow (#28)", () => {
     });
   });
 
+  it("wallet_connection_closes_the_connect_sheet_before_requesting_the_signature", async () => {
+    let releaseChallenge:
+      | ((challenge: {
+          nonce: string;
+          expiresAt: string;
+          arc60Payload: {
+            data: string;
+            metadata: { scope: number; encoding: string };
+          };
+          fallbackTxnB64: string;
+        }) => void)
+      | undefined;
+    const signTransactions = vi.fn(
+      async (txns: readonly algosdk.Transaction[]) => {
+        const txn = txns[0];
+        if (txn === undefined) throw new Error("nothing to sign");
+        return txn.signTxn(account.sk);
+      },
+    );
+    walletModuleMock.current = walletModule({
+      address: account.addr.toString(),
+      walletName: "Pera",
+      signTransactions,
+    });
+    const client = mockClient({
+      probeProfile: vi.fn(async () => null),
+      authChallenge: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            releaseChallenge = resolve;
+          }),
+      ),
+      authVerify: vi.fn(async () => ({ player: playerFixture, jwt: "jwt" })),
+    } as never);
+
+    render(<App client={client} authHandlers={handlers} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: /I HAVE AN ALGORAND WALLET/ }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: /dev wallet \(mnemonic\)/ }),
+    );
+
+    await waitFor(() => {
+      expect(client.authChallenge).toHaveBeenCalledTimes(1);
+      expect(
+        screen.queryByRole("dialog", { name: "connect wallet" }),
+      ).toBeNull();
+    });
+
+    releaseChallenge?.({
+      nonce: "nonce-sheet-close",
+      expiresAt: "2026-07-17T14:00:00Z",
+      arc60Payload: {
+        data: "e30=",
+        metadata: { scope: 1, encoding: "base64" },
+      },
+      fallbackTxnB64: fallbackTxnB64("nonce-sheet-close"),
+    });
+    await screen.findByRole("button", { name: /▸ PLAY/ });
+    expect(signTransactions).toHaveBeenCalledTimes(1);
+  });
+
   it("wallet-reject at signing returns to the landing with no state change", async () => {
     walletModuleMock.current = walletModule({
       address: account.addr.toString(),

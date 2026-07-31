@@ -12,6 +12,13 @@ const termination = z.enum([
   "max_plies",
   "aborted",
 ]);
+const repetitionAdjudication = z
+  .object({
+    whiteMaterialPoints: z.number().int().nonnegative(),
+    blackMaterialPoints: z.number().int().nonnegative(),
+    winMargin: z.number().int().positive(),
+  })
+  .nullable();
 
 export const challengeBodySchema = z.object({ address: z.string().min(1) });
 
@@ -172,44 +179,49 @@ const profile = playerView.extend({
     .optional(),
 });
 
-const gameCardCommon = z.object({
+const ongoingGameCard = z.object({
   yourMove: legalMove,
   yourSide: side,
   demo: z.boolean(),
   stakeMicroUsdc: z.number().int().nonnegative(),
   claimedAt: isoTimestamp,
   movedAt: isoTimestamp,
-});
-
-const ongoingGameCard = gameCardCommon.extend({
   fenBeforeYourMove: z.string(),
   payTxid: z.string().nullable(),
 });
 
-const demoFinishedGameCard = gameCardCommon.extend({
-  demo: z.literal(true),
+const finishedGameCardCommon = z.object({
+  yourSide: side,
+  stakeMicroUsdc: z.number().int().nonnegative(),
+  thinkingTimeMs: z.number().int().nonnegative(),
+  startedAt: isoTimestamp,
   result: gameResult,
   termination,
-  payoutMicroUsdc: z.literal(0),
-  payoutStatus: z.null(),
-  statsCounted: z.literal(false),
+  repetitionAdjudication,
   finishedAt: isoTimestamp,
 });
 
-const stakedFinishedGameCard = gameCardCommon.extend({
+const demoFinishedGameCard = finishedGameCardCommon.extend({
+  demo: z.literal(true),
+  yourMoves: z.array(legalMove).min(1),
+  payoutMicroUsdc: z.literal(0),
+  payoutStatus: z.null(),
+  statsCounted: z.literal(false),
+});
+
+const stakedFinishedGameCard = finishedGameCardCommon.extend({
   demo: z.literal(false),
   gameId: z.string(),
   gameName: z.string(),
   finalFen: z.string(),
-  result: gameResult,
-  termination,
-  yourPly: z.number().int().positive(),
-  payTxid: z.string(),
+  yourMoves: z
+    .array(legalMove.extend({ ply: z.number().int().positive() }))
+    .min(1),
+  payTxid: z.string().nullable(),
   payoutMicroUsdc: z.number().int().nonnegative(),
   payoutTxid: z.string().nullable(),
   payoutStatus: z.enum(["none", "queued", "confirmed", "failed"]),
   statsCounted: z.literal(true),
-  finishedAt: isoTimestamp,
 });
 
 const gamesPage = z.object({
@@ -226,6 +238,7 @@ const replay = z.object({
   name: z.string(),
   result: gameResult,
   termination,
+  repetitionAdjudication,
   endspielPly: z.number().int().positive().nullable(),
   createdAt: isoTimestamp,
   finishedAt: isoTimestamp,

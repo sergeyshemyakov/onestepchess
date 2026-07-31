@@ -343,8 +343,9 @@ export function PlayView(props: {
               ) : null}
               {coach && state.phase === "FOCUS" ? (
                 <p className="coach">
-                  one move is yours. the game carries on without you — the full
-                  story appears when it ends.
+                  {
+                    "> this move is yours\n> the game goes on after\n> you will be notified when it ends"
+                  }
                 </p>
               ) : null}
             </div>

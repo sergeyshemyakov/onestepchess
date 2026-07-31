@@ -19,7 +19,6 @@ const guestDemoStateSchema = z.enum(["played", "expired"]);
 export type GuestDemoState = z.infer<typeof guestDemoStateSchema>;
 
 const THEME_KEY = "osc.theme";
-const SFX_KEY = "osc.sfx";
 const DRAFT_KEY = "osc.claimDraft";
 const COACH_KEY = "osc.coach";
 const GUEST_DEMO_KEY = "osc.guestDemo";
@@ -54,14 +53,6 @@ export function readTheme(): Theme {
 
 export function writeTheme(theme: Theme): void {
   safeSet(localStorage, THEME_KEY, theme);
-}
-
-export function readSfx(): boolean {
-  return safeGet(localStorage, SFX_KEY) === "on";
-}
-
-export function writeSfx(on: boolean): void {
-  safeSet(localStorage, SFX_KEY, on ? "on" : "off");
 }
 
 /** Per-tab by design (sessionStorage) — multi-tab safe (§4.2). */

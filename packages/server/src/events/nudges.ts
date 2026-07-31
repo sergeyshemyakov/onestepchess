@@ -1,5 +1,6 @@
 import { and, desc, eq, isNull, lte } from "drizzle-orm";
 import type { ServerConfig } from "../config.js";
+import { humanBoardCapacity } from "../coordinator/capacity.js";
 import type { Coordinator } from "../coordinator/queue.js";
 import type { CoordinatorViews } from "../coordinator/views.js";
 import type { Db } from "../db/open.js";
@@ -37,6 +38,17 @@ export function registerNudgeCommands(deps: NudgeDeps): void {
     if (claimable === 0) {
       return { claimable: 0, walked: 0, nudged: 0 };
     }
+    const config = deps.config();
+    const capacity = humanBoardCapacity(
+      [...deps.views.games.values()].map((game) => ({
+        status: game.status,
+        hasOpenClaim: deps.views.openClaimByGame.has(game.id),
+      })),
+      config.HUMAN_BOARD_RESERVE_PERCENT,
+    );
+    const agentClaimable =
+      endspielClaimable +
+      Math.min(activeClaimable, capacity.activeBoardsAvailableToAgents);
 
     const candidates: Candidate[] = [];
     let walked = 0;
@@ -72,7 +84,6 @@ export function registerNudgeCommands(deps: NudgeDeps): void {
         continue;
       }
 
-      const config = deps.config();
       if (player.kind === "human") {
         if (activeClaimable === 0) continue;
         const stakedLimit = player.quotaOverride ?? config.QUOTA_HUMAN;
@@ -87,6 +98,7 @@ export function registerNudgeCommands(deps: NudgeDeps): void {
           claimId: lastMove.id,
         });
       } else {
+        if (agentClaimable === 0) continue;
         const limit = player.quotaOverride ?? config.QUOTA_AGENT;
         if (deps.views.claimsInWindow(address, false, ctx.now) >= limit) {
           continue;

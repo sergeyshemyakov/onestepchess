@@ -12,11 +12,14 @@ import type { MoveReceipt } from "../api/schemas.js";
 import { writeClaimDraft } from "../lib/storage.js";
 import {
   claimFixture,
+  finishedDemoFixture,
+  finishedStakedFixture,
   metaFixture,
   mockClient,
   ongoingItemFixture,
   Providers,
   playerFixture,
+  replayFixture,
 } from "../test/fixtures.jsx";
 import { assertNoGameIdentity } from "../test/leak.js";
 import { resetHeaderCacheForTests } from "../wallet/x402.js";
@@ -403,7 +406,7 @@ describe("disabled-CTA reason matrix (#31)", () => {
   it("encodes open-claim / quota / paused reasons", () => {
     expect(playCtaState({ phase: "FOCUS", paused: false })).toEqual({
       disabled: true,
-      reason: "board reserved — return ▸",
+      reason: "board is yours — return ▸",
     });
     expect(
       playCtaState({
@@ -433,7 +436,7 @@ describe("disabled-CTA reason matrix (#31)", () => {
       within(pane).getByRole("button", { name: "Close game pane" }),
     );
     expect(screen.queryByRole("dialog", { name: "game" })).toBeNull();
-    expect(screen.getByText(/board reserved — return/)).not.toBeNull();
+    expect(screen.getByText(/board is yours — return/)).not.toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: /▸ PLAY/ }));
     const reopened = await screen.findByRole("dialog", { name: "game" });
@@ -555,15 +558,153 @@ describe("hub panes chrome (playtest UI fixes)", () => {
     );
   });
 
-  it("gives every active-game minicard the width needed by its longest label", async () => {
-    const { readFileSync } = await import("node:fs");
-    const { join, dirname } = await import("node:path");
-    const { fileURLToPath } = await import("node:url");
-    const dir = dirname(fileURLToPath(import.meta.url));
-    const css = readFileSync(join(dir, "../styles/components.css"), "utf8");
-    expect(css).toMatch(
-      /\.active-minicard \{[\s\S]*?width: min\(calc\(50ch \+ 22px\), 100%\)/,
-    );
+  it("shows only the latest active and finished entries; older entries stay in the archive", async () => {
+    const client = mockClient({
+      getOngoingGames: vi.fn(async () => ({
+        items: [
+          ongoingItemFixture(),
+          ongoingItemFixture({ yourMove: { uci: "d2d4", san: "d4" } }),
+        ],
+        page: 1,
+        pageCount: 1,
+        total: 2,
+      })),
+      getFinishedGames: vi.fn(async () => ({
+        items: [
+          finishedStakedFixture(),
+          finishedStakedFixture({
+            gameId: "gm_archived",
+            gameName: "archived-game",
+            yourMoves: [{ uci: "d2d4", san: "d4", ply: 7 }],
+          }),
+        ],
+        page: 1,
+        pageCount: 1,
+        total: 2,
+      })),
+      getReplay: vi.fn(async (gameId: string) => replayFixture(gameId)),
+    } as never);
+    renderHub(client);
+
+    await screen.findByTestId("active-hero");
+    expect(screen.queryByText("d4")).toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: "LAST FINISHED" }));
+    await screen.findByTestId("finished-hero");
+    expect(screen.queryByText("Game archived")).toBeNull();
+  });
+
+  it("shows a latest demo result without falling back to an older staked entry", async () => {
+    const client = mockClient({
+      getFinishedGames: vi.fn(async () => ({
+        items: [
+          finishedDemoFixture({
+            termination: "threefold",
+            repetitionAdjudication: {
+              whiteMaterialPoints: 12,
+              blackMaterialPoints: 8,
+              winMargin: 3,
+            },
+          }),
+          finishedStakedFixture(),
+        ],
+        page: 1,
+        pageCount: 1,
+        total: 2,
+      })),
+      getReplay: vi.fn(async (gameId: string) => replayFixture(gameId)),
+    } as never);
+    renderHub(client);
+
+    fireEvent.click(await screen.findByRole("tab", { name: "LAST FINISHED" }));
+    await screen.findByTestId("finished-demo-hero");
+    expect(screen.getByText("— demo —")).not.toBeNull();
+    expect(
+      screen.getByText("White won on repetition · material White 12 – Black 8"),
+    ).not.toBeNull();
+    expect(screen.queryByText("Game fin_ok")).toBeNull();
+    expect(client.getReplay).not.toHaveBeenCalled();
+  });
+
+  it("last_finished_replay_explains_a_material_win_on_its_final_board", async () => {
+    const adjudication = {
+      whiteMaterialPoints: 12,
+      blackMaterialPoints: 8,
+      winMargin: 3,
+    };
+    const client = mockClient({
+      getFinishedGames: vi.fn(async () => ({
+        items: [
+          finishedStakedFixture({
+            gameId: "gm_material_hub",
+            termination: "threefold",
+            repetitionAdjudication: adjudication,
+          }),
+        ],
+        page: 1,
+        pageCount: 1,
+        total: 1,
+      })),
+      getReplay: vi.fn(async (gameId: string) => ({
+        ...replayFixture(gameId, 1),
+        termination: "threefold" as const,
+        repetitionAdjudication: adjudication,
+      })),
+    } as never);
+    renderHub(client);
+
+    fireEvent.click(await screen.findByRole("tab", { name: "LAST FINISHED" }));
+    expect(
+      (await screen.findByTestId("replayer-final-notice")).textContent,
+    ).toBe("White won on repetition · material White 12 – Black 8");
+  });
+
+  it("shows aggregated owned plies, stake, thinking time, and replay link", async () => {
+    const client = mockClient({
+      getFinishedGames: vi.fn(async () => ({
+        items: [
+          finishedStakedFixture({
+            yourMoves: [
+              { uci: "g1f3", san: "Nf3", ply: 5 },
+              { uci: "f1b5", san: "Bb5", ply: 9 },
+            ],
+            stakeMicroUsdc: 20_000,
+            thinkingTimeMs: 240_000,
+            payTxid: null,
+          }),
+        ],
+        page: 1,
+        pageCount: 1,
+        total: 1,
+      })),
+      getReplay: vi.fn(async (gameId: string) => replayFixture(gameId, 12)),
+    } as never);
+    renderHub(client);
+
+    fireEvent.click(await screen.findByRole("tab", { name: "LAST FINISHED" }));
+    expect(await screen.findByText("plies 5, 9")).not.toBeNull();
+    expect(screen.getAllByText("$0.02").length).toBeGreaterThan(0);
+    expect(screen.getByText("4m 0s")).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "full replay ▸" }).getAttribute("href"),
+    ).toBe("/replay/gm_fin_ok?plies=5,9");
+    expect(screen.getAllByRole("link", { name: "tx ↗" })).toHaveLength(1);
+  });
+
+  it("last_finished_identifies_the_side_you_played", async () => {
+    const client = mockClient({
+      getFinishedGames: vi.fn(async () => ({
+        items: [finishedStakedFixture({ yourSide: "black" })],
+        page: 1,
+        pageCount: 1,
+        total: 1,
+      })),
+      getReplay: vi.fn(async (gameId: string) => replayFixture(gameId)),
+    } as never);
+    renderHub(client);
+
+    fireEvent.click(await screen.findByRole("tab", { name: "LAST FINISHED" }));
+    const label = await screen.findByText("you played");
+    expect(label.nextElementSibling?.textContent).toBe("black");
   });
 });
 

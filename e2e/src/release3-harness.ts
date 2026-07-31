@@ -74,6 +74,7 @@ export async function createRelease3Harness(
     QUOTA_AGENT: 1_000,
     RATE_LIMIT_AUTH_PER_IP_MIN: 10_000,
     RATE_LIMIT_CLAIMS_PER_IP_MIN: 100_000,
+    HUMAN_BOARD_RESERVE_PERCENT: 0,
     PUBLIC_STATS_ENABLED: false,
     ...options.config,
   });

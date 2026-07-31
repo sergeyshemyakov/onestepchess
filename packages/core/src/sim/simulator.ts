@@ -53,7 +53,6 @@ export const P1_PROFILE: SimProfile = {
 export const P2_PROFILE: SimProfile = {
   name: "P2",
   cfg: coreConfigSchema.parse({
-    ENDSPIEL_PLY: 20,
     ENDSPIEL_PIECES: 20,
     MAX_PLIES: 60,
     COOLDOWN_PLIES: 2,

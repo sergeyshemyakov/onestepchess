@@ -159,18 +159,17 @@ function fakeKit(overrides: Partial<McpKit> = {}): McpKit {
       return {
         items: [
           {
-            yourMove: receipt.move,
+            yourMoves: [{ ...receipt.move, ply: 1 }],
             yourSide: "white",
             demo: false,
             stakeMicroUsdc: 1_000,
-            claimedAt: "2026-07-26T10:10:00.000Z",
-            movedAt: "2026-07-26T10:10:10.000Z",
+            thinkingTimeMs: 10_000,
+            startedAt: "2026-07-26T10:00:00.000Z",
             gameId: "gm_1",
             gameName: "the_final",
             finalFen: receipt.fenAfterYourMove,
             result: "white",
             termination: "checkmate",
-            yourPly: 1,
             payTxid: "mock-tx",
             payoutMicroUsdc: 1_900,
             payoutTxid: "mock-payout",

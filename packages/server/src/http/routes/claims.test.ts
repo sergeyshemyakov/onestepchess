@@ -567,4 +567,35 @@ describe("claim request priority (F3/F5)", () => {
       }),
     );
   });
+
+  it("returns retry only to agents when the human board reserve is reached", async () => {
+    const stack = setup({
+      GAME_POOL_TARGET: 4,
+      HUMAN_BOARD_RESERVE_PERCENT: 25,
+      TIMER_REVEAL_SECONDS: 1,
+    });
+    for (const address of ["agent-1", "agent-2", "agent-3", "agent-4"]) {
+      await addPlayer(stack, address, "agent");
+    }
+    await addPlayer(stack, "human");
+    for (const address of ["agent-1", "agent-2", "agent-3"]) {
+      await openClaim(stack, address, false, "agent");
+    }
+
+    const request = (address: string, kind: "human" | "agent") =>
+      stack.app.request("/api/v1/claims", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session(stack, address, kind)}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ demo: false }),
+      });
+    const agent = await request("agent-4", "agent");
+    const human = await request("human", "human");
+
+    expect(agent.status).toBe(204);
+    expect(agent.headers.get("Retry-After")).toBe("1");
+    expect(human.status).toBe(201);
+  });
 });

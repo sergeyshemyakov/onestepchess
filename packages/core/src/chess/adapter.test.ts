@@ -3,11 +3,16 @@ import { describe, expect, it } from "vitest";
 import type { Move } from "../types.js";
 import { CoreError, STARTING_FEN } from "../types.js";
 import type { ChessGame, ChessState } from "./adapter.js";
-import { createChess, pieceCount, sideToMove } from "./adapter.js";
+import {
+  createChess,
+  materialPoints,
+  pieceCount,
+  sideToMove,
+} from "./adapter.js";
 
 const CONFIG = {
-  ENDSPIEL_PLY: 60,
   ENDSPIEL_PIECES: 10,
+  REPETITION_WIN_MARGIN: 3,
   MAX_PLIES: 300,
 };
 
@@ -365,6 +370,62 @@ describe("chess adapter fixtures", () => {
     });
   });
 
+  it("awards a threefold repetition to a side leading by the configured material margin", () => {
+    const game = createChess(CONFIG);
+    const state = game.fromHistory([
+      "f2f3",
+      "e7e5",
+      "g2g3",
+      "d8h4",
+      "g3h4",
+      "g8f6",
+      "g1h3",
+      "f6g8",
+      "h3g1",
+      "g8f6",
+      "g1h3",
+      "f6g8",
+      "h3g1",
+    ]);
+
+    expect(game.materialPoints(state.fen)).toEqual({ white: 39, black: 30 });
+    expect(game.terminal(state)).toEqual({
+      over: true,
+      result: "white",
+      termination: "threefold",
+    });
+  });
+
+  it("keeps a threefold repetition drawn below the configured material margin", () => {
+    const history = [
+      "e2e4",
+      "d7d5",
+      "e4d5",
+      "g8f6",
+      "g1f3",
+      "f6g8",
+      "f3g1",
+      "g8f6",
+      "g1f3",
+      "f6g8",
+      "f3g1",
+    ];
+    const state = createChess(CONFIG).fromHistory(history);
+
+    expect(createChess(CONFIG).terminal(state)).toEqual({
+      over: true,
+      result: "draw",
+      termination: "threefold",
+    });
+    expect(
+      createChess({ ...CONFIG, REPETITION_WIN_MARGIN: 1 }).terminal(state),
+    ).toEqual({
+      over: true,
+      result: "white",
+      termination: "threefold",
+    });
+  });
+
   it("fires the max-plies adjudicated draw at exactly the configured boundary", () => {
     const game = createChess({ ...CONFIG, MAX_PLIES: 4 });
     expect(game.terminal(game.fromHistory(["g1f3", "g8f6", "f3g1"]))).toEqual({
@@ -375,22 +436,43 @@ describe("chess adapter fixtures", () => {
     ).toMatchObject({ over: true, termination: "max_plies" });
   });
 
-  it("switches phase at the exact ply and piece-count boundaries", () => {
+  it("switches phase only at the piece-count boundary", () => {
     const game = createChess({
-      ENDSPIEL_PLY: 2,
-      ENDSPIEL_PIECES: 2,
+      ENDSPIEL_PIECES: 10,
+      REPETITION_WIN_MARGIN: 3,
       MAX_PLIES: 300,
     });
     expect(game.phase(game.initial())).toBe("normal");
-    expect(game.phase(game.fromHistory(["g1f3", "g8f6"]))).toBe("endspiel");
     expect(
-      game.phase({ fen: "8/8/8/8/8/8/4k3/4K3 w - - 0 1", history: [] }),
+      game.phase({
+        fen: STARTING_FEN,
+        history: Array.from({ length: 60 }, () => "g1f3"),
+      }),
+    ).toBe("normal");
+    expect(
+      game.phase({
+        fen: "r3k3/8/8/8/8/ppp5/PPP5/R3K2R w KQ - 0 1",
+        history: [],
+      }),
+    ).toBe("normal");
+    expect(
+      game.phase({
+        fen: "4k3/8/8/8/8/ppp5/PPP5/R3K2R w KQ - 0 1",
+        history: [],
+      }),
     ).toBe("endspiel");
   });
 
   it("counts pieces on sparse boards with both kings included", () => {
     expect(pieceCount("8/8/8/8/8/8/4k3/4K3 w - - 0 1")).toBe(2);
     expect(pieceCount("8/8/8/3q4/8/8/4k3/4K2R w - - 0 1")).toBe(4);
+  });
+
+  it("scores material with standard values and excludes kings", () => {
+    expect(materialPoints("4k3/8/8/3q4/8/2N5/P7/4K2R w - - 0 1")).toEqual({
+      white: 9,
+      black: 9,
+    });
   });
 
   it("keeps sideToMove and corrupt-history errors inside the core contract", () => {

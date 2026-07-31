@@ -2,7 +2,12 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { ConfigError, loadConfig } from "./config.js";
+import {
+  ConfigError,
+  loadConfig,
+  loadServerPackageEnvironment,
+  serverConfigSchema,
+} from "./config.js";
 
 const baseEnv = { RAIL: "mock" } as const;
 
@@ -20,9 +25,11 @@ describe("server config composition", () => {
     expect(loaded.config.GAME_POOL_TARGET).toBe(8);
     expect(loaded.config.TIMER_REVEAL_SECONDS).toBe(120);
     expect(loaded.config.NEXT_GAME_NUDGE_SECONDS).toBe(20);
+    expect(loaded.config.PAGE_SIZE_ACTIVE).toBe(5);
     expect(loaded.config.NONCE_TTL_SECONDS).toBe(300);
     expect(loaded.config.JWT_TTL_HOURS).toBe(24);
     expect(loaded.config.RATE_LIMIT_AUTH_PER_IP_MIN).toBe(10);
+    expect(loaded.config.HUMAN_BOARD_RESERVE_PERCENT).toBe(25);
     expect(loaded.config.PAYOUT_BATCH_MAX).toBe(16);
     expect(loaded.config.BACKUP_HOUR_UTC).toBe(3);
     expect(loaded.config.CAIP2).toBe("mock:local");
@@ -61,6 +68,22 @@ describe("server config composition", () => {
     expect(loaded.config.GUEST_TOKEN_TTL_DAYS).toBe(30);
   });
 
+  it("validates the configurable human board reserve percentage", () => {
+    expect(
+      serverConfigSchema.parse({ HUMAN_BOARD_RESERVE_PERCENT: 0 }),
+    ).toHaveProperty("HUMAN_BOARD_RESERVE_PERCENT", 0);
+    expect(
+      serverConfigSchema.parse({ HUMAN_BOARD_RESERVE_PERCENT: 100 }),
+    ).toHaveProperty("HUMAN_BOARD_RESERVE_PERCENT", 100);
+    for (const value of [-1, 25.5, 101]) {
+      expect(
+        serverConfigSchema.safeParse({
+          HUMAN_BOARD_RESERVE_PERCENT: value,
+        }).success,
+      ).toBe(false);
+    }
+  });
+
   it("parses the env contract with mock defaults", () => {
     const loaded = loadConfig({
       env: {
@@ -93,5 +116,28 @@ describe("server config composition", () => {
       env: { ...baseEnv, JWT_SECRET: "a".repeat(32) },
     });
     expect(loaded.env.JWT_SECRET).toBe("a".repeat(32));
+  });
+
+  it("loads_the_server_package_dotenv_with_process_values_taking_precedence", () => {
+    const dir = mkdtempSync(join(tmpdir(), "osc-env-"));
+    const path = join(dir, ".env");
+    writeFileSync(
+      path,
+      [
+        "ADMIN_ADDRESSES=ADMIN_ONE, ADMIN_TWO",
+        "PORT=4111",
+        'SYSTEM_BANNER="package env loaded"',
+      ].join("\n"),
+    );
+
+    const env = loadServerPackageEnvironment({
+      path,
+      env: { RAIL: "mock", PORT: "4222" },
+    });
+    const loaded = loadConfig({ env });
+
+    expect(loaded.env.ADMIN_ADDRESSES).toEqual(["ADMIN_ONE", "ADMIN_TWO"]);
+    expect(loaded.env.PORT).toBe(4222);
+    expect(loaded.env.SYSTEM_BANNER).toBe("package env loaded");
   });
 });

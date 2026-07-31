@@ -179,11 +179,11 @@ describe("Release 2 live human surfaces", () => {
     );
     fireEvent.click(screen.getByRole("link", { name: "ARCHIVE" }));
     await screen.findByRole("heading", { name: "ACTIVE" });
-    expect(await screen.findByText(/board reserved/)).not.toBeNull();
+    expect(await screen.findByText(/board is yours/)).not.toBeNull();
     claimActive = false;
     source().emit("claim_expired", { claimId: secondClaim.claimId });
     await waitFor(() =>
-      expect(screen.queryByText(/board reserved/)).toBeNull(),
+      expect(screen.queryByText(/board is yours/)).toBeNull(),
     );
     source().emit("game_available", {});
     await screen.findByText("a board may be available — PLAY to check");
@@ -276,7 +276,7 @@ describe("Release 2 live human surfaces", () => {
         eventSourceFactory={factory}
       />,
     );
-    await screen.findByText(/board reserved/);
+    await screen.findByText(/board is yours/);
     await waitFor(() => expect(FakeEventSource.current).not.toBeNull());
     const before = {
       meta: vi.mocked(client.getMeta).mock.calls.length,
@@ -323,7 +323,7 @@ describe("Release 2 live human surfaces", () => {
         getCurrentClaim: vi.fn(async () => claimFixture()),
       } as never);
       const view = render(<App client={client} authHandlers={handlers} />);
-      expect(await screen.findByText(/board reserved/)).not.toBeNull();
+      expect(await screen.findByText(/board is yours/)).not.toBeNull();
       view.unmount();
     }
 
@@ -337,7 +337,7 @@ describe("Release 2 live human surfaces", () => {
       getReplay: vi.fn(async () => replayFixture("gm_public")),
     } as never);
     render(<App client={replayClient} authHandlers={handlers} />);
-    expect(await screen.findByText(/board reserved/)).not.toBeNull();
+    expect(await screen.findByText(/board is yours/)).not.toBeNull();
     expect(replayClient.probeProfile).not.toHaveBeenCalled();
     expect(replayClient.getCurrentClaim).not.toHaveBeenCalled();
   });

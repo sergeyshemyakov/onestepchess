@@ -592,7 +592,7 @@ svg.pc {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-width: 340px;
+  width: min(380px, calc(100vw - 40px));
 }
 .toast {
   min-width: 0;
@@ -1253,6 +1253,13 @@ body.fx .admin-shell svg.pc {
   grid-template-columns: minmax(160px, 1fr) auto auto;
   gap: 5px;
 }
+.admin-config-description {
+  display: block;
+  max-width: 34ch;
+  margin-top: 3px;
+  color: var(--ph-dim);
+  font-size: 12px;
+}
 .admin-history ol {
   padding-left: 24px;
 }
@@ -1411,12 +1418,11 @@ body.fx .admin-shell svg.pc {
 
 /* ---- coach marks ---- */
 .coach {
-  border: 1px dashed var(--accent);
   color: var(--accent);
-  padding: 4px 10px;
   font-size: 12px;
   margin-top: 8px;
   max-width: 46ch;
+  white-space: pre-line;
 }
 
 /* ---- responsive: 768 stacks, confirm becomes a bottom sheet ---- */
@@ -1593,7 +1599,16 @@ body.fx .admin-shell svg.pc {
   gap: 12px;
   max-width: 62ch;
   padding-left: 20px;
-  margin-top: 14px;
+  margin: 14px auto 0;
+  text-align: left;
+}
+.guide {
+  text-align: center;
+}
+.guide-full {
+  max-width: 62ch;
+  margin: 18px auto 0;
+  text-align: left;
 }
 .warn {
   color: var(--warn, #d9a326);
@@ -1608,6 +1623,25 @@ body.fx .admin-shell svg.pc {
 }
 .replayer-board.own-ply {
   outline: 2px solid var(--ph);
+}
+.replayer-final-notice {
+  position: absolute;
+  inset-inline: 8px;
+  bottom: 8px;
+  z-index: 5;
+  padding: 8px 10px;
+  border: 1px solid var(--ph);
+  background: color-mix(in oklab, var(--bg) 92%, transparent);
+  color: var(--ph);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+  text-align: center;
+  box-shadow: 0 0 16px color-mix(in oklab, var(--ph) 24%, transparent);
+}
+.repetition-decision {
+  border-left: 2px solid var(--ph);
+  padding-left: 8px;
 }
 /* Phosphor flicker on the accented ply (UI suggestions `flick`), on top of
  * the autoplay slow-down — opacity-only, so it stays compositor-friendly. */
@@ -1680,6 +1714,9 @@ body.fx .admin-shell svg.pc {
   font-size: 18px;
   line-height: 1;
   padding: 1px 8px;
+}
+.replayer-controls .speedbtn {
+  min-width: 4ch;
 }
 .digestloop .replayer-board {
   max-width: 240px;
@@ -1785,22 +1822,8 @@ body.fx .admin-shell svg.pc {
   border: 1px solid var(--line);
   padding: 12px;
 }
-.minicards {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 10px;
-}
-.minicard {
-  border: 1px solid var(--line);
-  padding: 6px 10px;
-  font-size: 12.5px;
-  color: var(--ph-dim, var(--ph));
-}
-.active-minicard {
-  /* 7-char SAN + black + the largest SQLite INTEGER USDC rendering + status. */
-  width: min(calc(50ch + 22px), 100%);
-  flex: none;
+.demo-finished-hero {
+  grid-template-columns: 1fr;
 }
 .qv-fields {
   display: grid;
@@ -1917,7 +1940,7 @@ body.fx .admin-shell svg.pc {
   padding: 12px;
   display: grid;
   gap: 8px;
-  max-width: min(92vw, 440px);
+  max-width: min(92vw, 480px);
 }
 .poprow {
   display: flex;

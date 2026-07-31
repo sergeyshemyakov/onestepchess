@@ -5,7 +5,10 @@ import type { PlayState } from "./machine.js";
 import { PlayView } from "./PlayView.jsx";
 import type { PlayFlow } from "./usePlayFlow.js";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
+});
 
 function flowWith(state: PlayState): PlayFlow {
   return {
@@ -16,6 +19,24 @@ function flowWith(state: PlayState): PlayFlow {
 }
 
 describe("check & en passant surfacing (playtest round 1)", () => {
+  it("renders the first-move hint as three unboxed console prompts", () => {
+    const view = render(
+      <PlayView
+        flow={flowWith({
+          phase: "FOCUS",
+          demo: false,
+          claim: claimFixture(),
+          selected: null,
+        })}
+        meta={metaFixture}
+      />,
+    );
+    const coach = view.container.querySelector(".coach");
+    expect(coach?.textContent).toBe(
+      "> this move is yours\n> the game goes on after\n> you will be notified when it ends",
+    );
+  });
+
   it("highlights the checked king and announces CHECK", () => {
     // Black rook on e2 checks the white king on e1.
     const claim = claimFixture({

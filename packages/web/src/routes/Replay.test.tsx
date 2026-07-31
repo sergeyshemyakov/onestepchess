@@ -11,8 +11,9 @@ import { App, type AuthHandlers } from "../App.jsx";
 import type { ApiClient } from "../api/client.js";
 import { ApiError } from "../api/client.js";
 import { clearReplayCacheForTests } from "../api/replayCache.js";
+import { pliesPerSecondAtSpeed } from "../replay/Replayer.jsx";
 import { replayFixture } from "../test/fixtures.jsx";
-import { Replay } from "./Replay.jsx";
+import { parseHighlightedPlies, Replay } from "./Replay.jsx";
 
 const handlers: AuthHandlers = { onUnauthorized: () => undefined };
 
@@ -83,6 +84,67 @@ it("replay_heading_and_actions_are_centered_with_the_board", async () => {
   expect(css).toMatch(/\.replayfoot \{[^}]*justify-content: center;/s);
 });
 
+it("replay_speed_cycles_from_2x_to_0.5x_to_1x_and_back", async () => {
+  const client = publicOnlyClient(async () => replayFixture("gm_speed"));
+  renderReplay(client, "/replay/gm_speed");
+
+  const speed = await screen.findByRole("button", {
+    name: "replay speed 2x",
+  });
+  expect(speed.textContent).toBe("2x");
+  fireEvent.click(speed);
+  expect(
+    screen.getByRole("button", { name: "replay speed 0.5x" }).textContent,
+  ).toBe("0.5x");
+  fireEvent.click(screen.getByRole("button", { name: "replay speed 0.5x" }));
+  expect(
+    screen.getByRole("button", { name: "replay speed 1x" }).textContent,
+  ).toBe("1x");
+  fireEvent.click(screen.getByRole("button", { name: "replay speed 1x" }));
+  expect(
+    screen.getByRole("button", { name: "replay speed 2x" }).textContent,
+  ).toBe("2x");
+  expect(pliesPerSecondAtSpeed(2)).toBe(4);
+  expect(pliesPerSecondAtSpeed(1)).toBe(2);
+  expect(pliesPerSecondAtSpeed(0.5)).toBe(1);
+});
+
+it("highlights_every_shareable_owned_ply_from_the_plies_query", async () => {
+  const client = publicOnlyClient(async () => replayFixture("gm_owned", 12));
+  const view = renderReplay(client, "/replay/gm_owned?plies=9,5,9");
+
+  await screen.findByTestId("replay-page");
+  const ownRows = view.container.querySelectorAll(".plyrow.own");
+  expect(ownRows).toHaveLength(2);
+  expect([...ownRows].map((row) => row.textContent)).toEqual([
+    expect.stringContaining("5"),
+    expect.stringContaining("9"),
+  ]);
+  expect(parseHighlightedPlies("9,5,9,bad,0", 12)).toEqual([5, 9]);
+});
+
+it("shareable_replay_explains_a_material_win_on_the_final_board", async () => {
+  const replay = {
+    ...replayFixture("gm_material", 4),
+    termination: "threefold" as const,
+    repetitionAdjudication: {
+      whiteMaterialPoints: 12,
+      blackMaterialPoints: 8,
+      winMargin: 3,
+    },
+  };
+  const client = publicOnlyClient(async () => replay);
+  renderReplay(client, "/replay/gm_material");
+
+  const scrub = (await screen.findByLabelText(
+    "scrub plies",
+  )) as HTMLInputElement;
+  fireEvent.change(scrub, { target: { value: "4" } });
+  expect((await screen.findByTestId("replayer-final-notice")).textContent).toBe(
+    "White won on repetition · material White 12 – Black 8",
+  );
+});
+
 it("public_replay_is_session_free_scrubbable_and_downloads_exact_pgn", async () => {
   // -- 300 plies, fenAfter-indexed; one public request renders everything.
   const replay = replayFixture("gm_300", 300);
@@ -97,6 +159,7 @@ it("public_replay_is_session_free_scrubbable_and_downloads_exact_pgn", async () 
   const view = render(<App client={client} authHandlers={handlers} />);
   await screen.findByTestId("replay-page");
   expect(client.getReplay).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole("button", { name: "pause" })).not.toBeNull();
   expect(screen.getAllByText(/^M\d+$/)).toHaveLength(300);
   expect(screen.getByText("anonymous")).not.toBeNull();
 

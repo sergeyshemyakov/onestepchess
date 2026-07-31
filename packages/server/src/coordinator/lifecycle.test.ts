@@ -174,29 +174,29 @@ describe("pool top-up (F6)", () => {
   });
 
   it("snapshots rules_json at creation; hot config edits never rewrite a live game", async () => {
-    const stack = setup({ GAME_POOL_TARGET: 1, ENDSPIEL_PLY: 60 });
+    const stack = setup({ GAME_POOL_TARGET: 1, ENDSPIEL_PIECES: 10 });
     await poolTick(stack);
     const [gameId] = liveGameIds(stack) as [string];
     const before = JSON.parse(gameRow(stack, gameId).rules_json) as {
-      ENDSPIEL_PLY: number;
+      ENDSPIEL_PIECES: number;
     };
-    expect(before.ENDSPIEL_PLY).toBe(60);
+    expect(before.ENDSPIEL_PIECES).toBe(10);
 
-    stack.setConfig({ GAME_POOL_TARGET: 2, ENDSPIEL_PLY: 10 });
+    stack.setConfig({ GAME_POOL_TARGET: 2, ENDSPIEL_PIECES: 8 });
     await poolTick(stack);
     const after = JSON.parse(gameRow(stack, gameId).rules_json) as {
-      ENDSPIEL_PLY: number;
+      ENDSPIEL_PIECES: number;
     };
-    expect(after.ENDSPIEL_PLY).toBe(60);
+    expect(after.ENDSPIEL_PIECES).toBe(10);
 
     const newGame = liveGameIds(stack).find((id) => id !== gameId) as string;
     expect(
       (
         JSON.parse(gameRow(stack, newGame).rules_json) as {
-          ENDSPIEL_PLY: number;
+          ENDSPIEL_PIECES: number;
         }
-      ).ENDSPIEL_PLY,
-    ).toBe(10);
+      ).ENDSPIEL_PIECES,
+    ).toBe(8);
   });
 
   it("generates unique word-list-shaped names", async () => {
@@ -215,30 +215,9 @@ describe("pool top-up (F6)", () => {
 });
 
 describe("endspiel entry (F6)", () => {
-  it("records endspiel at the exact triggering ply for the ply threshold", async () => {
-    const stack = setup({
-      GAME_POOL_TARGET: 1,
-      ENDSPIEL_PLY: 4,
-      MAX_PLIES: 300,
-    });
-    await poolTick(stack);
-    const [gameId] = liveGameIds(stack) as [string];
-
-    for (const move of ["e2e4", "e7e5", "g1f3"]) {
-      await commitPly(stack, gameId, move);
-    }
-    expect(gameRow(stack, gameId).status).toBe("active");
-
-    await commitPly(stack, gameId, "b8c6");
-    const row = gameRow(stack, gameId);
-    expect(row.status).toBe("endspiel");
-    expect(row.endspiel_ply).toBe(4);
-  });
-
   it("records endspiel at the exact triggering ply for the piece threshold", async () => {
     const stack = setup({
       GAME_POOL_TARGET: 1,
-      ENDSPIEL_PLY: 100,
       ENDSPIEL_PIECES: 31,
       MAX_PLIES: 300,
     });
@@ -257,17 +236,16 @@ describe("endspiel entry (F6)", () => {
   });
 
   it("the endspiel ratchet is one-way", async () => {
-    const stack = setup({ GAME_POOL_TARGET: 1, ENDSPIEL_PLY: 2 });
+    const stack = setup({ GAME_POOL_TARGET: 1, ENDSPIEL_PIECES: 32 });
     await poolTick(stack);
     const [gameId] = liveGameIds(stack) as [string];
     await commitPly(stack, gameId, "e2e4");
+    expect(gameRow(stack, gameId).status).toBe("endspiel");
+    expect(gameRow(stack, gameId).endspiel_ply).toBe(1);
+
     await commitPly(stack, gameId, "e7e5");
     expect(gameRow(stack, gameId).status).toBe("endspiel");
-    expect(gameRow(stack, gameId).endspiel_ply).toBe(2);
-
-    await commitPly(stack, gameId, "g1f3");
-    expect(gameRow(stack, gameId).status).toBe("endspiel");
-    expect(gameRow(stack, gameId).endspiel_ply).toBe(2);
+    expect(gameRow(stack, gameId).endspiel_ply).toBe(1);
   });
 });
 
@@ -296,7 +274,6 @@ describe("terminal detection (F6)", () => {
   it("max-plies adjudicated draw terminates at the ply cap", async () => {
     const stack = setup({
       GAME_POOL_TARGET: 1,
-      ENDSPIEL_PLY: 4,
       MAX_PLIES: 4,
     });
     await poolTick(stack);
@@ -363,7 +340,7 @@ describe("chess adapter registry", () => {
   it("reuses adapter instances per rules key", () => {
     const registry = new ChessAdapterRegistry(4);
     const rulesA = serverConfigSchema.parse({});
-    const rulesB = serverConfigSchema.parse({ ENDSPIEL_PLY: 10 });
+    const rulesB = serverConfigSchema.parse({ ENDSPIEL_PIECES: 8 });
     expect(registry.get(rulesA)).toBe(registry.get(rulesA));
     expect(registry.get(rulesA)).not.toBe(registry.get(rulesB));
     // Identical thresholds share the adapter even from distinct objects.

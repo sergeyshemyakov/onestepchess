@@ -16,6 +16,7 @@ import {
   ConfigError,
   type LoadedConfig,
   loadConfig,
+  loadServerPackageEnvironment,
   secretValues,
 } from "./config.js";
 import { ChessAdapterRegistry } from "./coordinator/chess-registry.js";
@@ -121,7 +122,7 @@ const EVENT_PRUNE_INTERVAL_MS = 86_400_000;
 export async function main(): Promise<void> {
   let loaded: LoadedConfig;
   try {
-    loaded = loadConfig();
+    loaded = loadConfig({ env: loadServerPackageEnvironment() });
   } catch (error) {
     if (error instanceof ConfigError) {
       createLogger({ destination: process.stderr }).fatal(

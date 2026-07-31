@@ -8,15 +8,15 @@ import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 
 /** Pinned share text (CA-14 placeholder until Sergey's copy). */
 export const SHARE_TEXT =
-  "my one move held up. strangers and machines share every game — i played exactly one of its moves. one step chess, on algorand.";
+  "my moves held up. strangers and machines share every game — i played part of this one. one step chess, on algorand.";
 
 export function shareUrl(args: {
   readonly origin: string;
   readonly gameId: string;
-  readonly yourPly: number;
+  readonly yourPlies: readonly number[];
   readonly refCode: string | null;
 }): string {
-  const base = `${args.origin}/replay/${args.gameId}?ply=${args.yourPly}`;
+  const base = `${args.origin}/replay/${args.gameId}?plies=${args.yourPlies.join(",")}`;
   return args.refCode === null || args.refCode === ""
     ? base
     : `${base}&ref=${encodeURIComponent(args.refCode)}`;
@@ -24,7 +24,7 @@ export function shareUrl(args: {
 
 export function ShareSheet(props: {
   readonly gameId: string;
-  readonly yourPly: number;
+  readonly yourPlies: readonly number[];
   readonly refCode: string | null;
   readonly onClose: () => void;
 }) {
@@ -35,10 +35,13 @@ export function ShareSheet(props: {
   const url = shareUrl({
     origin: window.location.origin,
     gameId: props.gameId,
-    yourPly: props.yourPly,
+    yourPlies: props.yourPlies,
     refCode: props.refCode,
   });
-  const cardSrc = `/api/v1/games/${props.gameId}/card.png?ply=${props.yourPly}`;
+  const cardPly = props.yourPlies.at(-1);
+  const cardSrc = `/api/v1/games/${props.gameId}/card.png${
+    cardPly === undefined ? "" : `?ply=${cardPly}`
+  }`;
 
   return (
     <div className="modalback">
@@ -54,14 +57,14 @@ export function ShareSheet(props: {
         <h3 id="share-title">SHARE YOUR WIN</h3>
         {imageFailed ? (
           <p className="sub" data-testid="share-card-fallback">
-            your win card — one move that held up
+            your win card — your moves held up
           </p>
         ) : (
           <>
             <img
               className="sharecard"
               src={cardSrc}
-              alt="your win card — one move that held up"
+              alt="your win card — your moves held up"
               onError={() => setImageFailed(true)}
             />
             <a
