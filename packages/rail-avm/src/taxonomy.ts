@@ -1,8 +1,10 @@
 import type { SettleResult, VerifyFailure } from "@onestepchess/core";
 
-const INSUFFICIENT = /insufficient|overspend|balance below|underfunded/i;
-const NOT_OPTED_IN = /not[ _-]?opted|opt[ _-]?in|asset holding/i;
-const EXPIRED = /expired|validity|past (?:the )?last valid|round.*lapsed/i;
+const INSUFFICIENT =
+  /insufficient|overspend|balance below|below.*balance|underfunded/i;
+const NOT_OPTED_IN = /not[ _-]?opted|opt[ _-]?in|asset holding|missing.*asset/i;
+const EXPIRED =
+  /expired|validity|past (?:the )?last valid|round.*lapsed|txn dead|outside.*valid/i;
 
 export function mapVerifyFailure(reason: string): VerifyFailure {
   if (INSUFFICIENT.test(reason)) return "insufficient_funds";

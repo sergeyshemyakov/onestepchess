@@ -1,9 +1,15 @@
-import type { PaymentChallenge, PaymentRail } from "@onestepchess/core";
+import type {
+  PaymentChallenge,
+  PaymentRail,
+  PreparedPayouts,
+} from "@onestepchess/core";
 import { RailError } from "@onestepchess/core";
 
 export type PaymentRailConformanceHarness = {
   readonly rail: PaymentRail;
   readonly buildHeader: (challenge: PaymentChallenge, nonce: string) => string;
+  readonly payoutRecipient?: (index: number) => string;
+  readonly assertPreparedReplay?: (prepared: PreparedPayouts) => Promise<void>;
 };
 
 export type PaymentRailConformanceRow = {
@@ -17,10 +23,27 @@ function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`PaymentRail conformance: ${message}`);
 }
 
+function isContractError(error: unknown): boolean {
+  return (
+    (error instanceof RailError && error.code === "CONTRACT") ||
+    (typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "CONTRACT")
+  );
+}
+
 const quote = {
   amountMicroUsdc: 1_000,
   resource: "https://osc.example/api/v1/claims/conformance/move",
 } as const;
+
+function payoutRecipient(
+  harness: PaymentRailConformanceHarness,
+  index: number,
+): string {
+  return harness.payoutRecipient?.(index) ?? `recipient-${index}`;
+}
 
 export const paymentRailConformanceRows: readonly PaymentRailConformanceRow[] =
   [
@@ -56,20 +79,22 @@ export const paymentRailConformanceRows: readonly PaymentRailConformanceRow[] =
           await rail.preparePayouts(batch);
           throw new Error("preparePayouts accepted 17 jobs");
         } catch (error) {
-          assert(
-            error instanceof RailError && error.code === "CONTRACT",
-            "wrong batch error",
-          );
+          assert(isContractError(error), "wrong batch error");
         }
       },
     },
     {
       name: "prepare has no balance effect",
       async run(createHarness) {
-        const { rail } = createHarness();
+        const harness = createHarness();
+        const { rail } = harness;
         const before = await rail.getBalances(rail.treasuryAddress);
         await rail.preparePayouts([
-          { jobId: "prepare-only", recipient: "A", amountMicroUsdc: 9 },
+          {
+            jobId: "prepare-only",
+            recipient: payoutRecipient(harness, 0),
+            amountMicroUsdc: 9,
+          },
         ]);
         const after = await rail.getBalances(rail.treasuryAddress);
         assert(
@@ -81,13 +106,22 @@ export const paymentRailConformanceRows: readonly PaymentRailConformanceRow[] =
     {
       name: "exact prepared-byte replay applies once",
       async run(createHarness) {
-        const { rail } = createHarness();
+        const harness = createHarness();
+        const { rail } = harness;
         const before = await rail.getBalances(rail.treasuryAddress);
         const prepared = await rail.preparePayouts([
-          { jobId: "replay", recipient: "A", amountMicroUsdc: 11 },
+          {
+            jobId: "replay",
+            recipient: payoutRecipient(harness, 0),
+            amountMicroUsdc: 11,
+          },
         ]);
         await rail.submitPrepared(prepared);
         await rail.submitPrepared(prepared);
+        if (harness.assertPreparedReplay !== undefined) {
+          await harness.assertPreparedReplay(prepared);
+          return;
+        }
         const after = await rail.getBalances(rail.treasuryAddress);
         assert(
           before.usdcMicroUsdc - after.usdcMicroUsdc === 11,
@@ -98,12 +132,13 @@ export const paymentRailConformanceRows: readonly PaymentRailConformanceRow[] =
     {
       name: "per-job txids are unique and jobId-aligned",
       async run(createHarness) {
-        const { rail } = createHarness();
+        const harness = createHarness();
+        const { rail } = harness;
         const jobs = ["aligned-a", "aligned-b", "aligned-c"];
         const prepared = await rail.preparePayouts(
-          jobs.map((jobId) => ({
+          jobs.map((jobId, index) => ({
             jobId,
-            recipient: `recipient-${jobId}`,
+            recipient: payoutRecipient(harness, index),
             amountMicroUsdc: 1,
           })),
         );

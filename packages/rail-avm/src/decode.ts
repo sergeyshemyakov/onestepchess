@@ -68,6 +68,17 @@ function decodeTransaction(bytes: Uint8Array): algosdk.Transaction {
   }
 }
 
+export function decodeTransactionB64(
+  value: string,
+): algosdk.Transaction | null {
+  try {
+    const bytes = decodeBase64(value);
+    return bytes === null ? null : decodeTransaction(bytes);
+  } catch {
+    return null;
+  }
+}
+
 function safeNumber(value: bigint): number | null {
   const number = Number(value);
   return Number.isSafeInteger(number) ? number : null;
