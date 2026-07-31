@@ -1,5 +1,9 @@
 import type { Context, Hono } from "hono";
 import { z } from "zod";
+import {
+  type FundingExecutorDeps,
+  rearmBonusFunding,
+} from "../bonuses/funding.js";
 import { type AppEnv, AppError } from "../http/app.js";
 import { parseJsonBody } from "../http/validation.js";
 import type { ReconciliationDeps } from "../operations/reconciliation.js";
@@ -58,6 +62,7 @@ export type AdminRouteDeps = AdminAuthDeps &
     readonly coordinator: AdminCommandDeps["coordinator"];
     readonly cache: AdminReadCache;
     readonly reconciliation: ReconciliationDeps;
+    readonly funding?: FundingExecutorDeps;
   };
 
 function query<T extends z.ZodType>(
@@ -331,9 +336,30 @@ export function registerAdminRoutes(
     }
     return c.json(result);
   });
-  app.post("/api/v1/admin/bonuses/:address/retry", () => {
-    throw new AppError("BONUS_UNAVAILABLE", {
-      hint: "starter-stake funding is unavailable until Release 4",
-    });
+  app.post("/api/v1/admin/bonuses/:address/retry", async (c) => {
+    if (deps.funding === undefined) {
+      throw new AppError("BONUS_UNAVAILABLE", {
+        hint: "Release 4 starter-stake funding executor is not configured",
+      });
+    }
+    const result = await rearmBonusFunding(
+      deps.funding,
+      c.req.param("address"),
+      c.get("adminActor"),
+    );
+    if (result.status === "not_found") {
+      throw new AppError("NOT_FOUND", { hint: "starter stake not found" });
+    }
+    if (result.status === "not_failed") {
+      throw new AppError("INVALID_REQUEST", {
+        hint: "no exhausted starter-stake funding leg can be retried",
+      });
+    }
+    if (result.status === "unsafe") {
+      throw new AppError("INVALID_REQUEST", {
+        hint: "prepared funding is still live or cannot be safely recovered",
+      });
+    }
+    return c.json(result);
   });
 }

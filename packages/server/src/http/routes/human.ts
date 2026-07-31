@@ -6,6 +6,7 @@ import {
   NICKNAME_PATTERN,
   nicknameTaken,
 } from "../../auth/nickname.js";
+import { bonusProfileStatus } from "../../bonuses/lifecycle.js";
 import { CardCache } from "../../cards/raster.js";
 import { buildCardSvg, type CardOutcome } from "../../cards/svg.js";
 import type { Coordinator } from "../../coordinator/queue.js";
@@ -171,6 +172,10 @@ export function registerHumanRoutes(
               joined: player.refJoined,
               qualified: player.refQualified,
             },
+            ...(() => {
+              const bonus = bonusProfileStatus(deps, address, deps.now());
+              return bonus === null ? {} : { bonus };
+            })(),
           }
         : {};
     return c.json({

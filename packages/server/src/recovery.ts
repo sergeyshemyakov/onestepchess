@@ -47,19 +47,26 @@ export async function recoverSettlingIntents(
     }
     const boundary =
       intent.updatedAt + deps.config().PAYMENT_RECOVERY_TIMEOUT_SECONDS * 1_000;
-    const stale = now >= boundary;
-    if (status.status === "not_found" && stale) {
+    const beyondValidity =
+      status.status === "not_found" &&
+      (intent.lastValidRound === null
+        ? now >= boundary
+        : status.currentRound > intent.lastValidRound);
+    if (beyondValidity) {
       await deps.coordinator.dispatch({
         type: "IntentFailed",
         payload: {
           clientTxid: intent.clientTxid,
-          failureCode: "recovery_timeout",
+          failureCode:
+            intent.lastValidRound === null
+              ? "recovery_timeout"
+              : "validity_expired",
         },
       });
       continue;
     }
     const candidate =
-      status.status === "not_found"
+      status.status === "not_found" && intent.lastValidRound === null
         ? Math.min(boundary, now + RECOVERY_POLL_MS)
         : now + RECOVERY_POLL_MS;
     nextRecoveryAt =

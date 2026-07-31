@@ -1,7 +1,6 @@
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { serve } from "@hono/node-server";
-import { createMockRail } from "@onestepchess/rail-mock";
 import { AdminReadCache } from "./admin/cache.js";
 import { registerAdminCommands } from "./admin/commands.js";
 import { registerAdminRoutes } from "./admin/routes.js";
@@ -10,6 +9,13 @@ import {
   type TurnstileVerifier,
 } from "./auth/turnstile.js";
 import { nextBackupDelayMs, runBackup } from "./backup.js";
+import {
+  registerFundingCommands,
+  runFundingExecutor,
+} from "./bonuses/funding.js";
+import { registerBonusCommands } from "./bonuses/lifecycle.js";
+import { registerBonusRoutes } from "./bonuses/routes.js";
+import { runBonusWatcher } from "./bonuses/watcher.js";
 import { currentMode, initializeSystemState } from "./boot.js";
 import {
   applyConfigOverrides,
@@ -56,6 +62,7 @@ import {
   registerPayoutCommands,
   runPayoutExecutor,
 } from "./payouts/executor.js";
+import { createPaymentRail } from "./rail/factory.js";
 import {
   recoverSettlingIntents,
   recoverUnresolvedTerminalGames,
@@ -75,6 +82,11 @@ export * from "./auth/turnstile.js";
 export * from "./auth/verify-arc60.js";
 export * from "./auth/verify-txn.js";
 export * from "./backup.js";
+export * from "./bonuses/funding.js";
+export * from "./bonuses/lifecycle.js";
+export * from "./bonuses/optin.js";
+export * from "./bonuses/routes.js";
+export * from "./bonuses/watcher.js";
 export * from "./boot.js";
 export * from "./config.js";
 export * from "./coordinator/chess-registry.js";
@@ -111,6 +123,7 @@ export * from "./operations/alerts.js";
 export * from "./operations/pause.js";
 export * from "./operations/reconciliation.js";
 export * from "./payouts/executor.js";
+export * from "./rail/factory.js";
 export * from "./recovery.js";
 export * from "./replays.js";
 
@@ -148,13 +161,6 @@ export async function main(): Promise<void> {
     .all();
   let config = applyConfigOverrides(loaded.config, overrideRows);
 
-  if (loaded.env.RAIL !== "mock") {
-    // rail-avm wiring lands with the move-path slice; Release 1 runs on the
-    // mock profile only (release plan; ADR 0001 keeps CI mock-only anyway).
-    logger.fatal({ rail: loaded.env.RAIL }, "only RAIL=mock is wired yet");
-    process.exitCode = 1;
-    return;
-  }
   const storedBook = (
     sqlite
       .prepare(
@@ -162,9 +168,21 @@ export async function main(): Promise<void> {
       )
       .get() as { amount: number }
   ).amount;
-  const rail = createMockRail(
-    storedBook === 0 ? {} : { initialTreasury: { usdcMicroUsdc: storedBook } },
-  );
+  let rail: ReturnType<typeof createPaymentRail>;
+  try {
+    rail = createPaymentRail({
+      env: loaded.env,
+      config,
+      storedBookMicroUsdc: storedBook,
+    });
+  } catch (error) {
+    logger.fatal(
+      { err: error, rail: loaded.env.RAIL },
+      "payment rail initialization failed",
+    );
+    process.exitCode = 1;
+    return;
+  }
 
   const now = Date.now();
   if (
@@ -189,6 +207,13 @@ export async function main(): Promise<void> {
     Date.now,
     () => config.ADMIN_CACHE_TTL_SECONDS,
   );
+  const bonusLifecycleDeps = {
+    coordinator,
+    db,
+    config: () => config,
+    cache: adminCache,
+  } as const;
+  registerBonusCommands(bonusLifecycleDeps);
   const alerts = new OperationalAlerts({
     url: loaded.env.ALERT_WEBHOOK_URL,
     dedupeSeconds: () => config.ALERT_DEDUPE_SECONDS,
@@ -261,8 +286,8 @@ export async function main(): Promise<void> {
       secret: loaded.env.TURNSTILE_SECRET,
     });
   } else {
-    // Reachable only on the mock profile (avm exits above): local dev has no
-    // Turnstile keys, and CI drives the fixture verifier through tests.
+    // Local mock dev has no Turnstile keys, and CI drives the fixture verifier
+    // through tests. Supported AVM deployments are expected to provide one.
     logger.warn("TURNSTILE_SECRET unset — dev verifier accepts any token");
     turnstile = async () => "pass";
   }
@@ -316,6 +341,17 @@ export async function main(): Promise<void> {
     alerts,
   } as const;
   registerPayoutCommands(payoutDeps);
+  const fundingDeps = {
+    coordinator,
+    db,
+    rail,
+    config: () => config,
+    now: Date.now,
+    logger,
+    alerts,
+    cache: adminCache,
+  } as const;
+  registerFundingCommands(fundingDeps);
   let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
   const scheduleRecovery = (dueAt: number): void => {
     if (recoveryTimer !== undefined) clearTimeout(recoveryTimer);
@@ -344,12 +380,27 @@ export async function main(): Promise<void> {
       logger.error({ err: error }, "payout executor pass failed");
     }
   };
+  const runFunding = async (): Promise<void> => {
+    try {
+      await runFundingExecutor(fundingDeps);
+    } catch (error) {
+      logger.error(
+        { err: error },
+        "starter-stake funding executor pass failed",
+      );
+    }
+  };
+  // Warm AVM fee-payer state and persist only the facilitator pause cause
+  // before recovery. Recovery remains live while discretionary funding sees
+  // the resulting pause through its send guard.
+  await probeFacilitator(operationalDeps);
   await runRecovery();
   await recoverUnresolvedTerminalGames(claimDeps);
   // Resume payout batches and pay out any freshly-recovered resolutions
   // (F1 step 6) before serving.
   await runPayouts();
-  await probeFacilitator(operationalDeps);
+  await runBonusWatcher({ coordinator, db, rail });
+  await runFunding();
   try {
     await runReconciliation(operationalDeps, "boot");
   } catch (error) {
@@ -375,6 +426,16 @@ export async function main(): Promise<void> {
     void runPayouts();
   }, PAYOUT_TICK_INTERVAL_MS);
   payoutInterval.unref();
+  const bonusWatchInterval = setInterval(() => {
+    void runBonusWatcher({ coordinator, db, rail }).catch((error) => {
+      logger.error({ err: error }, "starter-stake watcher pass failed");
+    });
+  }, config.BONUS_WATCH_INTERVAL_SECONDS * 1_000);
+  bonusWatchInterval.unref();
+  const fundingInterval = setInterval(() => {
+    void runFunding();
+  }, PAYOUT_TICK_INTERVAL_MS);
+  fundingInterval.unref();
   const heartbeatInterval = setInterval(() => {
     events.heartbeat();
   }, config.SSE_HEARTBEAT_SECONDS * 1_000);
@@ -496,6 +557,7 @@ export async function main(): Promise<void> {
   // Replay JSON is the one API response served compressed (server spec §6.6).
   app.use("/api/v1/games/:id/replay", jsonCompression());
   registerHumanRoutes(app, humanDeps);
+  registerBonusRoutes(app, humanDeps);
   registerEventRoutes(app, { ...authDeps, events });
   registerDiscoveryRoutes(app, {
     db,
@@ -534,6 +596,7 @@ export async function main(): Promise<void> {
     coordinator,
     cache: adminCache,
     reconciliation: operationalDeps,
+    funding: fundingDeps,
   });
   // Static SPA fallback is registered last so its `*` route never shadows an
   // API, discovery, or `/llms.txt` route (server spec §6.6).
@@ -551,6 +614,8 @@ export async function main(): Promise<void> {
   const shutdown = () => {
     clearInterval(poolInterval);
     clearInterval(payoutInterval);
+    clearInterval(bonusWatchInterval);
+    clearInterval(fundingInterval);
     clearInterval(heartbeatInterval);
     clearInterval(nudgeInterval);
     clearInterval(eventPruneInterval);

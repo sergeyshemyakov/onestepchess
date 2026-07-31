@@ -227,8 +227,8 @@ describe("payout executor — crash matrix (release gate: prepare/submit boundar
       amount: 20_000,
     });
 
-    // Broadcast reaches the chain (applied) but the node reply is ambiguous, so
-    // the executor never records 'submitted' — the crash-after-broadcast case.
+    // Broadcast reaches the chain (applied) but the node reply is ambiguous.
+    // Recovery owns the durable txid immediately and can confirm it safely.
     stack.rail.control.queueSubmitPrepared({
       ok: false,
       reason: "unavailable",
@@ -236,11 +236,11 @@ describe("payout executor — crash matrix (release gate: prepare/submit boundar
     });
     await drain(stack);
     const batchAfterCrash = stack.db.select().from(schema.payoutBatches).get();
-    expect(batchAfterCrash?.status).toBe("prepared");
+    expect(batchAfterCrash?.status).toBe("confirmed");
     // The chain already moved the money exactly once.
     expect(await treasuryUsdc(stack)).toBe(INITIAL - 20_000);
 
-    // Restart: the persisted exact bytes are safe to resubmit.
+    // Restart: the confirmed persisted bytes remain idempotent.
     stack.reboot();
     await drain(stack);
 
@@ -248,12 +248,12 @@ describe("payout executor — crash matrix (release gate: prepare/submit boundar
     expect(job?.status).toBe("confirmed");
     const batch = stack.db.select().from(schema.payoutBatches).get();
     expect(batch?.status).toBe("confirmed");
-    // Resubmitting the exact same payload is idempotent: no double debit.
+    // Recovery never produces a second debit.
     expect(await treasuryUsdc(stack)).toBe(INITIAL - 20_000);
     expect(batch?.payloadB64).toBe(batchAfterCrash?.payloadB64);
   });
 
-  it("resubmits the exact persisted bytes when the first broadcast never landed", async () => {
+  it("waits out an ambiguous unapplied broadcast before creating one replacement", async () => {
     const shared = createMockRailState({ usdcMicroUsdc: INITIAL });
     const stack = makeStack({}, shared);
     seedGame(stack.db, stack.now(), "gm_crash2");
@@ -271,10 +271,22 @@ describe("payout executor — crash matrix (release gate: prepare/submit boundar
     });
     await drain(stack);
     expect(await treasuryUsdc(stack)).toBe(INITIAL); // nothing left the chain yet
-    const prepared = stack.db.select().from(schema.payoutBatches).get();
-    expect(prepared?.status).toBe("prepared");
+    const submitted = stack.db.select().from(schema.payoutBatches).get();
+    expect(submitted?.status).toBe("submitted");
 
     stack.reboot();
+    await drain(stack);
+    expect(stack.db.select().from(schema.payoutJobs).get()?.status).toBe(
+      "submitted",
+    );
+    expect(await treasuryUsdc(stack)).toBe(INITIAL);
+
+    stack.setNow(stack.now() + 2_001);
+    await drain(stack);
+    expect(stack.db.select().from(schema.payoutJobs).get()?.status).toBe(
+      "pending",
+    );
+    stack.setNow(stack.now() + 1_001);
     await drain(stack);
 
     expect(stack.db.select().from(schema.payoutJobs).get()?.status).toBe(

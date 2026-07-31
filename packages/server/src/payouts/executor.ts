@@ -290,6 +290,11 @@ export async function runPayoutExecutor(
     } catch (error) {
       deps.metrics?.recordFacilitatorError();
       deps.logger.error({ err: error, batch: batch.id }, "payout submit threw");
+      await deps.coordinator.dispatch({
+        type: "PayoutSubmitted",
+        payload: { batchId: batch.id },
+        refIds: [batch.id],
+      });
       schedule(now + POLL_MS);
       continue;
     }
@@ -309,8 +314,14 @@ export async function runPayoutExecutor(
       schedule(now + POLL_MS);
     } else {
       deps.metrics?.recordFacilitatorError();
-      // Ambiguous: the exact bytes may already be on chain. Keep them and
-      // resubmit later — an identical payload is idempotent at the txid level.
+      // Ambiguous: the exact bytes may already be on chain. Treat them as
+      // submitted so recovery queries the durable txids and reconciliation
+      // includes the possible outbound transfer.
+      await deps.coordinator.dispatch({
+        type: "PayoutSubmitted",
+        payload: { batchId: batch.id },
+        refIds: [batch.id],
+      });
       schedule(now + POLL_MS);
     }
   }
@@ -346,7 +357,11 @@ export async function runPayoutExecutor(
         if (status.status === "confirmed") {
           confirmed = { txid: job.txid };
         } else if (status.status === "not_found") {
-          if (now >= batch.updatedAt + boundaryMs) missingStale = true;
+          const expired =
+            cfg.CAIP2 === "mock:local"
+              ? now >= batch.updatedAt + boundaryMs
+              : status.currentRound > batch.lastValidRound;
+          if (expired) missingStale = true;
           else stillPending = true;
         } else {
           stillPending = true;
@@ -365,7 +380,7 @@ export async function runPayoutExecutor(
           if (note !== null) confirmed = { txid: note.txid };
         } catch {
           deps.metrics?.recordFacilitatorError();
-          // note query unavailable — fall through to the next tick
+          stillPending = true;
         }
       }
       if (confirmed !== null) {

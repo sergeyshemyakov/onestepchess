@@ -16,7 +16,8 @@
     }
   },
   "dependencies": {
-    "@onestepchess/core": "workspace:*"
+    "@onestepchess/core": "workspace:*",
+    "algosdk": "^3.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.20.1",
