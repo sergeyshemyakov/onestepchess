@@ -129,6 +129,9 @@ importers:
         specifier: ^4.0.0
         version: 4.4.3
     devDependencies:
+      '@onestepchess/rail-mock':
+        specifier: workspace:*
+        version: link:../rail-mock
       '@types/node':
         specifier: ^22.20.1
         version: 22.20.1
