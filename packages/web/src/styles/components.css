@@ -1861,6 +1861,43 @@ body.fx .admin-shell svg.pc {
   margin-top: 20px;
   width: min(760px, calc(100% - 32px));
 }
+.starter-stake {
+  width: min(760px, calc(100% - 32px));
+  margin-top: 18px;
+  border: 1px solid var(--ph);
+  box-shadow: 0 0 18px color-mix(in oklab, var(--ph) 18%, transparent);
+  padding: 14px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 16px;
+}
+.starter-stake-title,
+.starter-stake-copy {
+  margin: 0 0 8px;
+}
+.starter-stake-mascot {
+  display: grid;
+  place-content: start center;
+  gap: 8px;
+}
+.starter-stake-rail {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  margin: 8px 0;
+  padding: 0;
+  font-size: 11px;
+}
+.starter-stake-rail li {
+  border-top: 2px solid var(--line);
+  color: var(--ph-dark);
+  padding-top: 4px;
+}
+.starter-stake-rail li.done {
+  border-color: var(--ph);
+  color: var(--ph);
+}
 .archivelink {
   font-size: 12.5px;
   margin-top: 8px;
@@ -2037,6 +2074,13 @@ body.fx .admin-shell svg.pc {
   .archive,
   .replaypage {
     padding: 14px 14px;
+  }
+  .starter-stake {
+    grid-template-columns: 1fr;
+  }
+  .starter-stake-mascot {
+    display: flex;
+    justify-content: center;
   }
 }
 .plyjump,

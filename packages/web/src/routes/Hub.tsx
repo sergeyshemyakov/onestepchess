@@ -14,6 +14,7 @@ import { GamePane } from "../components/GamePane.jsx";
 import { PlayerStatus } from "../components/PlayerStatus.jsx";
 import { PromoStrip } from "../components/PromoStrip.jsx";
 import { ShareSheet } from "../components/ShareSheet.jsx";
+import { StarterStakeBanner } from "../components/StarterStakeBanner.jsx";
 import {
   finishedMovesLabel,
   isFinishedStakedItem,
@@ -43,6 +44,9 @@ import { useLive } from "../live/LiveContext.jsx";
 import { PlayView } from "../play/PlayView.jsx";
 import { usePlayFlow } from "../play/usePlayFlow.js";
 import { CachedDigest } from "../replay/CachedDigest.jsx";
+import { loadWalletModule } from "../wallet/lazy.js";
+import { PaymentWalletSheet } from "../wallet/PaymentWalletSheet.jsx";
+import type { ConnectedWallet } from "../wallet/provider.js";
 import { playCtaState } from "./hubCta.js";
 
 /** F-W3 active hero/minicards: everything derives from the item's own
@@ -281,12 +285,60 @@ export function Hub(props: {
   const { profile, ongoing, finished } = live;
   const [pane, setPane] = useState<"active" | "finished">("active");
   const [gamePaneDismissed, setGamePaneDismissed] = useState(false);
+  const [walletSheetOpen, setWalletSheetOpen] = useState(false);
+  const walletRequest = useRef<{
+    readonly promise: Promise<ConnectedWallet>;
+    readonly resolve: (wallet: ConnectedWallet) => void;
+    readonly reject: (reason: Error) => void;
+  } | null>(null);
   const handledLiveSeq = useRef(0);
+
+  const getWallet = useCallback(async (): Promise<ConnectedWallet> => {
+    const module = await loadWalletModule();
+    const connected = module.current();
+    if (connected?.address === props.player.address) return connected;
+    if (connected !== null) await module.disconnect().catch(() => undefined);
+    const pending = walletRequest.current;
+    if (pending !== null) return pending.promise;
+    let resolvePromise: (wallet: ConnectedWallet) => void = () => undefined;
+    let rejectPromise: (reason: Error) => void = () => undefined;
+    const promise = new Promise<ConnectedWallet>((resolve, reject) => {
+      resolvePromise = resolve;
+      rejectPromise = reject;
+    });
+    walletRequest.current = {
+      promise,
+      resolve: resolvePromise,
+      reject: rejectPromise,
+    };
+    setWalletSheetOpen(true);
+    return promise;
+  }, [props.player.address]);
+
+  const cancelWallet = useCallback(() => {
+    const error = new Error("wallet connection cancelled");
+    error.name = "AbortError";
+    walletRequest.current?.reject(error);
+    walletRequest.current = null;
+    setWalletSheetOpen(false);
+  }, []);
+
+  useEffect(
+    () => () => {
+      const error = new Error("wallet request closed");
+      error.name = "AbortError";
+      walletRequest.current?.reject(error);
+      walletRequest.current = null;
+    },
+    [],
+  );
+
   const flow = usePlayFlow({
     client: props.client,
     meta: props.meta,
     address: props.player.address,
     enabled: true,
+    getPaymentSigner: getWallet,
   });
   const { state, send, refreshClaim, refreshStatus } = flow;
   const { client } = props;
@@ -440,6 +492,16 @@ export function Hub(props: {
           </p>
         ) : null}
 
+        {profile === null ? null : (
+          <StarterStakeBanner
+            client={client}
+            meta={props.meta}
+            profile={profile}
+            getWallet={getWallet}
+            onRefresh={live.refreshAll}
+          />
+        )}
+
         <div className="panes" data-testid="hub-panes">
           <div className="tabrow" role="tablist">
             <button
@@ -497,6 +559,17 @@ export function Hub(props: {
         ) : (
           playView
         )
+      ) : null}
+      {walletSheetOpen ? (
+        <PaymentWalletSheet
+          address={props.player.address}
+          onConnected={(wallet) => {
+            walletRequest.current?.resolve(wallet);
+            walletRequest.current = null;
+            setWalletSheetOpen(false);
+          }}
+          onCancel={cancelWallet}
+        />
       ) : null}
     </AppShell>
   );

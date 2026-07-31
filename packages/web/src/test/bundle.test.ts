@@ -128,6 +128,23 @@ describe("root bundle static import graph (§5.6)", () => {
     }
   });
 
+  it("one_web_artifact_contains_no_network_selector_or_profile_specific_name", () => {
+    const visibleSources = sourceFiles(SRC).filter((file) =>
+      ["/routes/", "/components/", "/play/"].some((segment) =>
+        file.replaceAll("\\", "/").includes(segment),
+      ),
+    );
+    for (const file of visibleSources) {
+      expect(readFileSync(file, "utf8").toLowerCase()).not.toMatch(
+        /\b(testnet|mainnet)\b/,
+      );
+    }
+    const x402 = readFileSync(join(SRC, "wallet/x402.ts"), "utf8");
+    expect(x402).toContain("args.meta.network.algodUrl");
+    expect(x402).not.toContain("TESTNET_CAIP2");
+    expect(x402).not.toContain("MAINNET_CAIP2");
+  });
+
   it("public_components_never_reference_admin_route_or_chunk", () => {
     const references = sourceFiles(SRC).filter((file) =>
       readFileSync(file, "utf8").includes("/admin"),

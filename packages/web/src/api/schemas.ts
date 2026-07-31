@@ -89,6 +89,14 @@ export const playerSchema = z.object({
 });
 export type PlayerView = z.infer<typeof playerSchema>;
 
+export const bonusStatusSchema = z.enum([
+  "available",
+  "claimed",
+  "opted_in",
+  "funded",
+]);
+export type BonusStatus = z.infer<typeof bonusStatusSchema>;
+
 const quotaWindowSchema = z.object({
   limit: nonNegativeIntegerSchema,
   remaining: nonNegativeIntegerSchema,
@@ -127,8 +135,25 @@ export const profileSchema = playerSchema.extend({
       qualified: nonNegativeIntegerSchema,
     })
     .optional(),
+  bonus: z.object({ status: bonusStatusSchema }).optional(),
 });
 export type ProfileView = z.infer<typeof profileSchema>;
+
+export const bonusClaimResponseSchema = z.object({
+  bonus: z.object({
+    status: z.literal("claimed"),
+    claimedAt: isoTimestampSchema,
+  }),
+});
+export type BonusClaimResponse = z.infer<typeof bonusClaimResponseSchema>;
+
+export const bonusOptInTxnResponseSchema = z.object({
+  unsignedTxnB64: z.string().min(1),
+});
+
+export const bonusOptInResponseSchema = z.object({
+  status: z.literal("watching"),
+});
 
 export const gameResultSchema = z.enum(["white", "black", "draw", "aborted"]);
 export type GameResult = z.infer<typeof gameResultSchema>;
@@ -582,8 +607,6 @@ export const adminBonusesSchema = gamesPageSchema(adminBonusSchema).extend({
   totalClaimed: nonNegativeIntegerSchema,
   totalAlgoMicro: nonNegativeIntegerSchema,
   totalUsdcMicro: nonNegativeIntegerSchema,
-  available: z.boolean().optional(),
-  reason: z.string().optional(),
 });
 export type AdminBonuses = z.infer<typeof adminBonusesSchema>;
 

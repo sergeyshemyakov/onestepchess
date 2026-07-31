@@ -159,6 +159,7 @@ describe("wallet auth flow (#28)", () => {
     return {
       listWallets: () => [{ id: "mnemonic", name: "dev wallet (mnemonic)" }],
       connect: vi.fn(async () => wallet),
+      current: () => null,
       disconnect: vi.fn(async () => undefined),
     };
   }

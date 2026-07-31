@@ -283,6 +283,8 @@ export function BonusesPanel(props: {
   const [page, setPage] = useState(1);
   const [data, setData] = useState<AdminBonuses | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState<string | null>(null);
+  const [retryResult, setRetryResult] = useState<Record<string, string>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -306,7 +308,6 @@ export function BonusesPanel(props: {
           <h2 id="admin-bonuses-title">BONUSES</h2>
           <p>manual starter-stake grift review</p>
         </div>
-        <span className="badge demo">DISABLED UNTIL RELEASE 4</span>
       </header>
       {error === null ? null : (
         <p className="admin-error" role="alert">
@@ -317,9 +318,6 @@ export function BonusesPanel(props: {
         <p className="dim">loading bonus status…</p>
       ) : (
         <>
-          <p className="admin-notice">
-            {data.reason ?? "starter-stake funding is not active"}
-          </p>
           <div className="admin-metrics">
             <Metric label="today / daily cap">
               {data.todayClaimed} / {data.dailyCap}
@@ -343,6 +341,7 @@ export function BonusesPanel(props: {
                     <th>status</th>
                     <th>funding</th>
                     <th>staked moves / points</th>
+                    <th>operations</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -360,7 +359,10 @@ export function BonusesPanel(props: {
                       </td>
                       <td>
                         {item.status}
-                        <small>{formatLocalTime(item.claimedAt)}</small>
+                        <small>claimed {formatLocalTime(item.claimedAt)}</small>
+                        {item.fundedAt === null ? null : (
+                          <small>funded {formatLocalTime(item.fundedAt)}</small>
+                        )}
                       </td>
                       <td>
                         {[item.algoTxid, item.usdcTxid].map((txid) =>
@@ -382,6 +384,49 @@ export function BonusesPanel(props: {
                       <td>
                         {item.lifetimeStakedMoves} / {item.points}
                         <small>referred by {item.referredBy ?? "nobody"}</small>
+                      </td>
+                      <td>
+                        {item.status === "funded" ? (
+                          <span className="dim">complete</span>
+                        ) : (
+                          <button
+                            type="button"
+                            className="btn mini"
+                            disabled={retrying !== null}
+                            onClick={() => {
+                              setRetrying(item.address);
+                              setError(null);
+                              props.client
+                                .retryAdminBonus(item.address)
+                                .then((result) => {
+                                  setRetryResult((current) => ({
+                                    ...current,
+                                    [item.address]: `${result.jobs} funding leg${result.jobs === 1 ? "" : "s"} re-armed`,
+                                  }));
+                                  return props.client.getAdminBonuses(page);
+                                })
+                                .then(setData)
+                                .catch((reason) =>
+                                  setError(
+                                    errorHint(
+                                      reason,
+                                      "starter-stake retry failed",
+                                    ),
+                                  ),
+                                )
+                                .finally(() => setRetrying(null));
+                            }}
+                          >
+                            {retrying === item.address
+                              ? "checking…"
+                              : "retry funding"}
+                          </button>
+                        )}
+                        {retryResult[item.address] === undefined ? null : (
+                          <small role="status">
+                            {retryResult[item.address]}
+                          </small>
+                        )}
                       </td>
                     </tr>
                   ))}

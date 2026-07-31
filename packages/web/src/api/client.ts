@@ -7,6 +7,10 @@ import {
   retryAfterSecondsFrom,
 } from "./http.js";
 import {
+  type BonusClaimResponse,
+  bonusClaimResponseSchema,
+  bonusOptInResponseSchema,
+  bonusOptInTxnResponseSchema,
   type ChallengeResponse,
   type ClaimStatus,
   type ClaimView,
@@ -174,6 +178,31 @@ export function createApiClient(options: ApiClientOptions = {}) {
         z.object({ player: playerSchema }),
       );
       return parsed.player;
+    },
+
+    async claimBonus(): Promise<BonusClaimResponse> {
+      return json(
+        await request("/my/bonus/claim", { method: "POST" }),
+        bonusClaimResponseSchema,
+      );
+    },
+
+    async getBonusOptInTxn(): Promise<string> {
+      const parsed = await json(
+        await request("/my/bonus/optin-txn"),
+        bonusOptInTxnResponseSchema,
+      );
+      return parsed.unsignedTxnB64;
+    },
+
+    async submitBonusOptIn(signedTxnB64: string): Promise<void> {
+      await json(
+        await request("/my/bonus/optin", {
+          method: "POST",
+          body: { signedTxnB64 },
+        }),
+        bonusOptInResponseSchema,
+      );
     },
 
     async getOngoingGames(page: number): Promise<GamesPage<OngoingGameItem>> {

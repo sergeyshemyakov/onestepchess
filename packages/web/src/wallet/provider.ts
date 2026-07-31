@@ -86,6 +86,7 @@ export type ConnectedWallet = {
 export type WalletModule = {
   readonly listWallets: () => readonly WalletChoice[];
   readonly connect: (id: string) => Promise<ConnectedWallet>;
+  readonly current: () => ConnectedWallet | null;
   readonly disconnect: () => Promise<void>;
 };
 
@@ -209,6 +210,45 @@ export function createWalletModule(
     [WalletId.MNEMONIC]: "dev wallet (mnemonic)",
   };
 
+  let connected: ConnectedWallet | null = null;
+
+  function connectedWallet(
+    wallet: (typeof manager.wallets)[number],
+    address: string,
+  ): ConnectedWallet {
+    const signData = wallet.canSignData
+      ? async (
+          dataB64: string,
+          metadata: { readonly scope: number; readonly encoding: string },
+        ) => {
+          if (metadata.scope !== ScopeType.AUTH) {
+            throw new Error("wallet auth metadata has an unsupported scope");
+          }
+          const signed = await wallet.signData(dataB64, {
+            scope: ScopeType.AUTH,
+            encoding: metadata.encoding,
+          });
+          return {
+            signatureB64: bytesToBase64(signed.signature),
+            authenticatorDataB64: bytesToBase64(signed.authenticatorData),
+          };
+        }
+      : undefined;
+    return {
+      address,
+      walletName: names[wallet.id] ?? wallet.metadata.name,
+      signTransactions: async (txns) => {
+        const signed = await wallet.signTransactions([...txns]);
+        const bytes = signed.find((entry) => entry !== null);
+        if (bytes === null || bytes === undefined) {
+          throw new Error("wallet returned no signature");
+        }
+        return bytes;
+      },
+      ...(signData === undefined ? {} : { signData }),
+    };
+  }
+
   return {
     listWallets: () =>
       manager.wallets.map((wallet) => ({
@@ -228,42 +268,16 @@ export function createWalletModule(
       );
       const address = wallet.activeAccount?.address ?? accounts[0]?.address;
       if (address === undefined) throw new Error("wallet connected no account");
-      const signData = wallet.canSignData
-        ? async (
-            dataB64: string,
-            metadata: { readonly scope: number; readonly encoding: string },
-          ) => {
-            if (metadata.scope !== ScopeType.AUTH) {
-              throw new Error("wallet auth metadata has an unsupported scope");
-            }
-            const signed = await wallet.signData(dataB64, {
-              scope: ScopeType.AUTH,
-              encoding: metadata.encoding,
-            });
-            return {
-              signatureB64: bytesToBase64(signed.signature),
-              authenticatorDataB64: bytesToBase64(signed.authenticatorData),
-            };
-          }
-        : undefined;
-      return {
-        address,
-        walletName: names[wallet.id] ?? wallet.metadata.name,
-        signTransactions: async (txns) => {
-          const signed = await wallet.signTransactions([...txns]);
-          const bytes = signed.find((entry) => entry !== null);
-          if (bytes === null || bytes === undefined) {
-            throw new Error("wallet returned no signature");
-          }
-          return bytes;
-        },
-        ...(signData === undefined ? {} : { signData }),
-      };
+      connected = connectedWallet(wallet, address);
+      return connected;
     },
+
+    current: () => connected,
 
     async disconnect() {
       const active = manager.activeWallet;
       if (active !== null) await active.disconnect();
+      connected = null;
     },
   };
 }

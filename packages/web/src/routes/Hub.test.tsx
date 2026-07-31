@@ -189,7 +189,7 @@ describe("I7 leak tests (#31)", () => {
     expect(view.container.querySelector(".boardwrap + .console")).toBeNull();
   });
 
-  it("CONFIRM and staked RECEIPT render no game identity", async () => {
+  it("web_payment_receipt_uses_durable_txid_and_configured_explorer_without_game_identity", async () => {
     const receipt: MoveReceipt = {
       ...demoReceipt,
       debitMicroUsdc: 10_000,
@@ -237,6 +237,11 @@ describe("I7 leak tests (#31)", () => {
     fireEvent.click(screen.getByRole("button", { name: /sign & commit/ }));
     await screen.findByTestId("receipt");
     expect(screen.getByTestId("receipt").textContent).toContain("mocktx_9");
+    expect(
+      screen
+        .getByTestId("receipt")
+        .querySelector<HTMLAnchorElement>('a[href*="mocktx_9"]')?.href,
+    ).toBe("https://explorer.example/tx/mocktx_9");
     assertNoGameIdentity(view.container, IDENTITY_SEEDS);
   });
 });
