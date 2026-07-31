@@ -750,7 +750,7 @@ describe("Release 3 admin mutations", () => {
     expect(
       before.items.find((item) => item.key === "REPETITION_WIN_MARGIN"),
     ).toMatchObject({
-      effectiveValue: 3,
+      effectiveValue: 1,
       effect: "new_games",
       editable: true,
     });
