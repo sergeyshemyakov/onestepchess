@@ -1,4 +1,4 @@
-import type { z } from "zod";
+import { z } from "zod";
 import { jsonRequestInit, parseJson, responseError } from "../api/http.js";
 import {
   type AdminActivity,
@@ -91,6 +91,20 @@ export function createAdminClient(
       return json(
         await request(`/admin/bonuses?page=${page}`),
         adminBonusesSchema,
+      );
+    },
+
+    async retryAdminBonus(
+      address: string,
+    ): Promise<{ readonly status: "pending"; readonly jobs: number }> {
+      return json(
+        await request(`/admin/bonuses/${encodeURIComponent(address)}/retry`, {
+          method: "POST",
+        }),
+        z.object({
+          status: z.literal("pending"),
+          jobs: z.number().int().positive(),
+        }),
       );
     },
 

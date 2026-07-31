@@ -26,6 +26,7 @@ const REF_KEY = "osc.ref";
 const CHAMP_KEY = "osc.champNotice";
 const TOWER_TEASER_KEY = "osc.towerTeaserDismissedAt";
 const LAST_SEEN_FINISHED_KEY = "osc.lastSeenFinishedAt";
+const BONUS_DONE_KEY = "osc.bonusDone";
 export const TOWER_TEASER_COOLDOWN_MS = 24 * 60 * 60 * 1_000;
 
 function safeGet(store: Storage, key: string): string | null {
@@ -142,4 +143,12 @@ export function readLastSeenFinishedAt(): string | null {
 
 export function writeLastSeenFinishedAt(iso: string): void {
   safeSet(localStorage, LAST_SEEN_FINISHED_KEY, iso);
+}
+
+export function starterStakeAcknowledged(): boolean {
+  return safeGet(localStorage, BONUS_DONE_KEY) === "acked";
+}
+
+export function acknowledgeStarterStake(): void {
+  safeSet(localStorage, BONUS_DONE_KEY, "acked");
 }

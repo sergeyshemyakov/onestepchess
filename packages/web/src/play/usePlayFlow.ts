@@ -2,6 +2,7 @@ import { useCallback, useEffect, useReducer, useRef } from "react";
 import type { ApiClient, CreateClaimResult } from "../api/client.js";
 import type { ClaimStatus, ErrorEnvelope, Meta, Move } from "../api/schemas.js";
 import { readClaimDraft } from "../lib/storage.js";
+import type { ConnectedWallet } from "../wallet/provider.js";
 import { syncDraft } from "./draft.js";
 import {
   initialPlayState,
@@ -34,6 +35,7 @@ export function usePlayFlow(args: {
   readonly address: string | null;
   readonly enabled: boolean;
   readonly guest?: boolean;
+  readonly getPaymentSigner?: () => Promise<ConnectedWallet>;
 }) {
   const [state, dispatch] = useReducer(playReducer, initialPlayState);
   const { client, address, enabled } = args;
@@ -263,6 +265,9 @@ export function usePlayFlow(args: {
           stakeMicroUsdc: claim.stakeMicroUsdc,
           meta,
           client,
+          ...(args.getPaymentSigner === undefined
+            ? {}
+            : { getSigner: args.getPaymentSigner }),
           onPhase: (phase) => {
             if (phase === "settling")
               dispatch({ type: "HEADER_READY", header: "" });
@@ -296,12 +301,15 @@ export function usePlayFlow(args: {
           case "expired":
             dispatch({ type: "CLAIM_EXPIRED" });
             break;
-          case "unsupported":
+          case "wallet_rejected":
+            dispatch({ type: "WALLET_REJECTED" });
+            break;
+          case "wallet_disconnected":
             dispatch({
               type: "PAYMENT_FAILED",
               envelope: {
-                error: "UNSUPPORTED",
-                hint: outcome.reason,
+                error: "WALLET_DISCONNECTED",
+                hint: "reconnect the wallet used for this account",
                 docs: "",
               },
             });

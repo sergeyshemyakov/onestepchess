@@ -1,3 +1,10 @@
+import { ExactAvmScheme } from "@x402-avm/avm";
+import { encodePaymentSignatureHeader } from "@x402-avm/core/http";
+import type {
+  PaymentPayload,
+  PaymentRequirements as X402PaymentRequirements,
+} from "@x402-avm/core/types";
+import algosdk from "algosdk";
 import type { ApiClient } from "../api/client.js";
 import type {
   ErrorEnvelope,
@@ -7,6 +14,7 @@ import type {
   PaymentRequirements,
 } from "../api/schemas.js";
 import { paymentRequiredSchema } from "../api/schemas.js";
+import type { ConnectedWallet } from "./provider.js";
 
 // §5.6 — the explicit x402 client. The mock branch (rail spec §5.4) is a
 // pinned wire contract implemented from the spec: it synthesizes the V2
@@ -16,6 +24,7 @@ import { paymentRequiredSchema } from "../api/schemas.js";
 /** Signed headers cached in memory per claim — retries resend the identical
  * bytes (PAYMENT_IN_FLIGHT discipline); never persisted (§5.5). */
 const headerCache = new Map<string, string>();
+const staleRebuilds = new Set<string>();
 
 export function cachedHeaderFor(claimId: string): string | undefined {
   return headerCache.get(claimId);
@@ -23,6 +32,7 @@ export function cachedHeaderFor(claimId: string): string | undefined {
 
 export function resetHeaderCacheForTests(): void {
   headerCache.clear();
+  staleRebuilds.clear();
 }
 
 function decodeBase64Json(encoded: string): unknown {
@@ -77,7 +87,11 @@ export function validateChallenge(
   }
   let resourcePath: string;
   try {
-    resourcePath = new URL(required.resource.url).pathname;
+    const resource = new URL(required.resource.url);
+    if (resource.search !== "" || resource.hash !== "") {
+      return { ok: false, reason: "challenge resource is not canonical" };
+    }
+    resourcePath = resource.pathname;
   } catch {
     return { ok: false, reason: "challenge resource is not a URL" };
   }
@@ -112,7 +126,7 @@ export function validateChallenge(
     const feePayer = requirement.extra?.feePayer;
     if (
       typeof feePayer !== "string" ||
-      !/^[A-Z2-7]{58}$/.test(feePayer) ||
+      !algosdk.isValidAddress(feePayer) ||
       requirement.extra?.decimals !== 6
     ) {
       return {
@@ -122,6 +136,208 @@ export function validateChallenge(
     }
   }
   return { ok: true, required, requirement };
+}
+
+function encodedGenesis(transaction: algosdk.Transaction): string {
+  return bytesToBase64(transaction.genesisHash ?? new Uint8Array());
+}
+
+function noteText(transaction: algosdk.Transaction): string {
+  return new TextDecoder().decode(transaction.note ?? new Uint8Array());
+}
+
+function assertNoUnsafeFields(transaction: algosdk.Transaction): void {
+  if (
+    transaction.rekeyTo !== undefined ||
+    (transaction.lease !== undefined && transaction.lease.length > 0) ||
+    transaction.payment?.closeRemainderTo !== undefined ||
+    transaction.assetTransfer?.closeRemainderTo !== undefined ||
+    transaction.assetTransfer?.assetSender !== undefined
+  ) {
+    throw new Error("exact payment contains an unsafe transaction field");
+  }
+}
+
+/** The x402 library builds the group, but this guard owns the browser trust
+ * boundary. It runs inside the signer adapter before wallet approval. */
+export function guardExactPaymentGroup(input: {
+  readonly txns: Uint8Array[];
+  readonly indexesToSign?: number[];
+  readonly requirement: PaymentRequirements;
+  readonly signerAddress: string;
+}): algosdk.Transaction[] {
+  if (
+    input.txns.length !== 2 ||
+    input.indexesToSign?.length !== 1 ||
+    input.indexesToSign[0] !== 1
+  ) {
+    throw new Error(
+      "exact payment must contain two grouped transactions and one client signature",
+    );
+  }
+  let transactions: algosdk.Transaction[];
+  try {
+    transactions = input.txns.map((bytes) =>
+      algosdk.decodeUnsignedTransaction(bytes),
+    );
+  } catch {
+    throw new Error("exact payment group is malformed");
+  }
+  const feeTransaction = transactions[0];
+  const paymentTransaction = transactions[1];
+  const feePayer = input.requirement.extra?.feePayer;
+  const genesis = input.requirement.network.split(":")[1] ?? "";
+  if (
+    feeTransaction === undefined ||
+    paymentTransaction === undefined ||
+    feeTransaction.type !== "pay" ||
+    feeTransaction.payment === undefined ||
+    paymentTransaction.type !== "axfer" ||
+    paymentTransaction.assetTransfer === undefined ||
+    typeof feePayer !== "string" ||
+    feeTransaction.sender.toString() !== feePayer ||
+    feeTransaction.payment.receiver.toString() !== feePayer ||
+    feeTransaction.payment.amount !== 0n ||
+    feeTransaction.fee < 2_000n ||
+    paymentTransaction.sender.toString() !== input.signerAddress ||
+    paymentTransaction.assetTransfer.receiver.toString() !==
+      input.requirement.payTo ||
+    paymentTransaction.assetTransfer.amount.toString() !==
+      input.requirement.amount ||
+    paymentTransaction.assetTransfer.assetIndex.toString() !==
+      input.requirement.asset ||
+    paymentTransaction.fee !== 0n ||
+    paymentTransaction.firstValid > paymentTransaction.lastValid ||
+    paymentTransaction.lastValid - paymentTransaction.firstValid > 1_000n ||
+    feeTransaction.firstValid !== paymentTransaction.firstValid ||
+    feeTransaction.lastValid !== paymentTransaction.lastValid ||
+    encodedGenesis(feeTransaction) !== genesis ||
+    encodedGenesis(paymentTransaction) !== genesis ||
+    feeTransaction.genesisID !== paymentTransaction.genesisID ||
+    feeTransaction.group === undefined ||
+    paymentTransaction.group === undefined ||
+    !bytesEqual(feeTransaction.group, paymentTransaction.group) ||
+    !noteText(feeTransaction).startsWith("x402-fee-payer-") ||
+    !noteText(paymentTransaction).startsWith("x402-payment-v2-")
+  ) {
+    throw new Error("exact payment group failed the local trust guard");
+  }
+  assertNoUnsafeFields(feeTransaction);
+  assertNoUnsafeFields(paymentTransaction);
+  return transactions;
+}
+
+async function buildExactHeader(input: {
+  readonly required: PaymentRequired;
+  readonly requirement: PaymentRequirements;
+  readonly getSigner: () => Promise<ConnectedWallet>;
+  readonly expectedAddress: string;
+  readonly algodUrl: string;
+  readonly onPhase?: (phase: "building" | "signing" | "settling") => void;
+}): Promise<string> {
+  const wallet = await input.getSigner();
+  if (wallet.address !== input.expectedAddress) {
+    throw new Error("connected wallet does not match this account");
+  }
+  input.onPhase?.("signing");
+  const avmSigner = {
+    address: wallet.address,
+    signTransactions: async (
+      txns: Uint8Array[],
+      indexesToSign?: number[],
+    ): Promise<(Uint8Array | null)[]> => {
+      const transactions = guardExactPaymentGroup({
+        txns,
+        indexesToSign,
+        requirement: input.requirement,
+        signerAddress: wallet.address,
+      });
+      const clientTransaction = transactions[1];
+      if (clientTransaction === undefined) {
+        throw new Error("exact payment client transaction is missing");
+      }
+      const signed = await wallet.signTransactions([clientTransaction]);
+      return [null, signed];
+    },
+  };
+  const scheme = new ExactAvmScheme(avmSigner, {
+    algodUrl: input.algodUrl,
+  });
+  const built = await scheme.createPaymentPayload(
+    2,
+    input.requirement as X402PaymentRequirements,
+  );
+  const payload: PaymentPayload = {
+    x402Version: 2,
+    resource: input.required.resource,
+    accepted: input.requirement as X402PaymentRequirements,
+    payload: built.payload,
+  };
+  return encodePaymentSignatureHeader(payload);
+}
+
+async function headerFromChallenge(
+  challengeHeader: string,
+  args: Parameters<typeof payMove>[0],
+): Promise<
+  | { readonly ok: true; readonly header: string }
+  | { readonly ok: false; readonly outcome: PayMoveOutcome }
+> {
+  const validated = validateChallenge(challengeHeader, args);
+  if (!validated.ok) {
+    return {
+      ok: false,
+      outcome: {
+        kind: "failed",
+        envelope: challengeEnvelope(validated.reason),
+      },
+    };
+  }
+  if (validated.requirement.scheme === "mock") {
+    return {
+      ok: true,
+      header: synthesizeMockHeader({
+        required: validated.required,
+        requirement: validated.requirement,
+        from: args.address,
+      }),
+    };
+  }
+  if (validated.requirement.scheme !== "exact") {
+    return {
+      ok: false,
+      outcome: {
+        kind: "failed",
+        envelope: challengeEnvelope(
+          `unknown payment scheme: ${validated.requirement.scheme}`,
+        ),
+      },
+    };
+  }
+  if (args.getSigner === undefined) {
+    return {
+      ok: false,
+      outcome: { kind: "wallet_disconnected" },
+    };
+  }
+  try {
+    return {
+      ok: true,
+      header: await buildExactHeader({
+        required: validated.required,
+        requirement: validated.requirement,
+        getSigner: args.getSigner,
+        expectedAddress: args.address,
+        algodUrl: args.meta.network.algodUrl,
+        ...(args.onPhase === undefined ? {} : { onPhase: args.onPhase }),
+      }),
+    };
+  } catch (cause) {
+    if (cause instanceof Error && cause.name === "AbortError") {
+      return { ok: false, outcome: { kind: "wallet_rejected" } };
+    }
+    throw cause;
+  }
 }
 
 /** Rail spec §5.4: the pinned mock payload with a client-unique nonce. */
@@ -154,7 +370,8 @@ export type PayMoveOutcome =
   | { readonly kind: "expired" }
   | { readonly kind: "paused" }
   | { readonly kind: "illegal"; readonly envelope: ErrorEnvelope }
-  | { readonly kind: "unsupported"; readonly reason: string };
+  | { readonly kind: "wallet_rejected" }
+  | { readonly kind: "wallet_disconnected" };
 
 export async function payMove(args: {
   readonly claimId: string;
@@ -164,7 +381,7 @@ export async function payMove(args: {
   readonly meta: Meta;
   readonly client: Pick<ApiClient, "postMove">;
   /** Lazy wallet signer — never called for the mock scheme. */
-  readonly getSigner?: () => Promise<unknown>;
+  readonly getSigner?: () => Promise<ConnectedWallet>;
   readonly onPhase?: (phase: "building" | "signing" | "settling") => void;
 }): Promise<PayMoveOutcome> {
   const cached = headerCache.get(args.claimId);
@@ -179,33 +396,9 @@ export async function payMove(args: {
       case "receipt":
         return { kind: "receipt", receipt: first.receipt };
       case "payment_required": {
-        const validated = validateChallenge(first.challengeHeader, args);
-        if (!validated.ok) {
-          return {
-            kind: "failed",
-            envelope: challengeEnvelope(validated.reason),
-          };
-        }
-        const scheme = validated.requirement.scheme;
-        if (scheme === "mock") {
-          // Dev/CI-only wire contract: synthesize, skip wallet entirely.
-          header = synthesizeMockHeader({
-            required: validated.required,
-            requirement: validated.requirement,
-            from: args.address,
-          });
-        } else if (scheme === "exact") {
-          // Real payments are Release 4 — no silent fallthrough (§1.1).
-          return {
-            kind: "unsupported",
-            reason: "real payments are not supported in this build",
-          };
-        } else {
-          return {
-            kind: "failed",
-            envelope: challengeEnvelope(`unknown payment scheme: ${scheme}`),
-          };
-        }
+        const built = await headerFromChallenge(first.challengeHeader, args);
+        if (!built.ok) return built.outcome;
+        header = built.header;
         headerCache.set(args.claimId, header);
         break;
       }
@@ -238,6 +431,7 @@ export async function payMove(args: {
   switch (settled.kind) {
     case "receipt":
       headerCache.delete(args.claimId);
+      staleRebuilds.delete(args.claimId);
       return { kind: "receipt", receipt: settled.receipt };
     case "pending":
       // Ambiguous outcome: keep the exact bytes, poll status, never re-sign.
@@ -245,8 +439,23 @@ export async function payMove(args: {
     case "in_flight":
       return { kind: "in_flight" };
     case "payment_failed":
-      // Definitive failure burns this payload — a retry builds a fresh one.
       headerCache.delete(args.claimId);
+      if (
+        settled.code === "PAYMENT_INVALID" &&
+        !staleRebuilds.has(args.claimId)
+      ) {
+        staleRebuilds.add(args.claimId);
+        if (settled.challengeHeader !== null) {
+          const rebuilt = await headerFromChallenge(
+            settled.challengeHeader,
+            args,
+          );
+          if (!rebuilt.ok) return rebuilt.outcome;
+          headerCache.set(args.claimId, rebuilt.header);
+          return payMove(args);
+        }
+        return payMove(args);
+      }
       return { kind: "failed", envelope: settled.envelope };
     case "unavailable":
       // Definitively uncharged; the same bytes may be resent later.
@@ -256,6 +465,7 @@ export async function payMove(args: {
       };
     case "expired":
       headerCache.delete(args.claimId);
+      staleRebuilds.delete(args.claimId);
       return { kind: "expired" };
     case "paused":
       return { kind: "paused" };
@@ -263,14 +473,33 @@ export async function payMove(args: {
       headerCache.delete(args.claimId);
       return { kind: "illegal", envelope: settled.envelope };
     case "payment_required":
-      // A fresh challenge after we sent a header means the intent vanished —
-      // treat as a failed payment and rebuild next attempt.
       headerCache.delete(args.claimId);
+      if (!staleRebuilds.has(args.claimId)) {
+        staleRebuilds.add(args.claimId);
+        const rebuilt = await headerFromChallenge(
+          settled.challengeHeader,
+          args,
+        );
+        if (!rebuilt.ok) return rebuilt.outcome;
+        headerCache.set(args.claimId, rebuilt.header);
+        return payMove(args);
+      }
       return {
         kind: "failed",
         envelope: challengeEnvelope("payment was not accepted — try again"),
       };
   }
+}
+
+function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((value, index) => value === right[index]);
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
 }
 
 function challengeEnvelope(reason: string): ErrorEnvelope {

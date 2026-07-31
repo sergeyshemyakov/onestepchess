@@ -108,8 +108,6 @@ const bonusesFixture: AdminBonuses = {
   page: 1,
   pageCount: 0,
   total: 0,
-  available: false,
-  reason: "Release 4 feature unavailable",
 };
 
 const gameDossierFixture: AdminGameDossier = {
@@ -273,6 +271,10 @@ function adminClient(overrides: Partial<AdminClient> = {}): AdminClient {
       window,
     })),
     getAdminBonuses: vi.fn(async () => bonusesFixture),
+    retryAdminBonus: vi.fn(async () => ({
+      status: "pending" as const,
+      jobs: 1,
+    })),
     getAdminErrors: vi.fn(async () => ({
       items: [
         {
@@ -444,8 +446,10 @@ describe("admin read panels (#73)", () => {
     );
 
     fireEvent.click(screen.getByRole("tab", { name: "BONUSES" }));
-    expect(await screen.findByText("DISABLED UNTIL RELEASE 4")).not.toBeNull();
-    expect(screen.getByText("Release 4 feature unavailable")).not.toBeNull();
+    expect(
+      await screen.findByRole("heading", { name: "BONUSES" }),
+    ).not.toBeNull();
+    expect(screen.getByText("today / daily cap")).not.toBeNull();
 
     fireEvent.click(screen.getByRole("tab", { name: "HEALTH" }));
     expect(await screen.findByText("PAYOUT_FAILED")).not.toBeNull();
@@ -520,6 +524,55 @@ describe("admin read panels (#73)", () => {
       "7",
     );
     expect(screen.getByText("change history (1)")).not.toBeNull();
+  });
+
+  it("bonuses_panel_renders_live_funding_status_and_manual_review_fields_without_secret_data", async () => {
+    const liveBonuses: AdminBonuses = {
+      ...bonusesFixture,
+      todayClaimed: 1,
+      totalClaimed: 1,
+      totalAlgoMicro: 250_000,
+      totalUsdcMicro: 200_000,
+      pageCount: 1,
+      total: 1,
+      items: [
+        {
+          address: "ALICE-ALGORAND-ADDRESS",
+          nickname: "alice",
+          status: "claimed",
+          claimIp: "203.0.113.7",
+          claimedAt: "2026-07-31T10:00:00Z",
+          fundedAt: null,
+          algoTxid: "ALGO-TXID",
+          usdcTxid: null,
+          lifetimeStakedMoves: 3,
+          points: 120,
+          referredBy: "referrer-address",
+        },
+      ],
+    };
+    const retryAdminBonus = vi.fn(async () => ({
+      status: "pending" as const,
+      jobs: 1,
+    }));
+    const client = adminClient({
+      getAdminBonuses: vi.fn(async () => liveBonuses),
+      retryAdminBonus,
+    });
+    renderAdmin(client);
+    fireEvent.click(await screen.findByRole("tab", { name: "BONUSES" }));
+    expect(await screen.findByText("203.0.113.7")).not.toBeNull();
+    expect(screen.getByText("3 / 120")).not.toBeNull();
+    expect(screen.getByText("referred by referrer-address")).not.toBeNull();
+    expect(
+      document.querySelector<HTMLAnchorElement>('a[href*="ALGO-TXID"]')?.href,
+    ).toBe("https://explorer.example/tx/ALGO-TXID");
+    expect(document.body.textContent).not.toContain("signedTxnB64");
+    expect(document.body.textContent).not.toContain("mnemonic");
+
+    fireEvent.click(screen.getByRole("button", { name: "retry funding" }));
+    expect(await screen.findByText("1 funding leg re-armed")).not.toBeNull();
+    expect(retryAdminBonus).toHaveBeenCalledWith("ALICE-ALGORAND-ADDRESS");
   });
 });
 
@@ -693,7 +746,9 @@ describe("admin responsive accessibility (#73)", () => {
     fireEvent.keyDown(activity, { key: "ArrowRight" });
     expect(document.activeElement).toBe(bonuses);
     expect(bonuses.getAttribute("aria-selected")).toBe("true");
-    expect(await screen.findByText("DISABLED UNTIL RELEASE 4")).not.toBeNull();
+    expect(
+      await screen.findByRole("heading", { name: "BONUSES" }),
+    ).not.toBeNull();
 
     const css = readFileSync(
       join(dirname(fileURLToPath(import.meta.url)), "../styles/components.css"),
