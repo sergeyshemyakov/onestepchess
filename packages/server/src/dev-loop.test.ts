@@ -89,7 +89,7 @@ describe("offline guarantee — RAIL=mock (#26)", () => {
   );
 
   it("constructs the mock rail in the boot path", () => {
-    expect(bootSource).toContain("createMockRail(");
+    expect(bootSource).toContain("createPaymentRail(");
   });
 
   it("never imports rail-avm into the mock boot", () => {

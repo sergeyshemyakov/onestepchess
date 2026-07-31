@@ -10,8 +10,7 @@ import {
 
 // Conventions (server spec §4): epoch-ms integers, integer µUSDC, lowercase
 // enums, prefixed nanoids; events/ledger use autoincrement integers because
-// SSE resume and audit need a total order. The bonus surfaces (bonuses,
-// funding_jobs) arrive with their Release-4 migration, not here.
+// SSE resume and audit need a total order.
 
 export const players = sqliteTable(
   "players",
@@ -216,6 +215,58 @@ export const payoutJobs = sqliteTable(
   },
   (table) => [
     uniqueIndex("payout_jobs_game_recipient").on(table.gameId, table.recipient),
+  ],
+);
+
+export const bonuses = sqliteTable(
+  "bonuses",
+  {
+    player: text("player")
+      .primaryKey()
+      .references(() => players.address),
+    status: text("status", {
+      enum: ["claimed", "opted_in", "funded"],
+    })
+      .notNull()
+      .default("claimed"),
+    algoAmount: integer("algo_amount").notNull(),
+    usdcAmount: integer("usdc_amount").notNull(),
+    claimIp: text("claim_ip").notNull(),
+    algoTxid: text("algo_txid"),
+    usdcTxid: text("usdc_txid"),
+    attempts: integer("attempts").notNull().default(0),
+    nextAttemptAt: integer("next_attempt_at"),
+    claimedAt: integer("claimed_at").notNull(),
+    optedInAt: integer("opted_in_at"),
+    fundedAt: integer("funded_at"),
+  },
+  (table) => [index("bonuses_claimed_at").on(table.claimedAt)],
+);
+
+export const fundingJobs = sqliteTable(
+  "funding_jobs",
+  {
+    id: text("id").primaryKey(),
+    player: text("player")
+      .notNull()
+      .references(() => players.address),
+    leg: text("leg", { enum: ["algo", "usdc"] }).notNull(),
+    amount: integer("amount").notNull(),
+    status: text("status", {
+      enum: ["pending", "prepared", "submitted", "confirmed", "failed"],
+    })
+      .notNull()
+      .default("pending"),
+    payloadB64: text("payload_b64"),
+    txid: text("txid"),
+    lastValidRound: integer("last_valid_round"),
+    attempts: integer("attempts").notNull().default(0),
+    nextAttemptAt: integer("next_attempt_at"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("funding_jobs_player_leg").on(table.player, table.leg),
   ],
 );
 

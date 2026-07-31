@@ -4,6 +4,19 @@ import type { Db } from "./db/open.js";
 import { schema } from "./db/open.js";
 import type { Logger } from "./logger.js";
 
+function hasPersistedMoneyState(db: Db): boolean {
+  return [
+    schema.claims,
+    schema.paymentIntents,
+    schema.stakeEntries,
+    schema.ledger,
+    schema.payoutJobs,
+    schema.payoutBatches,
+    schema.bonuses,
+    schema.fundingJobs,
+  ].some((table) => db.select().from(table).limit(1).get() !== undefined);
+}
+
 export type InitializeSystemStateOptions = {
   readonly db: Db;
   readonly railKind: ServerEnv["RAIL"];
@@ -43,6 +56,21 @@ export function initializeSystemState(
     identity.usdcAsset !== options.config.USDC_ASA ||
     identity.treasuryAddress !== options.treasuryAddress
   ) {
+    if (!hasPersistedMoneyState(options.db)) {
+      options.db
+        .update(schema.systemState)
+        .set({
+          railKind: options.railKind,
+          caip2: options.config.CAIP2,
+          usdcAsset: options.config.USDC_ASA,
+          treasuryAddress: options.treasuryAddress,
+          banner: options.banner ?? identity.banner,
+          updatedAt: options.now,
+        })
+        .where(eq(schema.systemState.id, 1))
+        .run();
+      return true;
+    }
     options.logger.fatal(
       {
         stored: {

@@ -56,6 +56,10 @@ export const moveBodySchema = z
 
 export const renameBodySchema = z.object({ nickname: z.string() }).strict();
 
+export const bonusOptInBodySchema = z
+  .object({ signedTxnB64: z.string().min(1) })
+  .strict();
+
 export const gamesQuerySchema = z
   .object({
     status: z.enum(["ongoing", "finished"]),
@@ -177,7 +181,20 @@ const profile = playerView.extend({
       qualified: z.number().int().nonnegative(),
     })
     .optional(),
+  bonus: z
+    .object({ status: z.enum(["available", "claimed", "opted_in", "funded"]) })
+    .optional(),
 });
+
+const bonusClaimResponse = z.object({
+  bonus: z.object({
+    status: z.literal("claimed"),
+    claimedAt: isoTimestamp,
+  }),
+});
+
+const bonusOptInTxnResponse = z.object({ unsignedTxnB64: z.string().min(1) });
+const bonusOptInResponse = z.object({ status: z.literal("watching") });
 
 const ongoingGameCard = z.object({
   yourMove: legalMove,
@@ -449,6 +466,47 @@ export const publicApiRoutes = [
     },
   }),
   createRoute({
+    method: "post",
+    path: "/api/v1/my/bonus/claim",
+    tags: ["human"],
+    summary: "Claim an eligible one-time starter stake",
+    security: bearerOrCookie,
+    responses: {
+      200: json("Durable starter-stake claim", bonusClaimResponse),
+      403: json("Player is not eligible", errorEnvelope),
+      429: json("Program disabled or UTC cap reached", errorEnvelope),
+    },
+  }),
+  createRoute({
+    method: "get",
+    path: "/api/v1/my/bonus/optin-txn",
+    tags: ["human"],
+    summary: "Build the exact USDC opt-in transaction",
+    security: bearerOrCookie,
+    responses: {
+      200: json("Unsigned USDC self-transfer", bonusOptInTxnResponse),
+      403: json("No claimed starter stake", errorEnvelope),
+      503: json("Algod unavailable", errorEnvelope),
+    },
+  }),
+  createRoute({
+    method: "post",
+    path: "/api/v1/my/bonus/optin",
+    tags: ["human"],
+    summary: "Validate and relay the signed USDC opt-in",
+    security: bearerOrCookie,
+    request: {
+      body: {
+        content: { "application/json": { schema: bonusOptInBodySchema } },
+      },
+    },
+    responses: {
+      202: json("Opt-in accepted or ambiguously submitted", bonusOptInResponse),
+      400: json("Malformed, unsafe, or rejected opt-in", errorEnvelope),
+      403: json("No claimed starter stake", errorEnvelope),
+    },
+  }),
+  createRoute({
     method: "get",
     path: "/api/v1/my/games",
     tags: ["human"],
@@ -577,6 +635,7 @@ export const publicApiSchemas = {
   claimBody: claimBodySchema,
   moveBody: moveBodySchema,
   renameBody: renameBodySchema,
+  bonusOptInBody: bonusOptInBodySchema,
   gamesQuery: gamesQuerySchema,
   cardQuery: cardQuerySchema,
   challengeResponse,

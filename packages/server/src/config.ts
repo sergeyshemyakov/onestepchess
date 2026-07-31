@@ -36,6 +36,26 @@ function fromZodError(error: z.ZodError, source: string): ConfigError {
 
 const positiveInt = z.number().int().positive();
 const nonnegativeInt = z.number().int().nonnegative();
+const httpUrl = z.url().refine((value) => {
+  const url = new URL(value);
+  return (
+    (url.protocol === "http:" || url.protocol === "https:") &&
+    url.username.length === 0 &&
+    url.password.length === 0 &&
+    url.search.length === 0 &&
+    url.hash.length === 0
+  );
+}, "must be an HTTP(S) origin without credentials, query, or fragment");
+const walletRelayUrl = z.url().refine((value) => {
+  const url = new URL(value);
+  return (
+    (url.protocol === "https:" || url.protocol === "wss:") &&
+    url.username.length === 0 &&
+    url.password.length === 0 &&
+    url.search.length === 0 &&
+    url.hash.length === 0
+  );
+}, "must be a secure HTTP or WebSocket origin");
 
 // Server-owned knobs per server spec §5. Knobs whose feature lands in a later
 // release still parse here — the config file contract is stable from S1 on.
@@ -85,13 +105,15 @@ export const serverConfigSchema = coreConfigSchema
       .string()
       .regex(/^\d+$/, "must be a stringified ASA id")
       .default("31566704"),
-    ALGOD_URL: z.url().default("http://localhost:4001"),
+    ALGOD_URL: httpUrl.default("http://localhost:4001"),
     // Reviewed WalletConnect relay origin for the CSP connect-src (server spec
     // §6.6); no wildcard is allowed, so this is an exact origin.
-    WALLETCONNECT_RELAY_URL: z.url().default("wss://relay.walletconnect.org"),
-    INDEXER_URL: z.url().default("http://localhost:8980"),
-    FACILITATOR_URL: z.url().default("http://localhost:4402"),
-    EXPLORER_BASE_URL: z.url().default("https://explorer.perawallet.app"),
+    WALLETCONNECT_RELAY_URL: walletRelayUrl.default(
+      "wss://relay.walletconnect.org",
+    ),
+    INDEXER_URL: httpUrl.default("http://localhost:8980"),
+    FACILITATOR_URL: httpUrl.default("http://localhost:4402"),
+    EXPLORER_BASE_URL: httpUrl.default("https://explorer.perawallet.app"),
   })
   .strict();
 
@@ -122,6 +144,13 @@ const envSchema = z.object({
   BACKUP_DIR: z.string().min(1).optional(),
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).default(0),
   OSC_CONFIG_PATH: z.string().min(1).optional(),
+  CAIP2: z.string().min(1).optional(),
+  USDC_ASA: z.string().regex(/^\d+$/).optional(),
+  ALGOD_URL: z.url().optional(),
+  INDEXER_URL: z.url().optional(),
+  FACILITATOR_URL: z.url().optional(),
+  EXPLORER_BASE_URL: z.url().optional(),
+  WALLETCONNECT_RELAY_URL: z.url().optional(),
 });
 
 export type ServerEnv = Readonly<
@@ -222,9 +251,36 @@ export function loadConfig(
 
   const configPath = resolveConfigPath(parsedEnv.OSC_CONFIG_PATH);
   const fileContents = configPath === null ? {} : readConfigFile(configPath);
-  const configResult = serverConfigSchema.safeParse(fileContents);
+  const networkEnv = Object.fromEntries(
+    (
+      [
+        "CAIP2",
+        "USDC_ASA",
+        "ALGOD_URL",
+        "INDEXER_URL",
+        "FACILITATOR_URL",
+        "EXPLORER_BASE_URL",
+        "WALLETCONNECT_RELAY_URL",
+      ] as const
+    ).flatMap((key) =>
+      parsedEnv[key] === undefined ? [] : [[key, parsedEnv[key]] as const],
+    ),
+  );
+  const configResult = serverConfigSchema.safeParse({
+    ...(fileContents as Record<string, unknown>),
+    ...networkEnv,
+  });
   if (!configResult.success) {
     throw fromZodError(configResult.error, "config");
+  }
+  if (
+    parsedEnv.RAIL === "avm" &&
+    !/^algorand:[A-Za-z0-9+/]{43}=$/.test(configResult.data.CAIP2)
+  ) {
+    throw new ConfigError(
+      ["CAIP2"],
+      "invalid config: CAIP2 must be a complete Algorand CAIP-2 id when RAIL=avm",
+    );
   }
 
   return {

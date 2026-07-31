@@ -1,5 +1,5 @@
 import type { PaymentRail } from "@onestepchess/core";
-import { eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import type { ServerConfig } from "../config.js";
 import type { Coordinator } from "../coordinator/queue.js";
 import { appendLedgerEntry } from "../db/ledger.js";
@@ -51,6 +51,29 @@ function accountBalance(db: Db, account: string): number {
       .where(eq(schema.ledgerBalances.account, account))
       .get()?.value ?? 0
   );
+}
+
+export function refundCoverageRequiredMicroUsdc(db: Db): number {
+  const unresolvedStakes = scalar(
+    db
+      .select({
+        amount: sql<number>`coalesce(sum(${schema.stakeEntries.amount}), 0)`,
+      })
+      .from(schema.stakeEntries)
+      .innerJoin(schema.games, eq(schema.games.id, schema.stakeEntries.gameId))
+      .where(inArray(schema.games.status, ["active", "endspiel"]))
+      .get()?.amount,
+  );
+  const unbroadcastPayouts = scalar(
+    db
+      .select({
+        amount: sql<number>`coalesce(sum(${schema.payoutJobs.amount}), 0)`,
+      })
+      .from(schema.payoutJobs)
+      .where(inArray(schema.payoutJobs.status, ["pending", "prepared"]))
+      .get()?.amount,
+  );
+  return unresolvedStakes + unbroadcastPayouts;
 }
 
 export function readReconciliationReport(db: Db): ReconciliationReport | null {
@@ -108,35 +131,29 @@ export function registerOperationalCommands(deps: ReconciliationDeps): void {
           .where(eq(schema.payoutJobs.status, "submitted"))
           .get()?.amount,
       );
-      const unresolvedStakes = scalar(
+      const submittedFunding = scalar(
         deps.db
           .select({
-            amount: sql<number>`coalesce(sum(${schema.stakeEntries.amount}), 0)`,
+            amount: sql<number>`coalesce(sum(${schema.fundingJobs.amount}), 0)`,
           })
-          .from(schema.stakeEntries)
-          .innerJoin(
-            schema.games,
-            eq(schema.games.id, schema.stakeEntries.gameId),
+          .from(schema.fundingJobs)
+          .where(
+            and(
+              eq(schema.fundingJobs.status, "submitted"),
+              eq(schema.fundingJobs.leg, "usdc"),
+            ),
           )
-          .where(inArray(schema.games.status, ["active", "endspiel"]))
           .get()?.amount,
       );
-      const unbroadcastPayouts = scalar(
-        deps.db
-          .select({
-            amount: sql<number>`coalesce(sum(${schema.payoutJobs.amount}), 0)`,
-          })
-          .from(schema.payoutJobs)
-          .where(inArray(schema.payoutJobs.status, ["pending", "prepared"]))
-          .get()?.amount,
-      );
+      const totalOutboundTolerance = outboundTolerance + submittedFunding;
       const book =
         accountBalance(deps.db, "treasury") +
         accountBalance(deps.db, "protocol");
       const drift = book - payload.usdcMicroUsdc;
-      const ok = drift >= -inboundTolerance && drift <= outboundTolerance;
+      const ok = drift >= -inboundTolerance && drift <= totalOutboundTolerance;
+      const requiredRefundCoverage = refundCoverageRequiredMicroUsdc(deps.db);
       const belowRefundCoverage =
-        payload.usdcMicroUsdc < unresolvedStakes + unbroadcastPayouts;
+        payload.usdcMicroUsdc < requiredRefundCoverage;
       const cfg = deps.config();
       const report: ReconciliationReport = {
         lastRunAt: new Date(ctx.now).toISOString(),
@@ -144,7 +161,7 @@ export function registerOperationalCommands(deps: ReconciliationDeps): void {
         chainMicroUsdc: payload.usdcMicroUsdc,
         driftMicroUsdc: drift,
         inboundToleranceMicroUsdc: inboundTolerance,
-        outboundToleranceMicroUsdc: outboundTolerance,
+        outboundToleranceMicroUsdc: totalOutboundTolerance,
         ok,
         belowRefundCoverage,
         algoBelowFloor: payload.algoMicroAlgo < cfg.TREASURY_MIN_ALGO_MICRO,
@@ -194,7 +211,7 @@ export function registerOperationalCommands(deps: ReconciliationDeps): void {
               contextJson: JSON.stringify({
                 driftMicroUsdc: drift,
                 inboundToleranceMicroUsdc: inboundTolerance,
-                outboundToleranceMicroUsdc: outboundTolerance,
+                outboundToleranceMicroUsdc: totalOutboundTolerance,
               }),
             })
             .run();
@@ -202,7 +219,7 @@ export function registerOperationalCommands(deps: ReconciliationDeps): void {
             void deps.alerts.emit("reconciliation_drift", {
               driftMicroUsdc: drift,
               inboundToleranceMicroUsdc: inboundTolerance,
-              outboundToleranceMicroUsdc: outboundTolerance,
+              outboundToleranceMicroUsdc: totalOutboundTolerance,
             });
           });
         }
@@ -215,7 +232,7 @@ export function registerOperationalCommands(deps: ReconciliationDeps): void {
         ctx.afterCommit(() => {
           void deps.alerts.emit("treasury_refund_coverage", {
             chainMicroUsdc: payload.usdcMicroUsdc,
-            requiredMicroUsdc: unresolvedStakes + unbroadcastPayouts,
+            requiredMicroUsdc: requiredRefundCoverage,
           });
         });
       }

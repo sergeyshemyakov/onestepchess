@@ -61,6 +61,15 @@ describe("boot system state", () => {
     };
 
     expect(initializeSystemState(options)).toBe(true);
+    db.insert(schema.ledger)
+      .values({
+        ts: 1,
+        account: "treasury",
+        deltaMicrousdc: 1,
+        refType: "opening",
+        refId: "non-pristine",
+      })
+      .run();
     expect(
       initializeSystemState({
         ...options,

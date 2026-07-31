@@ -1,5 +1,6 @@
 import type { PaymentRail } from "@onestepchess/core";
 import { and, desc, eq, inArray, like, or, sql } from "drizzle-orm";
+import { fundingGroundTruth } from "../bonuses/funding.js";
 import type { ServerConfig } from "../config.js";
 import type { CoordinatorViews } from "../coordinator/views.js";
 import type { Db } from "../db/open.js";
@@ -139,7 +140,7 @@ export async function adminOverview(deps: AdminReadDeps) {
       belowRefundCoverage: reconciliation?.belowRefundCoverage ?? false,
     },
     payouts,
-    funding: { pending: 0, prepared: 0, submitted: 0, failed: 0 },
+    funding: fundingGroundTruth(deps.db),
     reconciliation: reconciliation ?? {
       lastRunAt: null,
       bookMicroUsdc: 0,
@@ -753,14 +754,61 @@ export function adminConfig(deps: AdminReadDeps) {
 }
 
 export function adminBonuses(deps: AdminReadDeps, pageNumber: number) {
+  const now = deps.now();
+  const today = new Date(now);
+  const dayStart = Date.UTC(
+    today.getUTCFullYear(),
+    today.getUTCMonth(),
+    today.getUTCDate(),
+  );
+  const bonusRows = deps.db
+    .select({ bonus: schema.bonuses, player: schema.players })
+    .from(schema.bonuses)
+    .innerJoin(
+      schema.players,
+      eq(schema.players.address, schema.bonuses.player),
+    )
+    .orderBy(desc(schema.bonuses.claimedAt))
+    .all();
+  const jobs = deps.db.select().from(schema.fundingJobs).all();
+  const confirmed = jobs.filter((job) => job.status === "confirmed");
+  const stakedMoves = new Map(
+    deps.db
+      .select({
+        player: schema.stakeEntries.player,
+        count: sql<number>`count(*)`,
+      })
+      .from(schema.stakeEntries)
+      .groupBy(schema.stakeEntries.player)
+      .all()
+      .map((row) => [row.player, Number(row.count)] as const),
+  );
+  const items = bonusRows.map(({ bonus, player }) => ({
+    address: bonus.player,
+    nickname: player.nickname,
+    status: bonus.status,
+    claimIp: bonus.claimIp,
+    claimedAt: new Date(bonus.claimedAt).toISOString(),
+    fundedAt: iso(bonus.fundedAt),
+    algoTxid: bonus.algoTxid,
+    usdcTxid: bonus.usdcTxid,
+    lifetimeStakedMoves: stakedMoves.get(bonus.player) ?? 0,
+    points: player.points,
+    referredBy: player.referredBy,
+  }));
   return {
-    todayClaimed: 0,
+    todayClaimed: bonusRows.filter(
+      ({ bonus }) =>
+        bonus.claimedAt >= dayStart && bonus.claimedAt < dayStart + 86_400_000,
+    ).length,
     dailyCap: deps.config().BONUS_DAILY_CAP,
-    totalClaimed: 0,
-    totalAlgoMicro: 0,
-    totalUsdcMicro: 0,
-    ...page([], pageNumber),
-    available: false,
-    reason: "Release 4 feature unavailable",
+    totalClaimed: bonusRows.length,
+    totalAlgoMicro: confirmed
+      .filter((job) => job.leg === "algo")
+      .reduce((sum, job) => sum + job.amount, 0),
+    totalUsdcMicro: confirmed
+      .filter((job) => job.leg === "usdc")
+      .reduce((sum, job) => sum + job.amount, 0),
+    ...page(items, pageNumber),
   };
 }

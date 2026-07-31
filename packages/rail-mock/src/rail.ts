@@ -17,6 +17,7 @@ import type {
   VerifyResult,
 } from "@onestepchess/core";
 import { RailError } from "@onestepchess/core";
+import algosdk from "algosdk";
 import {
   type AccountInfo,
   type Balances,
@@ -41,6 +42,7 @@ const DEFAULT_USDC_ASSET = "31566704";
 const DEFAULT_MAX_TIMEOUT_SECONDS = 120;
 const DEFAULT_BALANCE = 10_000_000;
 const INITIAL_ROUND = 1_000;
+const MAINNET_GENESIS_HASH = "wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=";
 
 type PreparedRecord =
   | {
@@ -505,24 +507,68 @@ export function createMockRail(options: MockRailOptions = {}): MockRail {
 
     async buildOptInTxn(address: string): Promise<string> {
       requireQuery("account");
-      if (address.length === 0)
+      if (!algosdk.isValidAddress(address))
         throw new RailError("CONTRACT", "Opt-in address must not be empty");
-      return encodeBase64Json({
-        kind: "mock-opt-in",
-        address,
-        asset: DEFAULT_USDC_ASSET,
-      });
+      const transaction =
+        algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+          sender: address,
+          receiver: address,
+          amount: 0,
+          assetIndex: Number(DEFAULT_USDC_ASSET),
+          suggestedParams: {
+            flatFee: true,
+            fee: 1_000,
+            minFee: 1_000,
+            firstValid: state.currentRound,
+            lastValid: state.currentRound + 1_000,
+            genesisID: "mainnet-v1.0",
+            genesisHash: new Uint8Array(
+              Buffer.from(MAINNET_GENESIS_HASH, "base64"),
+            ),
+          },
+        });
+      return Buffer.from(
+        algosdk.encodeUnsignedTransaction(transaction),
+      ).toString("base64");
     },
 
     async submitSignedTransaction(
-      _signedTxnB64: string,
+      signedTxnB64: string,
     ): Promise<SignedSubmitResult> {
+      let optInAddress: string | null = null;
+      try {
+        const decoded = algosdk.decodeSignedTransaction(
+          new Uint8Array(Buffer.from(signedTxnB64, "base64")),
+        );
+        const transfer = decoded.txn.assetTransfer;
+        if (
+          decoded.txn.type === "axfer" &&
+          transfer !== undefined &&
+          transfer.amount === 0n &&
+          transfer.receiver.toString() === decoded.txn.sender.toString()
+        ) {
+          optInAddress = decoded.txn.sender.toString();
+        }
+      } catch {
+        // The mock relay remains an opaque submit port for fault-injection
+        // tests. Valid opt-ins additionally update account state so the
+        // starter-stake watcher behaves like a chain observer.
+      }
+      const applyOptIn = (): void => {
+        if (optInAddress === null) return;
+        control.accountOverrides.set(optInAddress, {
+          ...control.accountOverrides.get(optInAddress),
+          exists: true,
+          optedInUsdc: true,
+        });
+      };
       const value = await takeScripted(control.signedQueue);
       if (value !== undefined) {
         if (!value.ok) {
           if (value.reason === "unavailable" && value.applied === true) {
             const issued = allocateTx();
             confirm(issued.txid, issued.round);
+            applyOptIn();
           }
           return {
             ok: false,
@@ -533,6 +579,7 @@ export function createMockRail(options: MockRailOptions = {}): MockRail {
       }
       const issued = allocateTx();
       confirm(issued.txid, issued.round);
+      applyOptIn();
       return { ok: true, txid: issued.txid };
     },
 
