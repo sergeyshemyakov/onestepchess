@@ -20,6 +20,7 @@ import type {
   AdminGameDossier,
   AdminOverview,
   AdminPlayer,
+  AdminPlayers,
 } from "../api/schemas.js";
 import { NotFound } from "../routes/NotFound.jsx";
 import { metaFixture, mockClient, Providers } from "../test/fixtures.jsx";
@@ -166,7 +167,13 @@ const playerFixture: AdminPlayer = {
   quotaOverride: null,
   abandonCount: 0,
   deprioritizedUntil: null,
-  stats: { moves: 10, wins: 5, draws: 1, losses: 4, winratePct: 50 },
+  stats: {
+    moves: 10,
+    wins: 5,
+    draws: 1,
+    losses: 4,
+    winratePct: 55.55555555555556,
+  },
   netPnlMicroUsdc: 20_000,
   points: 120,
   referredBy: null,
@@ -176,6 +183,33 @@ const playerFixture: AdminPlayer = {
     demo: { limit: 10, remaining: 10, resetsAt: null },
   },
   recentClaims: gameDossierFixture.claims,
+};
+
+const playersFixture: AdminPlayers = {
+  items: [
+    {
+      address: "ALICE-ALGORAND-ADDRESS",
+      nickname: "alice",
+      kind: "human",
+      createdAt: "2026-07-20T10:00:00Z",
+      lastActiveAt: "2026-07-26T10:00:00Z",
+      banned: false,
+      deprioritizedUntil: null,
+      abandonCount: 2,
+      points: 120,
+      stats: {
+        moves: 10,
+        wins: 5,
+        draws: 1,
+        losses: 4,
+        winratePct: 55.55555555555556,
+      },
+      netPnlMicroUsdc: 20_000,
+    },
+  ],
+  page: 1,
+  pageCount: 1,
+  total: 1,
 };
 
 const configFixture: AdminConfig = {
@@ -262,6 +296,7 @@ function adminClient(overrides: Partial<AdminClient> = {}): AdminClient {
     })),
     getAdminGame: vi.fn(async () => gameDossierFixture),
     getAdminPlayer: vi.fn(async () => playerFixture),
+    getAdminPlayers: vi.fn(async () => playersFixture),
     getAdminConfig: vi.fn(async () => configFixture),
     pauseAdmin: vi.fn(async () => undefined),
     resumeAdmin: vi.fn(async () => undefined),
@@ -396,7 +431,7 @@ describe("admin route and polling (#73)", () => {
 });
 
 describe("admin read panels (#73)", () => {
-  it("admin_five_panels_render_pinned_read_models_and_drilldowns", async () => {
+  it("admin_six_panels_render_pinned_read_models_and_drilldowns", async () => {
     const client = adminClient();
     renderAdmin(client);
 
@@ -440,6 +475,44 @@ describe("admin read panels (#73)", () => {
     fireEvent.click(playerLink);
     expect(await screen.findByLabelText("player dossier")).not.toBeNull();
     expect(screen.getByText("net PnL")).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("tab", { name: "PLAYERS" }));
+    expect(
+      await screen.findByRole("heading", { name: "PLAYERS" }),
+    ).not.toBeNull();
+    expect(screen.getByText("ALICE-ALGORAND-ADDRESS")).not.toBeNull();
+    expect(screen.getByText("55.6%")).not.toBeNull();
+    expect(screen.getByText("120 points")).not.toBeNull();
+    expect(screen.getByText("10 moves · 2 abandons")).not.toBeNull();
+    fireEvent.change(screen.getByLabelText("player address or nickname"), {
+      target: { value: "alice" },
+    });
+    fireEvent.change(screen.getByLabelText("player kind"), {
+      target: { value: "human" },
+    });
+    const playersPanel = document.getElementById("admin-panel-players");
+    const playerSearch = playersPanel?.querySelector<HTMLButtonElement>(
+      'button[type="submit"]',
+    );
+    if (playerSearch === undefined || playerSearch === null) {
+      throw new Error("player search button missing");
+    }
+    fireEvent.click(playerSearch);
+    await waitFor(() =>
+      expect(client.getAdminPlayers).toHaveBeenLastCalledWith({
+        page: 1,
+        q: "alice",
+        kind: "human",
+      }),
+    );
+    const playerButton = playersPanel?.querySelector<HTMLButtonElement>(
+      ".admin-players-table .admin-link",
+    );
+    if (playerButton === undefined || playerButton === null) {
+      throw new Error("player row link missing");
+    }
+    fireEvent.click(playerButton);
+    expect(await screen.findByLabelText("player dossier")).not.toBeNull();
 
     fireEvent.click(screen.getByRole("tab", { name: "CONFIG" }));
     expect(await screen.findByText("QUOTA_AGENT")).not.toBeNull();

@@ -411,14 +411,14 @@ describe("profile, game history, and public replay reads (§6.3)", () => {
         demo: { limit: number; remaining: number; resetsAt: string | null };
       };
     };
-    // Demo result excluded; the abort counts as a draw; winrate over 2 staked
-    // decisions. Winner takes stake + capped loser pot (1000 + 1000).
+    // Demo result excluded; the abort is recorded as a draw but does not lower
+    // winrate. Winner takes stake + capped loser pot (1000 + 1000).
     expect(profile.stats).toEqual({
       moves: 2,
       wins: 1,
       draws: 1,
       losses: 0,
-      winratePct: 50,
+      winratePct: 100,
     });
     expect(profile.netPnlMicroUsdc).toBe(1_000);
 
@@ -427,7 +427,12 @@ describe("profile, game history, and public replay reads (§6.3)", () => {
         headers: bearer(stack, "bob"),
       })
     ).json()) as { stats: Record<string, unknown>; netPnlMicroUsdc: number };
-    expect(bobProfile.stats).toMatchObject({ wins: 0, draws: 1, losses: 1 });
+    expect(bobProfile.stats).toMatchObject({
+      wins: 0,
+      draws: 1,
+      losses: 1,
+      winratePct: 0,
+    });
     expect(bobProfile.netPnlMicroUsdc).toBe(-1_000);
 
     // Rolling windows: one staked and one demo claim created 30 minutes ago.
@@ -854,6 +859,11 @@ describe("profile, game history, and public replay reads (§6.3)", () => {
       ],
     });
     await finish(stack, "gm_replay");
+    stack.db
+      .update(schema.players)
+      .set({ draws: 8, losses: 1 })
+      .where(eq(schema.players.address, "REPLAYALICEADDRESS"))
+      .run();
 
     // Unknown and non-terminal ids are indistinguishable (I7).
     for (const id of ["gm_missing", "gm_live"]) {
@@ -910,6 +920,7 @@ describe("profile, game history, and public replay reads (§6.3)", () => {
       ]);
     }
     expect(body.plies[0]?.author.nickname).toBe("alice-nick");
+    expect(body.plies[0]?.author.winratePct).toBe(50);
 
     // Nickname joins are live: a rename shows on the next read.
     stack.db

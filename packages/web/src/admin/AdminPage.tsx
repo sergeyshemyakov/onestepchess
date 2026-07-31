@@ -13,10 +13,18 @@ import {
   ConfigPanel,
   GamesPanel,
   HealthPanel,
+  PlayersPanel,
 } from "./panels.jsx";
 import { useAdminOverview } from "./useAdminOverview.js";
 
-const PANELS = ["activity", "bonuses", "health", "games", "config"] as const;
+const PANELS = [
+  "activity",
+  "bonuses",
+  "health",
+  "games",
+  "players",
+  "config",
+] as const;
 type Panel = (typeof PANELS)[number];
 
 function PauseControl(props: {
@@ -166,10 +174,10 @@ function AdminDashboard(props: {
 
   const inspectPlayer = (address: string) => {
     setRequestedPlayer(address);
-    visit("games");
+    visit("players");
     requestAnimationFrame(() => {
       document
-        .getElementById("admin-panel-games")
+        .getElementById("admin-panel-players")
         ?.scrollIntoView({ block: "start" });
     });
   };
@@ -221,10 +229,12 @@ function AdminDashboard(props: {
       return <HealthPanel client={props.client} overview={props.overview} />;
     }
     if (panel === "games") {
+      return <GamesPanel client={props.client} meta={meta} />;
+    }
+    if (panel === "players") {
       return (
-        <GamesPanel
+        <PlayersPanel
           client={props.client}
-          meta={meta}
           requestedPlayer={requestedPlayer}
           onPlayerHandled={() => setRequestedPlayer(null)}
         />

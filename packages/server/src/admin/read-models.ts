@@ -11,6 +11,7 @@ import {
   type OperationalState,
   readReconciliationReport,
 } from "../operations/reconciliation.js";
+import { winratePct } from "../player-stats.js";
 import {
   configDescription,
   configEditable,
@@ -399,6 +400,88 @@ export function adminGames(
   return page(rows, input.page);
 }
 
+export function adminPlayers(
+  deps: AdminReadDeps,
+  input: {
+    readonly kind?: "human" | "agent";
+    readonly q?: string;
+    readonly page: number;
+  },
+) {
+  const conditions = [
+    inArray(schema.players.kind, ["human", "agent"] as const),
+  ];
+  if (input.kind !== undefined) {
+    conditions.push(eq(schema.players.kind, input.kind));
+  }
+  if (input.q !== undefined && input.q.length > 0) {
+    const query = `%${input.q}%`;
+    conditions.push(
+      or(
+        like(schema.players.address, query),
+        like(schema.players.nickname, query),
+      ) as NonNullable<ReturnType<typeof or>>,
+    );
+  }
+
+  const playerRows = deps.db
+    .select()
+    .from(schema.players)
+    .where(and(...conditions))
+    .all();
+  const selected = new Set(playerRows.map((player) => player.address));
+  const lastActive = new Map<string, number>();
+  for (const claim of deps.db.select().from(schema.claims).all()) {
+    if (!selected.has(claim.player)) continue;
+    const at = Math.max(claim.createdAt, claim.movedAt ?? claim.createdAt);
+    lastActive.set(
+      claim.player,
+      Math.max(lastActive.get(claim.player) ?? 0, at),
+    );
+  }
+  const pnl = new Map<string, number>();
+  for (const stake of deps.db.select().from(schema.stakeEntries).all()) {
+    if (!selected.has(stake.player)) continue;
+    pnl.set(
+      stake.player,
+      (pnl.get(stake.player) ?? 0) + (stake.payoutAmount ?? 0) - stake.amount,
+    );
+  }
+
+  const rows = playerRows
+    .map((player) => {
+      const total = player.wins + player.draws + player.losses;
+      return {
+        address: player.address,
+        nickname: player.nickname,
+        kind: player.kind as "human" | "agent",
+        createdAt: new Date(player.createdAt).toISOString(),
+        lastActiveAt: new Date(
+          lastActive.get(player.address) ?? player.createdAt,
+        ).toISOString(),
+        banned: player.banned,
+        deprioritizedUntil: iso(player.deprioritizedUntil),
+        abandonCount: player.abandonCount,
+        points: player.points,
+        stats: {
+          moves: total,
+          wins: player.wins,
+          draws: player.draws,
+          losses: player.losses,
+          winratePct: winratePct(player.wins, player.losses),
+        },
+        netPnlMicroUsdc: pnl.get(player.address) ?? 0,
+      };
+    })
+    .sort(
+      (left, right) =>
+        right.lastActiveAt.localeCompare(left.lastActiveAt) ||
+        right.createdAt.localeCompare(left.createdAt) ||
+        left.address.localeCompare(right.address),
+    );
+  return page(rows, input.page);
+}
+
 export function adminGame(deps: AdminReadDeps, gameId: string) {
   const game = deps.db
     .select()
@@ -565,7 +648,7 @@ export function adminPlayer(deps: AdminReadDeps, address: string) {
       wins: player.wins,
       draws: player.draws,
       losses: player.losses,
-      winratePct: total === 0 ? null : (player.wins / total) * 100,
+      winratePct: winratePct(player.wins, player.losses),
     },
     netPnlMicroUsdc: stakes.reduce(
       (sum, entry) => sum + (entry.payoutAmount ?? 0) - entry.amount,

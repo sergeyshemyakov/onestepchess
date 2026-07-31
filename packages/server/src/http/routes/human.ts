@@ -10,6 +10,7 @@ import { CardCache } from "../../cards/raster.js";
 import { buildCardSvg, type CardOutcome } from "../../cards/svg.js";
 import type { Coordinator } from "../../coordinator/queue.js";
 import { schema } from "../../db/open.js";
+import { winratePct } from "../../player-stats.js";
 import {
   findTerminalReplayGame,
   parseStoredReplay,
@@ -153,7 +154,6 @@ export function registerHumanRoutes(
           ),
         )
         .get()?.value ?? 0;
-    const decisions = player.wins + player.draws + player.losses;
     const stakedLimit =
       player.quotaOverride ??
       (player.kind === "agent"
@@ -180,7 +180,7 @@ export function registerHumanRoutes(
         wins: player.wins,
         draws: player.draws,
         losses: player.losses,
-        winratePct: decisions === 0 ? null : (player.wins / decisions) * 100,
+        winratePct: winratePct(player.wins, player.losses),
       },
       netPnlMicroUsdc,
       ...(balances === undefined ? {} : { balances }),
@@ -496,14 +496,12 @@ export function registerHumanRoutes(
       plies: stored.plies.map(({ authorAddress, ...ply }) => {
         const author = playerByAddress.get(authorAddress);
         if (author === undefined) throw new Error("replay author missing");
-        const decisions = author.wins + author.draws + author.losses;
         return {
           ...ply,
           author: {
             nickname: author.nickname,
             kind: author.kind,
-            winratePct:
-              decisions === 0 ? null : (author.wins / decisions) * 100,
+            winratePct: winratePct(author.wins, author.losses),
             movesTotal: movesByAddress.get(authorAddress) ?? 0,
           },
         };

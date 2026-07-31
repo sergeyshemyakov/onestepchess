@@ -141,6 +141,18 @@ export function playReducer(state: PlayState, event: PlayEvent): PlayState {
               retryAfterSeconds: state.retryAfterSeconds,
             };
       }
+      if (state.phase === "NO_BOARDS" && event.type === "CLAIM_READY") {
+        return focusState(event.claim, state.guest);
+      }
+      if (state.phase === "NO_BOARDS" && event.type === "QUOTA_OUT") {
+        return {
+          ...modeState(state, "QUOTA_OUT"),
+          retryAfterSeconds: event.retryAfterSeconds,
+        };
+      }
+      if (state.phase === "NO_BOARDS" && event.type === "PAUSED") {
+        return modeState(state, "PAUSED");
+      }
       if (state.phase !== "IDLE" && event.type === "ACK") {
         return initialPlayState;
       }

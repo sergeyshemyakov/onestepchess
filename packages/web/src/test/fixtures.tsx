@@ -81,7 +81,13 @@ export function profileFixture(
 ): ProfileView {
   return {
     ...playerFixture,
-    stats: { moves: 24, wins: 12, draws: 3, losses: 9, winratePct: 50 },
+    stats: {
+      moves: 24,
+      wins: 12,
+      draws: 3,
+      losses: 9,
+      winratePct: 57.14285714285714,
+    },
     netPnlMicroUsdc: 0,
     quotas: {
       staked: { limit: 10, remaining: 8, resetsAt: null },

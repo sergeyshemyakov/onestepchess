@@ -18,6 +18,8 @@ import type {
   AdminGameSummary,
   AdminOverview,
   AdminPlayer,
+  AdminPlayerSummary,
+  AdminPlayers,
   GamesPage,
   Meta,
 } from "../api/schemas.js";
@@ -81,6 +83,17 @@ function PageControls(props: {
 
 function pct(value: number | null): string {
   return value === null ? "—" : `${value.toFixed(1)}%`;
+}
+
+function playerStatus(player: AdminPlayerSummary): string {
+  if (player.banned) return "banned";
+  if (
+    player.deprioritizedUntil !== null &&
+    Date.parse(player.deprioritizedUntil) > Date.now()
+  ) {
+    return "deprioritized";
+  }
+  return "active";
 }
 
 const WINDOWS: readonly AdminActivityWindow[] = ["24h", "7d", "30d", "all"];
@@ -593,6 +606,7 @@ function PlayerDossier(props: {
           {props.player.stats.wins} / {props.player.stats.draws} /{" "}
           {props.player.stats.losses}
         </Metric>
+        <Metric label="win rate">{pct(props.player.stats.winratePct)}</Metric>
         <Metric label="abandoned">{props.player.abandonCount}</Metric>
         <Metric label="staked quota">
           {props.player.quota.staked.remaining} /{" "}
@@ -617,6 +631,187 @@ function PlayerDossier(props: {
           ))}
         </ul>
       </details>
+    </section>
+  );
+}
+
+export function PlayersPanel(props: {
+  readonly client: AdminClient;
+  readonly requestedPlayer: string | null;
+  readonly onPlayerHandled: () => void;
+}) {
+  const { onPlayerHandled, requestedPlayer } = props;
+  const [queryDraft, setQueryDraft] = useState("");
+  const [query, setQuery] = useState("");
+  const [kind, setKind] = useState<"" | "human" | "agent">("");
+  const [page, setPage] = useState(1);
+  const [players, setPlayers] = useState<AdminPlayers | null>(null);
+  const [player, setPlayer] = useState<AdminPlayer | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setError(null);
+    props.client
+      .getAdminPlayers({
+        page,
+        ...(query === "" ? {} : { q: query }),
+        ...(kind === "" ? {} : { kind }),
+      })
+      .then((next) => {
+        if (!cancelled) setPlayers(next);
+      })
+      .catch((reason) => {
+        if (!cancelled) setError(errorHint(reason, "player list unavailable"));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [kind, page, props.client, query]);
+
+  const openPlayer = useCallback(
+    (address: string) => {
+      setError(null);
+      props.client
+        .getAdminPlayer(address)
+        .then(setPlayer)
+        .catch((reason) =>
+          setError(errorHint(reason, "player dossier unavailable")),
+        );
+    },
+    [props.client],
+  );
+
+  useEffect(() => {
+    if (requestedPlayer === null) return;
+    openPlayer(requestedPlayer);
+    onPlayerHandled();
+  }, [onPlayerHandled, openPlayer, requestedPlayer]);
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    setPage(1);
+    setQuery(queryDraft.trim());
+  };
+
+  return (
+    <section className="admin-panel" aria-labelledby="admin-players-title">
+      <header>
+        <div>
+          <h2 id="admin-players-title">PLAYERS</h2>
+          <p>registered humans and agents, most recently active first</p>
+        </div>
+        <span className="chip">
+          total <b>{players?.total ?? "—"}</b>
+        </span>
+      </header>
+      <form className="admin-search" onSubmit={submit}>
+        <label>
+          player address or nickname
+          <input
+            value={queryDraft}
+            onChange={(event) => setQueryDraft(event.target.value)}
+          />
+        </label>
+        <label>
+          player kind
+          <select
+            value={kind}
+            onChange={(event) => {
+              setPage(1);
+              setKind(event.target.value as "" | "human" | "agent");
+            }}
+          >
+            <option value="">all</option>
+            <option value="human">human</option>
+            <option value="agent">agent</option>
+          </select>
+        </label>
+        <button type="submit" className="btn">
+          search
+        </button>
+      </form>
+      {error === null ? null : (
+        <p className="admin-error" role="alert">
+          {error}
+        </p>
+      )}
+      {player === null ? null : (
+        <PlayerDossier player={player} onClose={() => setPlayer(null)} />
+      )}
+      {players === null ? (
+        <p className="dim">loading players…</p>
+      ) : players.items.length === 0 ? (
+        <p className="dim">no matching players</p>
+      ) : (
+        <div className="admin-table-wrap">
+          <table className="admin-table admin-players-table">
+            <thead>
+              <tr>
+                <th>player</th>
+                <th>type</th>
+                <th>performance</th>
+                <th>engagement</th>
+                <th>activity</th>
+                <th>status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {players.items.map((item) => {
+                const status = playerStatus(item);
+                return (
+                  <tr key={item.address}>
+                    <td>
+                      <button
+                        type="button"
+                        className="admin-link"
+                        onClick={() => openPlayer(item.address)}
+                      >
+                        {item.nickname ?? "unnamed player"}
+                      </button>
+                      <code>{item.address}</code>
+                    </td>
+                    <td>{item.kind}</td>
+                    <td>
+                      {formatMicroUsdc(item.netPnlMicroUsdc)} net
+                      <small>
+                        {item.stats.wins} / {item.stats.draws} /{" "}
+                        {item.stats.losses} W/D/L · {pct(item.stats.winratePct)}
+                      </small>
+                    </td>
+                    <td>
+                      {item.points} points
+                      <small>
+                        {item.stats.moves} moves · {item.abandonCount} abandons
+                      </small>
+                    </td>
+                    <td>
+                      {formatLocalTime(item.lastActiveAt)}
+                      <small>joined {formatLocalTime(item.createdAt)}</small>
+                    </td>
+                    <td>
+                      {status}
+                      {status !== "deprioritized" ||
+                      item.deprioritizedUntil === null ? null : (
+                        <small>
+                          until {formatLocalTime(item.deprioritizedUntil)}
+                        </small>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {players === null ? null : (
+        <PageControls
+          page={players.page}
+          pageCount={players.pageCount}
+          onPage={setPage}
+        />
+      )}
     </section>
   );
 }
@@ -790,10 +985,7 @@ function GameDossier(props: {
 export function GamesPanel(props: {
   readonly client: AdminClient;
   readonly meta: Meta;
-  readonly requestedPlayer: string | null;
-  readonly onPlayerHandled: () => void;
 }) {
-  const { onPlayerHandled, requestedPlayer } = props;
   const [queryDraft, setQueryDraft] = useState("");
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
@@ -834,12 +1026,6 @@ export function GamesPanel(props: {
     },
     [props.client],
   );
-
-  useEffect(() => {
-    if (requestedPlayer === null) return;
-    openPlayer(requestedPlayer);
-    onPlayerHandled();
-  }, [onPlayerHandled, openPlayer, requestedPlayer]);
 
   const openGame = (gameId: string) => {
     setError(null);
