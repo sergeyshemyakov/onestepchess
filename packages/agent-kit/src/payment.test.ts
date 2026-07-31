@@ -152,6 +152,10 @@ function accountSigner(spy = vi.fn()): Signer {
 
 type MoveServerMode =
   | "lost_then_receipt"
+  | "lost_200"
+  | "pending"
+  | "inflight"
+  | "expired"
   | "invalid_then_receipt"
   | "funds"
   | "optin"
@@ -180,11 +184,17 @@ function moveServer(mode: MoveServerMode) {
     }
     if (path.endsWith("/claims/clm_pay/status")) {
       statusCalls += 1;
+      if (mode === "lost_200" && statusCalls > 1) {
+        return json({ status: "moved", receipt });
+      }
       return json({
         status: "open",
         claim,
         paymentState:
-          mode === "lost_then_receipt" && statusCalls > 1 ? "settling" : null,
+          (mode === "lost_then_receipt" || mode === "pending") &&
+          statusCalls > 1
+            ? "settling"
+            : null,
       });
     }
     if (path.endsWith("/claims/clm_pay/move")) {
@@ -198,6 +208,25 @@ function moveServer(mode: MoveServerMode) {
       paidHeaders.push(header);
       if (mode === "lost_then_receipt" && paidCalls === 1) {
         throw new Error("lost response");
+      }
+      if (mode === "lost_200" && paidCalls === 1) {
+        throw new Error("receipt lost after commit");
+      }
+      if (mode === "pending") {
+        return json(
+          { error: "PAYMENT_PENDING", hint: "pending", docs: "" },
+          202,
+          { "Retry-After": "1" },
+        );
+      }
+      if (mode === "inflight" && paidCalls === 1) {
+        return json(
+          { error: "PAYMENT_IN_FLIGHT", hint: "in flight", docs: "" },
+          409,
+        );
+      }
+      if (mode === "expired") {
+        return json({ error: "CLAIM_EXPIRED", hint: "expired", docs: "" }, 410);
       }
       if (mode === "invalid_then_receipt" && paidCalls === 1) {
         return json(
@@ -242,8 +271,10 @@ function moveServer(mode: MoveServerMode) {
 describe("agent-kit payments and budgets", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("agent_payment_trust_guard_rejects_every_mismatch_before_signing", async () => {
+  it("agent_network_asset_resource_and_payto_pins_fail_before_signing_or_algod", async () => {
     const signing = vi.fn();
+    const algod = vi.fn<typeof globalThis.fetch>();
+    vi.stubGlobal("fetch", algod);
     const signer: Signer = {
       address: payer.addr.toString(),
       sign: signing,
@@ -320,6 +351,7 @@ describe("agent-kit payments and budgets", () => {
       }).rejects.toMatchObject({ code: "NETWORK_MISMATCH" });
     }
     expect(signing).not.toHaveBeenCalled();
+    expect(algod).not.toHaveBeenCalled();
   });
 
   it("agent_budget_reserves_before_signing_and_accounts_once_per_claim", () => {
@@ -376,7 +408,7 @@ describe("agent-kit payments and budgets", () => {
     expect(signing).not.toHaveBeenCalled();
   });
 
-  it("agent_payment_retry_resends_identical_header_and_never_resigns", async () => {
+  it("agent_budget_and_payment_cache_survive_every_exact_retry_branch_without_double_reservation_or_resign", async () => {
     const server = moveServer("lost_then_receipt");
     const signing = vi.fn();
     const budget = new BudgetGuard();
@@ -392,6 +424,62 @@ describe("agent-kit payments and budgets", () => {
     expect(server.paidHeaders[0]).toBe(server.paidHeaders[1]);
     expect(signing).toHaveBeenCalledTimes(1);
     expect(budget.spent()).toBe(1000);
+
+    const inflight = moveServer("inflight");
+    const inflightBudget = new BudgetGuard();
+    await expect(
+      createOscClient({
+        serverUrl: "https://osc.example",
+        signer: accountSigner(),
+        fetch: inflight.fetch,
+        budget: inflightBudget,
+        nonce: () => "inflight-once",
+      }).move(claim.claimId, "e4"),
+    ).resolves.toEqual(receipt);
+    expect(inflight.paidHeaders).toHaveLength(2);
+    expect(new Set(inflight.paidHeaders).size).toBe(1);
+    expect(inflightBudget.spent()).toBe(1000);
+
+    const lost = moveServer("lost_200");
+    const lostBudget = new BudgetGuard();
+    await expect(
+      createOscClient({
+        serverUrl: "https://osc.example",
+        signer: accountSigner(),
+        fetch: lost.fetch,
+        budget: lostBudget,
+        nonce: () => "lost-200-once",
+      }).move(claim.claimId, "e4"),
+    ).resolves.toEqual(receipt);
+    expect(lost.paidCalls).toBe(1);
+    expect(lostBudget.spent()).toBe(1000);
+
+    const pending = moveServer("pending");
+    const pendingBudget = new BudgetGuard();
+    await expect(
+      createOscClient({
+        serverUrl: "https://osc.example",
+        signer: accountSigner(),
+        fetch: pending.fetch,
+        budget: pendingBudget,
+        nonce: () => "pending-once",
+      }).move(claim.claimId, "e4"),
+    ).rejects.toMatchObject({ code: "PAYMENT_PENDING" });
+    expect(pending.paidCalls).toBe(1);
+    expect(pendingBudget.spent()).toBe(1000);
+
+    const expired = moveServer("expired");
+    const expiredBudget = new BudgetGuard();
+    await expect(
+      createOscClient({
+        serverUrl: "https://osc.example",
+        signer: accountSigner(),
+        fetch: expired.fetch,
+        budget: expiredBudget,
+        nonce: () => "expired-once",
+      }).move(claim.claimId, "e4"),
+    ).rejects.toMatchObject({ code: "CLAIM_EXPIRED" });
+    expect(expiredBudget.spent()).toBe(0);
   });
 
   it("agent_payment_rebuilds_once_only_for_payment_invalid", async () => {
@@ -438,7 +526,7 @@ describe("agent-kit payments and budgets", () => {
     }
   });
 
-  it("agent_exact_group_matches_t1_fixtures_and_guards_client_leg", async () => {
+  it("agent_exact_payment_matches_release4_group_and_header_fixtures", async () => {
     const exactMeta: Meta = {
       ...mockMeta,
       network: {
@@ -488,6 +576,7 @@ describe("agent-kit payments and budgets", () => {
       algodUrl: "https://algod.example",
     });
     const payload = JSON.parse(Buffer.from(header, "base64").toString());
+    expect(payload.accepted).toEqual(required.accepts[0]);
     expect(payload.payload.paymentIndex).toBe(1);
     const feeTransaction = algosdk.decodeUnsignedTransaction(
       Buffer.from(payload.payload.paymentGroup[0], "base64"),
@@ -509,6 +598,7 @@ describe("agent-kit payments and budgets", () => {
       BigInt(TESTNET_USDC_ASSET),
     );
     expect(paymentTransaction.fee).toBe(0n);
+    expect(paymentTransaction.txID()).toMatch(/^[A-Z2-7]{52}$/);
     expect(paymentTransaction.lastValid - paymentTransaction.firstValid).toBe(
       1000n,
     );

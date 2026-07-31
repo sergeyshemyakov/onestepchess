@@ -409,7 +409,7 @@ describe.sequential("Release 3 public clients", () => {
     );
   });
 
-  it("agent_kit_schemas_parse_live_server_and_openapi_examples", async () => {
+  it("published_agent_schemas_parse_release4_server_and_openapi_fixtures", async () => {
     const agent = scenario.blackAgents[0];
     if (agent === undefined) throw new Error("agent missing");
     expect(metaSchema.parse(await agent.client.meta())).toBeDefined();
@@ -493,7 +493,7 @@ describe.sequential("Release 3 public clients", () => {
 });
 
 describe("Release 3 public client recovery", () => {
-  it("public_client_restart_recovers_open_and_ambiguous_claim_without_resigning", async () => {
+  it("agent_restart_with_payment_inflight_polls_status_and_never_constructs_a_fresh_payment", async () => {
     const stack = await createRelease3Harness({
       config: { COOLDOWN_PLIES: 1 },
     });

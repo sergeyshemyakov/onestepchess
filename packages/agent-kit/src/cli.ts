@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { BudgetGuard } from "./budget.js";
 import { createOscClient } from "./client.js";
 import { loadEnv } from "./env.js";
+import { OscApiError, OscClientError } from "./errors.js";
 import { createKeyfile, FUNDING_CHECKLIST, loadSigner } from "./keyfile.js";
 import { optInUsdc, walletStatus } from "./wallet.js";
 
@@ -107,13 +108,9 @@ export async function runCli(
     }
   } catch (error) {
     const hint =
-      error instanceof Error &&
-      "hint" in error &&
-      typeof error.hint === "string"
+      error instanceof OscApiError || error instanceof OscClientError
         ? error.hint
-        : error instanceof Error
-          ? error.message
-          : "unknown failure";
+        : "unexpected agent failure; retry once, then consult /llms.txt";
     stderr.write(`${hint}\n`);
     return 1;
   }

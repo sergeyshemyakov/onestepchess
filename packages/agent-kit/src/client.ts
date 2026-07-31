@@ -159,20 +159,22 @@ export function createOscClient(options: OscClientOptions): OscClient {
     resourceUrl: string,
   ): Promise<CachedPayment> {
     const paymentRequired = decodePaymentRequired(challengeHeader);
+    const meta = await getMeta();
     const requirement = assertTrustedPayment({
       paymentRequired,
       claim,
-      meta: await getMeta(),
+      meta,
       resourceUrl,
       ...(options.expectNetwork === undefined
         ? {}
         : { expectNetwork: options.expectNetwork }),
     });
+    const algodUrl = options.algodUrl ?? meta.network.algodUrl;
     const headerBytes = await buildPaymentHeader({
       paymentRequired,
       requirement,
       signer: paymentSigner(),
-      ...(options.algodUrl === undefined ? {} : { algodUrl: options.algodUrl }),
+      ...(algodUrl === undefined ? {} : { algodUrl }),
       ...(options.nonce === undefined ? {} : { nonce: options.nonce }),
     });
     const payment = {
@@ -394,7 +396,7 @@ export function createOscClient(options: OscClientOptions): OscClient {
 
   async function recoverAfterAmbiguity(
     claimId: string,
-  ): Promise<MoveReceipt | "resend"> {
+  ): Promise<MoveReceipt | "resend" | "inflight"> {
     const status = await statusForRecovery(claimId);
     if (status.status === "moved") {
       paymentCache.delete(claimId);
@@ -406,7 +408,20 @@ export function createOscClient(options: OscClientOptions): OscClient {
       budget.release(claimId);
       throw expiredError();
     }
-    return "resend";
+    return status.paymentState === null ? "resend" : "inflight";
+  }
+
+  function inflightRecoveryError(
+    paymentState: "verifying" | "settling" | null,
+  ): OscApiError {
+    const state = paymentState === null ? "no longer in flight" : paymentState;
+    return new OscApiError({
+      code: "PAYMENT_IN_FLIGHT",
+      hint: `the previous payment is ${state}; poll claim status and never construct a fresh payment until it is definitively open`,
+      docs: "",
+      status: 409,
+      retryAfterSeconds: 5,
+    });
   }
 
   async function move(claimId: string, moveText: string): Promise<MoveReceipt> {
@@ -415,6 +430,9 @@ export function createOscClient(options: OscClientOptions): OscClient {
       const status = await statusForRecovery(claimId);
       if (status.status === "moved") return status.receipt;
       if (status.status === "expired") throw expiredError();
+      if (status.paymentState !== null) {
+        throw inflightRecoveryError(status.paymentState);
+      }
       claim = status.claim;
     }
 
@@ -438,7 +456,9 @@ export function createOscClient(options: OscClientOptions): OscClient {
       } catch (error) {
         if (cached === undefined) throw error;
         const recovered = await recoverAfterAmbiguity(claimId);
-        if (recovered !== "resend") return recovered;
+        if (recovered !== "resend" && recovered !== "inflight") {
+          return recovered;
+        }
         if (resends >= 1) throw error;
         resends += 1;
         continue;
@@ -449,7 +469,9 @@ export function createOscClient(options: OscClientOptions): OscClient {
       }
       if (response.status === 202) {
         const recovered = await recoverAfterAmbiguity(claimId);
-        if (recovered !== "resend") return recovered;
+        if (recovered !== "resend" && recovered !== "inflight") {
+          return recovered;
+        }
         throw new OscApiError({
           code: "PAYMENT_PENDING",
           hint: "payment settlement is pending; poll claim status and never re-sign",
@@ -487,14 +509,30 @@ export function createOscClient(options: OscClientOptions): OscClient {
         paymentCache.delete(claimId);
         cached = undefined;
         budget.reserve(claimId, claim.stakeMicroUsdc);
-        cached = await buildCachedPayment(claim, challengeHeader, resourceUrl);
+        try {
+          cached = await buildCachedPayment(
+            claim,
+            challengeHeader,
+            resourceUrl,
+          );
+        } catch (buildError) {
+          budget.release(claimId);
+          throw buildError;
+        }
         continue;
       }
 
-      if (error.code === "PAYMENT_IN_FLIGHT" && cached !== undefined) {
-        if (resends < 1) {
-          resends += 1;
-          continue;
+      if (error.code === "PAYMENT_IN_FLIGHT") {
+        if (cached !== undefined) {
+          if (resends < 1) {
+            resends += 1;
+            continue;
+          }
+        } else {
+          const status = await statusForRecovery(claimId);
+          if (status.status === "moved") return status.receipt;
+          if (status.status === "expired") throw expiredError();
+          throw inflightRecoveryError(status.paymentState);
         }
       }
 

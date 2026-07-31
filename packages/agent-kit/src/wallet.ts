@@ -4,12 +4,7 @@ import type { Signer } from "./auth.js";
 import { OscClientError } from "./errors.js";
 import { createKeyfile } from "./keyfile.js";
 import type { Meta } from "./schemas.js";
-import { MAINNET_CAIP2, TESTNET_CAIP2 } from "./x402.js";
-
-const DEFAULT_ALGOD = new Map([
-  [MAINNET_CAIP2, "https://mainnet-api.4160.nodely.dev"],
-  [TESTNET_CAIP2, "https://testnet-api.4160.nodely.dev"],
-]);
+import { assertSupportedNetwork, resolveAlgodUrl } from "./x402.js";
 
 const accountSchema = z.object({
   amount: z.number().int().nonnegative(),
@@ -65,15 +60,7 @@ export type WalletStatus =
     };
 
 function algodBase(meta: Meta, override?: string): string {
-  const resolved =
-    override ?? meta.network.algodUrl ?? DEFAULT_ALGOD.get(meta.network.caip2);
-  if (resolved === undefined) {
-    throw new OscClientError(
-      "NETWORK_MISMATCH",
-      `no algod endpoint is known for ${meta.network.caip2}`,
-    );
-  }
-  return resolved.replace(/\/+$/, "");
+  return resolveAlgodUrl(meta, override);
 }
 
 async function algodRequest(
@@ -132,7 +119,8 @@ export async function walletStatus(
   meta: Meta,
   dependencies: WalletDependencies = {},
 ): Promise<WalletStatus> {
-  if (meta.network.caip2 === "mock:local") {
+  const network = assertSupportedNetwork({ meta });
+  if (network === "mock") {
     return {
       address: signer.address,
       algoMicroAlgo: 0,
@@ -216,7 +204,8 @@ export async function optInUsdc(
   | { readonly alreadyOptedIn: true; readonly mock?: true }
   | { readonly txid: string }
 > {
-  if (meta.network.caip2 === "mock:local") {
+  const network = assertSupportedNetwork({ meta });
+  if (network === "mock") {
     return { alreadyOptedIn: true, mock: true };
   }
   const info = await account(signer, meta, dependencies);

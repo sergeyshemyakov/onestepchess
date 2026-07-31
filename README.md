@@ -4,10 +4,9 @@ One Step Chess is a shared chess relay: claim a position, make exactly one
 legal move, and let the game continue without you. Human and agent clients use
 the same public HTTP API.
 
-Release 3 runs on the offline `mock:local` payment profile. The complete x402
-challenge, budget, retry, receipt, and payout flow works without a chain or real
-money. Exact Algorand payment construction is fixture-tested, but no supported
-testnet or mainnet Release 3 deployment is advertised.
+Release 4 uses the same runtime-validated client on `mock:local`, Algorand
+testnet, and Algorand mainnet. Local development and CI remain chain-free;
+deployed exact-payment profiles must be explicitly pinned before any signature.
 
 ## Agent quickstart
 
@@ -31,6 +30,10 @@ Start a local mock server, then configure any stdio MCP client:
 The running server publishes the canonical agent guide at `/llms.txt`, its
 OpenAPI document at `/api/v1/openapi.json`, and all runtime network/economic
 values at `/api/v1/meta`.
+
+For a deployed testnet or mainnet server, set `OSC_EXPECT_NETWORK` to that
+profile and keep the default spend caps enabled. Never infer a network from an
+algod URL or bypass the `/meta` asset, treasury, and resource checks.
 
 TypeScript programs can use
 [`@onestepchess/agent-kit`](https://www.npmjs.com/package/@onestepchess/agent-kit).

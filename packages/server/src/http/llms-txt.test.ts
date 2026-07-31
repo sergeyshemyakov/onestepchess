@@ -74,9 +74,8 @@ describe("/llms.txt (agent spec §9)", () => {
     expect(LLMS_TXT).toContain('method: "txn"');
     expect(LLMS_TXT).toContain("fallbackTxnB64");
     expect(LLMS_TXT).toContain('meta.network.caip2 === "mock:local"');
-    expect(LLMS_TXT).toContain(
-      "exact` group\n   builder is covered by offline fixtures",
-    );
+    expect(LLMS_TXT).toContain("Release 4 supports");
+    expect(LLMS_TXT).toContain("two-transaction fee-payer group");
     expect(LLMS_TXT).not.toMatch(
       /https:\/\/play\.onestepchess\.com|OSC_EXPECT_NETWORK": "mainnet"/,
     );
@@ -163,7 +162,7 @@ describe("/llms.txt (agent spec §9)", () => {
         /\/Users\/|docs\/spec|docs\/adr|TREASURY_MNEMONIC|JWT_SECRET|ADMIN_TOKEN|private bot/i,
       );
       expect(text, files[index]).not.toMatch(
-        /Release 3 supports (testnet|mainnet)|live exact payments are enabled|OSC_EXPECT_NETWORK["=: ]+mainnet/i,
+        /Release 3 supports (testnet|mainnet)|live exact payments are enabled/i,
       );
     }
     expect(copy[3]).toContain("name: one-step-chess");
