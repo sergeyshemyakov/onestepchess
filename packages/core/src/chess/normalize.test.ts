@@ -7,8 +7,8 @@ import { renderAscii } from "./ascii.js";
 import { toPgn } from "./pgn.js";
 
 const CONFIG = {
-  ENDSPIEL_PLY: 60,
   ENDSPIEL_PIECES: 10,
+  REPETITION_WIN_MARGIN: 3,
   MAX_PLIES: 300,
 };
 

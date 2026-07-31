@@ -15,8 +15,11 @@ import { PlayView } from "../play/PlayView.jsx";
 import { usePlayFlow } from "../play/usePlayFlow.js";
 import { Replayer } from "../replay/Replayer.jsx";
 
-function HowItWorks(props: { readonly meta: Meta }) {
-  const [tab, setTab] = useState<"human" | "agent">("human");
+function HowItWorks(props: {
+  readonly meta: Meta;
+  readonly tab: "human" | "agent";
+  readonly onTab: (tab: "human" | "agent") => void;
+}) {
   const docs = props.meta.docs;
   const apiBase = new URL("/api/v1", docs.llms).toString().replace(/\/$/, "");
   const npmPackage = (name: string) =>
@@ -27,23 +30,23 @@ function HowItWorks(props: { readonly meta: Meta }) {
         <button
           type="button"
           role="tab"
-          aria-selected={tab === "human"}
-          className={tab === "human" ? "tab active" : "tab"}
-          onClick={() => setTab("human")}
+          aria-selected={props.tab === "human"}
+          className={props.tab === "human" ? "tab active" : "tab"}
+          onClick={() => props.onTab("human")}
         >
           FOR HUMANS
         </button>
         <button
           type="button"
           role="tab"
-          aria-selected={tab === "agent"}
-          className={tab === "agent" ? "tab active" : "tab"}
-          onClick={() => setTab("agent")}
+          aria-selected={props.tab === "agent"}
+          className={props.tab === "agent" ? "tab active" : "tab"}
+          onClick={() => props.onTab("agent")}
         >
           FOR AGENTS
         </button>
       </div>
-      {tab === "human" ? (
+      {props.tab === "human" ? (
         // `/meta.rules` renders verbatim — the web never paraphrases (§8.4).
         <p className="rules console" data-testid="rules-verbatim">
           {props.meta.rules}
@@ -82,6 +85,7 @@ export function Landing(props: {
   readonly onSignedIn: (player: PlayerView, linkedGuestClaims?: number) => void;
 }) {
   const [connecting, setConnecting] = useState(false);
+  const [audience, setAudience] = useState<"human" | "agent">("human");
   const [guestDemo, setGuestDemo] = useState(readGuestDemo);
   const [gamePaneDismissed, setGamePaneDismissed] = useState(false);
   const flow = usePlayFlow({
@@ -134,39 +138,41 @@ export function Landing(props: {
           <h1 style={{ fontSize: 62 }}>
             ONLY ONE MOVE.<span className="blink">▊</span>
           </h1>
-          <HowItWorks meta={props.meta} />
-          <div className="ctas">
-            <button
-              type="button"
-              className="bigplay"
-              onClick={() => setConnecting(true)}
-            >
-              <span className="bp-title">▸ I HAVE AN ALGORAND WALLET</span>
-              <span className="bp-sub">
-                connect &amp; sign a zero transfer to log in
-              </span>
-            </button>
-            <Link className="bigplay" to="/start">
-              <span className="bp-title">I DON'T HAVE ONE YET →</span>
-              <span className="bp-sub">set up a wallet, USDC and gas</span>
-            </Link>
-            {guestDemo === null ? (
+          <HowItWorks meta={props.meta} tab={audience} onTab={setAudience} />
+          {audience === "human" ? (
+            <div className="ctas">
               <button
                 type="button"
-                className="bigplay demo"
-                onClick={openDemoGame}
+                className="bigplay"
+                onClick={() => setConnecting(true)}
               >
-                <span className="bp-title">PLAY A DEMO GAME</span>
+                <span className="bp-title">▸ I HAVE AN ALGORAND WALLET</span>
                 <span className="bp-sub">
-                  $0 · no wallet needed · you make one real move
+                  connect &amp; sign a zero transfer to log in
                 </span>
               </button>
-            ) : (
-              <p className="console" data-testid="guest-demo-nudge">
-                &gt; you have a demo game waiting — log in to see how it ends
-              </p>
-            )}
-          </div>
+              <Link className="bigplay" to="/start">
+                <span className="bp-title">I DON'T HAVE ONE YET →</span>
+                <span className="bp-sub">set up a wallet, USDC and gas</span>
+              </Link>
+              {guestDemo === null ? (
+                <button
+                  type="button"
+                  className="bigplay demo"
+                  onClick={openDemoGame}
+                >
+                  <span className="bp-title">PLAY A DEMO GAME</span>
+                  <span className="bp-sub">
+                    $0 · no wallet needed · you make one real move
+                  </span>
+                </button>
+              ) : (
+                <p className="console" data-testid="guest-demo-nudge">
+                  &gt; you have a demo game waiting — log in to see how it ends
+                </p>
+              )}
+            </div>
+          ) : null}
           <p className="faintt" style={{ marginTop: 14, fontSize: 12 }}>
             internal playtest — mock settlement, no real USDC.
           </p>

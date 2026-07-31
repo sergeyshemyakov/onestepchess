@@ -1,3 +1,9 @@
+import {
+  type GameResult,
+  gameRulesSchema,
+  materialPoints,
+  type Termination,
+} from "@onestepchess/core";
 import { eq } from "drizzle-orm";
 import type { Db } from "./db/open.js";
 import { schema } from "./db/open.js";
@@ -16,6 +22,33 @@ export type StoredReplay = {
   readonly plies: readonly StoredReplayPly[];
   readonly pgn: string;
 };
+
+export type RepetitionAdjudication = {
+  readonly whiteMaterialPoints: number;
+  readonly blackMaterialPoints: number;
+  readonly winMargin: number;
+};
+
+export function repetitionAdjudicationFor(game: {
+  readonly fen: string;
+  readonly result: GameResult | null;
+  readonly termination: Termination | null;
+  readonly rulesJson: string;
+}): RepetitionAdjudication | null {
+  if (
+    game.termination !== "threefold" ||
+    (game.result !== "white" && game.result !== "black")
+  ) {
+    return null;
+  }
+  const material = materialPoints(game.fen);
+  const rules = gameRulesSchema.parse(JSON.parse(game.rulesJson));
+  return {
+    whiteMaterialPoints: material.white,
+    blackMaterialPoints: material.black,
+    winMargin: rules.REPETITION_WIN_MARGIN,
+  };
+}
 
 type TerminalReplayGame = typeof schema.games.$inferSelect & {
   readonly status: "finished" | "aborted";

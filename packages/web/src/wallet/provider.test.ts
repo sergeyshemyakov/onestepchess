@@ -2,7 +2,11 @@ import algosdk from "algosdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Meta } from "../api/schemas.js";
 import { loginWithWallet } from "../auth/login.js";
-import { type ConnectedWallet, createWalletModule } from "./provider.js";
+import {
+  type ConnectedWallet,
+  connectWithStaleSessionRecovery,
+  createWalletModule,
+} from "./provider.js";
 
 afterEach(() => {
   localStorage.clear();
@@ -11,6 +15,42 @@ afterEach(() => {
 });
 
 describe("Release 1 wallet surface", () => {
+  it("pera_recovers_a_stale_session_during_the_first_connect_click", async () => {
+    const accounts = [{ address: "PERA_ADDRESS" }];
+    const provider = {
+      connect: vi
+        .fn<() => Promise<typeof accounts>>()
+        .mockRejectedValueOnce(new Error("stale WalletConnect session"))
+        .mockResolvedValueOnce(accounts),
+      disconnect: vi.fn(async () => undefined),
+    };
+
+    await expect(
+      connectWithStaleSessionRecovery(provider, true),
+    ).resolves.toEqual(accounts);
+    expect(provider.disconnect).toHaveBeenCalledTimes(1);
+    expect(provider.connect).toHaveBeenCalledTimes(2);
+  });
+
+  it("pera_does_not_reopen_after_the_user_closes_the_connect_modal", async () => {
+    const cancelled = Object.assign(new Error("closed"), {
+      name: "PeraWalletConnectError",
+      data: { type: "CONNECT_MODAL_CLOSED" },
+    });
+    const provider = {
+      connect: vi.fn(async () => {
+        throw cancelled;
+      }),
+      disconnect: vi.fn(async () => undefined),
+    };
+
+    await expect(
+      connectWithStaleSessionRecovery(provider, true),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(provider.disconnect).not.toHaveBeenCalled();
+    expect(provider.connect).toHaveBeenCalledTimes(1);
+  });
+
   it("installs every configured production wallet provider SDK", () => {
     for (const provider of [
       "@perawallet/connect",

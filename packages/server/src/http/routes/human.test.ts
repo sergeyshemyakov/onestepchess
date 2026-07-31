@@ -132,7 +132,8 @@ function seedGame(
     readonly name: string;
     readonly status: "active" | "finished" | "aborted";
     readonly result?: "white" | "black" | "draw" | "aborted";
-    readonly termination?: "checkmate" | "stalemate" | "aborted";
+    readonly termination?: "checkmate" | "stalemate" | "threefold" | "aborted";
+    readonly rules?: Readonly<Record<string, unknown>>;
     readonly history?: readonly string[];
     readonly finishedAt?: number;
     readonly createdAt?: number;
@@ -146,7 +147,7 @@ function seedGame(
       status: args.status,
       fen: args.moves.at(-1)?.fenAfter ?? STARTING_FEN,
       historyJson: JSON.stringify(args.history ?? []),
-      rulesJson: "{}",
+      rulesJson: JSON.stringify(args.rules ?? {}),
       result: args.result ?? null,
       termination: args.termination ?? null,
       lastPlyAt: args.createdAt ?? 0,
@@ -234,6 +235,35 @@ function staked(
 }
 
 describe("profile, game history, and public replay reads (§6.3)", () => {
+  it("active_archive_pages_contain_five_animated_games", async () => {
+    const stack = setup();
+    seedPlayer(stack.db, "alice", "alice");
+    for (let index = 1; index <= 6; index += 1) {
+      seedGame(stack.db, {
+        id: `gm_active_${index}`,
+        name: `active-${index}`,
+        status: "active",
+        createdAt: index * 1_000,
+        moves: [staked("alice", "white", 1)],
+      });
+    }
+
+    const response = await stack.app.request(
+      "/api/v1/my/games?status=ongoing&page=1",
+      { headers: bearer(stack, "alice") },
+    );
+    const page = (await response.json()) as {
+      items: unknown[];
+      page: number;
+      pageCount: number;
+      total: number;
+    };
+
+    expect(response.status).toBe(200);
+    expect(page).toMatchObject({ page: 1, pageCount: 2, total: 6 });
+    expect(page.items).toHaveLength(5);
+  });
+
   it("profile_carries_points_and_referrals_for_humans_only", async () => {
     const stack = setup();
     stack.db
@@ -526,7 +556,7 @@ describe("profile, game history, and public replay reads (§6.3)", () => {
     expect((await patch("fresh-three")).status).toBe(200);
   });
 
-  it("my_games_preserves_position_only_and_demo_identity_rules", async () => {
+  it("my_games_groups_finished_moves_by_game_and_aggregates_card_totals", async () => {
     const stack = setup({ PAGE_SIZE_FINISHED: 2 });
     seedPlayer(stack.db, "alice", "alice");
     seedPlayer(stack.db, "bob", "bob");
@@ -612,7 +642,15 @@ describe("profile, game history, and public replay reads (§6.3)", () => {
       termination: "checkmate",
       finishedAt: 6_000,
       createdAt: 4_000,
-      moves: [staked("alice", "white", 1), staked("bob", "black", 2)],
+      moves: [
+        staked("alice", "white", 1),
+        staked("bob", "black", 2, FEN_AFTER_E5),
+        {
+          ...staked("alice", "white", 3),
+          uci: "g1f3",
+          san: "Nf3",
+        },
+      ],
     });
     seedGame(stack.db, {
       id: "gm_fin_demo",
@@ -654,22 +692,25 @@ describe("profile, game history, and public replay reads (§6.3)", () => {
 
     const demoCard = pageOne.items[0] as Record<string, unknown>;
     expect(Object.keys(demoCard).sort()).toEqual([
-      "claimedAt",
       "demo",
       "finishedAt",
-      "movedAt",
       "payoutMicroUsdc",
       "payoutStatus",
+      "repetitionAdjudication",
       "result",
       "stakeMicroUsdc",
+      "startedAt",
       "statsCounted",
       "termination",
-      "yourMove",
+      "thinkingTimeMs",
+      "yourMoves",
       "yourSide",
     ]);
     expect(demoCard).toMatchObject({
       result: "draw",
       termination: "stalemate",
+      yourMoves: [{ uci: "e2e4", san: "e4" }],
+      thinkingTimeMs: 1,
       payoutMicroUsdc: 0,
       payoutStatus: null,
       statsCounted: false,
@@ -682,30 +723,38 @@ describe("profile, game history, and public replay reads (§6.3)", () => {
 
     const lossCard = pageOne.items[1] as Record<string, unknown>;
     expect(Object.keys(lossCard).sort()).toEqual([
-      "claimedAt",
       "demo",
       "finalFen",
       "finishedAt",
       "gameId",
       "gameName",
-      "movedAt",
       "payTxid",
       "payoutMicroUsdc",
       "payoutStatus",
       "payoutTxid",
+      "repetitionAdjudication",
       "result",
       "stakeMicroUsdc",
+      "startedAt",
       "statsCounted",
       "termination",
-      "yourMove",
-      "yourPly",
+      "thinkingTimeMs",
+      "yourMoves",
       "yourSide",
     ]);
     expect(lossCard).toMatchObject({
       gameId: "gm_fin_loss",
       gameName: "finished-loss",
       result: "black",
-      yourPly: 1,
+      startedAt: new Date(4_000).toISOString(),
+      finishedAt: new Date(6_000).toISOString(),
+      yourMoves: [
+        { uci: "e2e4", san: "e4", ply: 1 },
+        { uci: "g1f3", san: "Nf3", ply: 3 },
+      ],
+      stakeMicroUsdc: 2_000,
+      thinkingTimeMs: 2,
+      payTxid: null,
       payoutMicroUsdc: 0,
       payoutStatus: "none",
       payoutTxid: null,
@@ -721,6 +770,10 @@ describe("profile, game history, and public replay reads (§6.3)", () => {
     expect(pageTwo.items).toHaveLength(1);
     expect(pageTwo.items[0]).toMatchObject({
       gameId: "gm_fin_win",
+      yourMoves: [{ uci: "e2e4", san: "e4", ply: 1 }],
+      stakeMicroUsdc: 1_000,
+      thinkingTimeMs: 1,
+      payTxid: expect.stringMatching(/^ptx_/),
       payoutMicroUsdc: 2_000,
       payoutStatus: "queued",
     });
@@ -868,6 +921,61 @@ describe("profile, game history, and public replay reads (§6.3)", () => {
       await stack.app.request("/api/v1/games/gm_replay/replay")
     ).json()) as { plies: { author: { nickname: string } }[] };
     expect(renamed.plies[0]?.author.nickname).toBe("renamed-alice");
+  });
+
+  it("finished_cards_and_public_replay_explain_a_material_win_on_repetition", async () => {
+    const stack = setup();
+    seedPlayer(stack.db, "MATERIALWHITE", "material-white");
+    seedPlayer(stack.db, "MATERIALBLACK", "material-black");
+    const finalFen = "4k3/8/8/8/8/8/P7/3QK3 b - - 0 2";
+    seedGame(stack.db, {
+      id: "gm_material",
+      name: "material-repetition",
+      status: "finished",
+      result: "white",
+      termination: "threefold",
+      rules: { REPETITION_WIN_MARGIN: 4 },
+      history: ["e2e4", "e7e5"],
+      finishedAt: 5_000,
+      moves: [
+        staked("MATERIALWHITE", "white", 1),
+        {
+          ...staked("MATERIALBLACK", "black", 2, finalFen),
+          fenAfter: finalFen,
+        },
+      ],
+    });
+    await finish(stack, "gm_material");
+
+    const finished = (await (
+      await stack.app.request("/api/v1/my/games?status=finished&page=1", {
+        headers: bearer(stack, "MATERIALWHITE"),
+      })
+    ).json()) as {
+      items: {
+        repetitionAdjudication: {
+          whiteMaterialPoints: number;
+          blackMaterialPoints: number;
+          winMargin: number;
+        };
+      }[];
+    };
+    const replay = (await (
+      await stack.app.request("/api/v1/games/gm_material/replay")
+    ).json()) as {
+      repetitionAdjudication: {
+        whiteMaterialPoints: number;
+        blackMaterialPoints: number;
+        winMargin: number;
+      };
+    };
+    const expected = {
+      whiteMaterialPoints: 10,
+      blackMaterialPoints: 0,
+      winMargin: 4,
+    };
+    expect(finished.items[0]?.repetitionAdjudication).toEqual(expected);
+    expect(replay.repetitionAdjudication).toEqual(expected);
   });
 
   it("share_card_uses_only_escaped_public_replay_data", async () => {

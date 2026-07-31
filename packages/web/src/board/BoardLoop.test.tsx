@@ -41,3 +41,33 @@ it("board_loop_types_the_mover_then_teleports_it_back_over_the_full_position", (
   act(() => vi.advanceTimersByTime(900));
   expect(mover.classList.contains("erasing")).toBe(true);
 });
+
+it("board_loop_moves_the_castling_rook_with_the_king", () => {
+  vi.useFakeTimers();
+  render(
+    <BoardLoop
+      fen="r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1"
+      from="e1"
+      to="g1"
+      san="O-O"
+      side="white"
+    />,
+  );
+
+  const loop = screen.getByTestId("board-loop");
+  const actors = [
+    ...loop.querySelectorAll<HTMLElement>(".boardloop-piece"),
+  ].filter((node) => node.querySelector("svg.pc") !== null);
+  expect(actors.map((node) => node.style.transform)).toEqual([
+    "translate(400%, 700%)",
+    "translate(700%, 700%)",
+  ]);
+  expect(loop.querySelector('[data-square="e1"] svg.pc')).toBeNull();
+  expect(loop.querySelector('[data-square="h1"] svg.pc')).toBeNull();
+
+  act(() => vi.advanceTimersByTime(1_100));
+  expect(actors.map((node) => node.style.transform)).toEqual([
+    "translate(600%, 700%)",
+    "translate(500%, 700%)",
+  ]);
+});

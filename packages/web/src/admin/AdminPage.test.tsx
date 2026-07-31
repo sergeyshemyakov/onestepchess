@@ -186,6 +186,7 @@ const configFixture: AdminConfig = {
       defaultValue: 60,
       overrideValue: 77,
       effectiveValue: 77,
+      description: "Agent claims allowed per rolling hour.",
       effect: "new_claims",
       editable: true,
       updatedAt: "2026-07-26T10:00:00Z",
@@ -196,7 +197,20 @@ const configFixture: AdminConfig = {
       defaultValue: 8,
       overrideValue: null,
       effectiveValue: 8,
+      description: "Number of live games the pool keeps available.",
       effect: "new_games",
+      editable: true,
+      updatedAt: null,
+      updatedBy: null,
+    },
+    {
+      key: "HUMAN_BOARD_RESERVE_PERCENT",
+      defaultValue: 25,
+      overrideValue: null,
+      effectiveValue: 25,
+      description:
+        "Minimum percentage of live boards kept free for human claims.",
+      effect: "new_claims",
       editable: true,
       updatedAt: null,
       updatedBy: null,
@@ -405,9 +419,7 @@ describe("admin read panels (#73)", () => {
     expect(screen.getAllByText(/\$1\.25/).length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByRole("tab", { name: "GAMES" }));
-    const game = await screen.findByRole("button", {
-      name: "gentle-rook-042",
-    });
+    const game = await screen.findByRole("button", { name: "Game ops" });
     fireEvent.change(screen.getByLabelText("game id or name"), {
       target: { value: "gm_ops" },
     });
@@ -556,6 +568,17 @@ describe("admin mutations (#73)", () => {
     expect(screen.getByText("OVERRIDDEN")).not.toBeNull();
     expect(screen.getByText("next quota window / new claims")).not.toBeNull();
     expect(screen.getByText("new games")).not.toBeNull();
+    expect(
+      screen.getByText("Agent claims allowed per rolling hour."),
+    ).not.toBeNull();
+    expect(
+      screen.getByText("Number of live games the pool keeps available."),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(
+        "Minimum percentage of live boards kept free for human claims.",
+      ),
+    ).not.toBeNull();
     expect(screen.getByText("change history (1)")).not.toBeNull();
 
     fireEvent.change(input, { target: { value: "121" } });

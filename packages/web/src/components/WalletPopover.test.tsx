@@ -90,14 +90,15 @@ it("wallet_popover_fetches_balances_only_when_open", async () => {
 
   // -- Points and referral counters from the same profile fetch.
   expect(screen.getByTestId("popover-points").textContent).toContain(
-    "points 120",
+    "points: 120",
   );
   expect(screen.getByTestId("popover-invite").textContent).toContain(
     "2 joined · 1 qualified",
   );
+  expect(screen.queryByRole("button", { name: /sfx:/i })).toBeNull();
 
   // -- Copy controls: address and the ref-bearing invite link.
-  fireEvent.click(within(popover, "copy", 0));
+  fireEvent.click(within(popover, "📋", 0));
   expect(writeText).toHaveBeenCalledWith(playerFixture.address);
   const inviteCopy = screen
     .getByTestId("popover-invite")

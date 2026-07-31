@@ -1,12 +1,12 @@
 import { type ChessGame, createChess } from "@onestepchess/core";
 
 export type ChessThresholds = {
-  readonly ENDSPIEL_PLY: number;
   readonly ENDSPIEL_PIECES: number;
+  readonly REPETITION_WIN_MARGIN: number;
   readonly MAX_PLIES: number;
 };
 
-/** Adapters keyed by the three chess-threshold fields of `rules_json`
+/** Adapters keyed by the chess-threshold fields of `rules_json`
  * (server spec §7): config edits affect new games without touching live
  * ones; entries fall out of the LRU after their last game leaves the
  * working set. */
@@ -22,7 +22,7 @@ export class ChessAdapterRegistry {
   }
 
   get(rules: ChessThresholds): ChessGame {
-    const key = `${rules.ENDSPIEL_PLY}:${rules.ENDSPIEL_PIECES}:${rules.MAX_PLIES}`;
+    const key = `${rules.ENDSPIEL_PIECES}:${rules.REPETITION_WIN_MARGIN}:${rules.MAX_PLIES}`;
     const cached = this.adapters.get(key);
     if (cached !== undefined) {
       this.adapters.delete(key);
@@ -31,8 +31,8 @@ export class ChessAdapterRegistry {
     }
     const adapter = createChess(
       {
-        ENDSPIEL_PLY: rules.ENDSPIEL_PLY,
         ENDSPIEL_PIECES: rules.ENDSPIEL_PIECES,
+        REPETITION_WIN_MARGIN: rules.REPETITION_WIN_MARGIN,
         MAX_PLIES: rules.MAX_PLIES,
       },
       { cacheSize: this.historyCacheSize },

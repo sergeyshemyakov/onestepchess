@@ -6,8 +6,9 @@ import { Replayer, type ReplayerPly } from "./Replayer.jsx";
  * quick-view — archive grid cards are static by design. */
 export function DigestLoop(props: {
   readonly plies: readonly ReplayerPly[];
-  readonly highlightPly?: number;
+  readonly highlightPlies?: readonly number[];
   readonly caption?: string;
+  readonly finalNotice?: string;
 }) {
   return (
     <div className="digestloop">
@@ -16,10 +17,13 @@ export function DigestLoop(props: {
         autoPlay
         loop
         moveFx="glide"
-        {...(props.highlightPly === undefined
+        {...(props.highlightPlies === undefined
           ? {}
-          : { highlightPly: props.highlightPly })}
+          : { highlightPlies: props.highlightPlies })}
         {...(props.caption === undefined ? {} : { caption: props.caption })}
+        {...(props.finalNotice === undefined
+          ? {}
+          : { finalNotice: props.finalNotice })}
       />
     </div>
   );

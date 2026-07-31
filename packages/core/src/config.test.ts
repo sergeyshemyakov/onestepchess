@@ -10,8 +10,8 @@ const DEFAULTS = {
   DRAW_FEE: 0,
   PROTOCOL_FEE_BPS: 0,
   HUMAN_TARGET_MULT: 2,
-  ENDSPIEL_PLY: 60,
   ENDSPIEL_PIECES: 10,
+  REPETITION_WIN_MARGIN: 3,
   MAX_PLIES: 300,
   MIN_PLY_INTERVAL_SECONDS: 20,
   COOLDOWN_PLIES: 6,
@@ -55,9 +55,9 @@ describe("core configuration", () => {
     ["PROTOCOL_FEE_BPS", 0.5],
     ["HUMAN_TARGET_MULT", 0.99],
     ["HUMAN_TARGET_MULT", 1.001],
-    ["ENDSPIEL_PLY", 0],
     ["ENDSPIEL_PIECES", 1],
     ["ENDSPIEL_PIECES", 33],
+    ["REPETITION_WIN_MARGIN", 0],
     ["MAX_PLIES", 0],
     ["MIN_PLY_INTERVAL_SECONDS", 0],
     ["COOLDOWN_PLIES", 0],
@@ -72,12 +72,6 @@ describe("core configuration", () => {
     ["STALL_ABORT_HOURS", 0],
   ] as const)("rejects the pinned validation rule for %s=%s", (key, value) => {
     expect(coreConfigSchema.safeParse({ [key]: value }).success).toBe(false);
-  });
-
-  it("rejects ENDSPIEL_PLY above MAX_PLIES", () => {
-    expect(
-      coreConfigSchema.safeParse({ ENDSPIEL_PLY: 301, MAX_PLIES: 300 }).success,
-    ).toBe(false);
   });
 
   it("passes unknown keys and supports strict server-side extension", () => {
@@ -101,8 +95,8 @@ describe("core configuration", () => {
       "DRAW_FEE",
       "PROTOCOL_FEE_BPS",
       "HUMAN_TARGET_MULT",
-      "ENDSPIEL_PLY",
       "ENDSPIEL_PIECES",
+      "REPETITION_WIN_MARGIN",
       "MAX_PLIES",
       "MIN_PLY_INTERVAL_SECONDS",
       "COOLDOWN_PLIES",

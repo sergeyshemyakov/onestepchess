@@ -410,7 +410,7 @@ describe("resumable SSE and live human events", () => {
   });
 
   it("agent_nudges_require_agent_claimability_and_never_preempt_humans", async () => {
-    const stack = setup();
+    const stack = setup({ HUMAN_BOARD_RESERVE_PERCENT: 0 });
     const addresses = ["human-staked", "human-demo", "agent-one", "agent-two"];
     seedPlayer(stack, "human-staked");
     seedPlayer(stack, "human-demo");

@@ -23,18 +23,17 @@ const profile = {
 };
 
 const finishedGame = {
-  yourMove: { uci: "g1f3", san: "Nf3" },
+  yourMoves: [{ uci: "g1f3", san: "Nf3", ply: 3 }],
   yourSide: "white",
   demo: false,
   stakeMicroUsdc: 10_000,
-  claimedAt: "2026-07-19T10:00:00Z",
-  movedAt: "2026-07-19T10:02:30Z",
+  thinkingTimeMs: 150_000,
+  startedAt: "2026-07-19T10:00:00Z",
   gameId: "gm_release2",
   gameName: "crimson-rook-217",
   finalFen: "8/8/8/8/3k4/8/3K4/3Q4 b - - 0 61",
   result: "white",
   termination: "checkmate",
-  yourPly: 3,
   payTxid: "STAKETX2",
   payoutMicroUsdc: 20_000,
   payoutTxid: "PAYOUTTX1",

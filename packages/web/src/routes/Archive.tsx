@@ -19,7 +19,11 @@ import { QuickView } from "../games/QuickView.jsx";
 import { useGamesPage } from "../games/useGamesPage.js";
 import { explorerTxUrl } from "../lib/explorer.js";
 import { parseUci } from "../lib/fen.js";
-import { formatLocalTime, formatMicroUsdc } from "../lib/format.js";
+import {
+  formatGameLabel,
+  formatLocalTime,
+  formatMicroUsdc,
+} from "../lib/format.js";
 import { useLiveOptional } from "../live/LiveContext.jsx";
 
 function Pager(props: {
@@ -196,6 +200,7 @@ export function Archive(props: {
                     >
                       <span className="vt">— demo —</span>
                       <span>{outcomeGlyph(outcome)}</span>
+                      <span className="dim">you played {item.yourSide}</span>
                       <span className="chip">DEMO</span>
                     </button>
                   );
@@ -211,8 +216,9 @@ export function Archive(props: {
                     <span className="thumb" aria-hidden="true">
                       <Board fen={item.finalFen} />
                     </span>
-                    <span className="vt">{item.gameName}</span>
+                    <span className="vt">{formatGameLabel(item.gameId)}</span>
                     <span>{outcomeGlyph(outcome)}</span>
+                    <span className="dim">you played {item.yourSide}</span>
                     <span>{formatMicroUsdc(item.payoutMicroUsdc)}</span>
                   </button>
                 );

@@ -6,6 +6,7 @@ import {
   squareIndex,
   squareName,
 } from "../lib/fen.js";
+import { castlingRookMove } from "./castling.js";
 import { PieceGlyph } from "./pieces.jsx";
 import { useSquareSize } from "./useSquareSize.js";
 
@@ -158,6 +159,13 @@ function playFx(layer: HTMLDivElement, fx: BoardFx): () => void {
     `[data-square="${fx.to}"] svg.pc`,
   );
   if (glyph === null || glyph === undefined) return () => undefined;
+  const rookMove = castlingRookMove(fx.from, fx.to);
+  const rookGlyph =
+    rookMove === null
+      ? null
+      : (board?.querySelector<SVGElement>(
+          `[data-square="${rookMove.to}"] svg.pc`,
+        ) ?? null);
   const fromIndex = squareIndex(fx.from);
   const toIndex = squareIndex(fx.to);
   const at = (index: number): { readonly x: number; readonly y: number } => ({
@@ -168,19 +176,24 @@ function playFx(layer: HTMLDivElement, fx: BoardFx): () => void {
   const to = at(toIndex);
   const actors: HTMLElement[] = [];
   const timers: Array<ReturnType<typeof setTimeout>> = [];
-  const clone = (x: number, y: number, className: string): HTMLElement => {
+  const clone = (
+    actorGlyph: SVGElement,
+    x: number,
+    y: number,
+    className: string,
+  ): HTMLElement => {
     const holder = document.createElement("div");
     holder.className = `fxpc ${className}`;
     holder.style.width = "12.5%";
     holder.style.height = "12.5%";
     holder.style.transform = `translate(${x}%, ${y}%)`;
-    holder.appendChild(glyph.cloneNode(true));
+    holder.appendChild(actorGlyph.cloneNode(true));
     layer.appendChild(holder);
     actors.push(holder);
     return holder;
   };
   if (fx.capture === true) {
-    clone(to.x, to.y, "fx-burn");
+    clone(glyph, to.x, to.y, "fx-burn");
   }
   const target = board?.querySelector<HTMLElement>(`[data-square="${fx.to}"]`);
   const commitFlash = () => {
@@ -194,18 +207,33 @@ function playFx(layer: HTMLDivElement, fx: BoardFx): () => void {
     );
   };
   if (fx.kind === "glide") {
-    const glider = clone(from.x, from.y, "fx-glide");
-    glyph.style.visibility = "hidden";
+    const gliders = [{ node: clone(glyph, from.x, from.y, "fx-glide"), to }];
+    const hiddenGlyphs = [glyph];
+    if (rookMove !== null && rookGlyph !== null) {
+      gliders.push({
+        node: clone(
+          rookGlyph,
+          at(squareIndex(rookMove.from)).x,
+          at(squareIndex(rookMove.from)).y,
+          "fx-glide",
+        ),
+        to: at(squareIndex(rookMove.to)),
+      });
+      hiddenGlyphs.push(rookGlyph);
+    }
+    for (const hidden of hiddenGlyphs) hidden.style.visibility = "hidden";
     // Double rAF: the clone's start position must be committed before the
     // transition begins, otherwise the glide gets skipped (UI suggestions).
     let raf = requestAnimationFrame(() => {
       raf = requestAnimationFrame(() => {
-        glider.style.transform = `translate(${to.x}%, ${to.y}%)`;
+        for (const glider of gliders) {
+          glider.node.style.transform = `translate(${glider.to.x}%, ${glider.to.y}%)`;
+        }
       });
     });
     timers.push(
       setTimeout(() => {
-        glyph.style.visibility = "";
+        for (const hidden of hiddenGlyphs) hidden.style.visibility = "";
         for (const node of actors) node.remove();
         commitFlash();
       }, 340),
@@ -214,12 +242,12 @@ function playFx(layer: HTMLDivElement, fx: BoardFx): () => void {
       cancelAnimationFrame(raf);
       for (const timer of timers) clearTimeout(timer);
       for (const node of actors) node.remove();
-      glyph.style.visibility = "";
+      for (const hidden of hiddenGlyphs) hidden.style.visibility = "";
       target?.classList.remove("flash");
       board?.classList.remove("commitflash");
     };
   }
-  const eraser = clone(from.x, from.y, "fx-erase");
+  const eraser = clone(glyph, from.x, from.y, "fx-erase");
   const sweep = document.createElement("div");
   sweep.className = "fx-sweep";
   layer.appendChild(sweep);

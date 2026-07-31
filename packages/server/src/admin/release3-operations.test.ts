@@ -527,12 +527,21 @@ describe("Release 3 admin reads", () => {
     });
     const body = (await response.json()) as {
       revision: number;
-      items: { key: string; overrideValue: unknown; effect: string }[];
+      items: {
+        key: string;
+        overrideValue: unknown;
+        description: string;
+        effect: string;
+      }[];
       history: unknown[];
     };
     expect(body.revision).toBe(1);
     expect(body.items.find((item) => item.key === "QUOTA_AGENT")).toMatchObject(
-      { overrideValue: 77, effect: "new_claims" },
+      {
+        overrideValue: 77,
+        description: "Agent claims allowed per rolling hour.",
+        effect: "new_claims",
+      },
     );
     expect(body.history).toHaveLength(1);
   });
@@ -629,6 +638,73 @@ describe("Release 3 admin mutations", () => {
     ).toBe(beforeRules);
     expect(identity.status).toBe(400);
     expect(invalid.status).toBe(400);
+  });
+
+  it("admin_board_exposes_and_updates_the_repetition_win_margin_for_new_games", async () => {
+    const stack = setup();
+    const before = (await (
+      await stack.app.request("/api/v1/admin/config", {
+        headers: tokenHeaders(),
+      })
+    ).json()) as {
+      items: {
+        key: string;
+        effectiveValue: unknown;
+        effect: string;
+        editable: boolean;
+      }[];
+    };
+    expect(
+      before.items.find((item) => item.key === "REPETITION_WIN_MARGIN"),
+    ).toMatchObject({
+      effectiveValue: 3,
+      effect: "new_games",
+      editable: true,
+    });
+
+    const changed = await jsonRequest(
+      stack,
+      "/api/v1/admin/config/REPETITION_WIN_MARGIN",
+      "PUT",
+      { value: 5 },
+    );
+    expect(changed.status).toBe(200);
+    expect(stack.config().REPETITION_WIN_MARGIN).toBe(5);
+  });
+
+  it("admin_board_exposes_and_updates_the_human_board_reserve_for_new_claims", async () => {
+    const stack = setup();
+    const before = (await (
+      await stack.app.request("/api/v1/admin/config", {
+        headers: tokenHeaders(),
+      })
+    ).json()) as {
+      items: {
+        key: string;
+        effectiveValue: unknown;
+        description: string;
+        effect: string;
+        editable: boolean;
+      }[];
+    };
+    expect(
+      before.items.find((item) => item.key === "HUMAN_BOARD_RESERVE_PERCENT"),
+    ).toMatchObject({
+      effectiveValue: 25,
+      description:
+        "Minimum percentage of live boards kept free for human claims.",
+      effect: "new_claims",
+      editable: true,
+    });
+
+    const changed = await jsonRequest(
+      stack,
+      "/api/v1/admin/config/HUMAN_BOARD_RESERVE_PERCENT",
+      "PUT",
+      { value: 40 },
+    );
+    expect(changed.status).toBe(200);
+    expect(stack.config().HUMAN_BOARD_RESERVE_PERCENT).toBe(40);
   });
 
   it("admin_abort_refunds_after_expiring_claim_and_rejects_inflight_payment", async () => {

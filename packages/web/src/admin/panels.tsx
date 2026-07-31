@@ -24,6 +24,7 @@ import type {
 import { Board } from "../board/Board.jsx";
 import { explorerTxUrl } from "../lib/explorer.js";
 import {
+  formatGameLabel,
   formatLocalTime,
   formatMicroAlgo,
   formatMicroUsdc,
@@ -643,9 +644,7 @@ function GameDossier(props: {
     <section className="admin-dossier" aria-label="game dossier">
       <header>
         <div>
-          <h3>
-            {game.name} · {game.id}
-          </h3>
+          <h3>{formatGameLabel(game.id)}</h3>
           <p>
             {game.status} · ply {game.ply} · {game.result ?? "ongoing"} ·{" "}
             {game.termination ?? "no termination"}
@@ -934,9 +933,8 @@ export function GamesPanel(props: {
                       className="admin-link"
                       onClick={() => openGame(game.id)}
                     >
-                      {game.name}
+                      {formatGameLabel(game.id)}
                     </button>
-                    <small>{game.id}</small>
                   </td>
                   <td>
                     {game.status} · ply {game.ply}
@@ -1001,6 +999,9 @@ function ConfigRow(props: {
     <tr>
       <td>
         <strong>{props.item.key}</strong>
+        <span className="admin-config-description">
+          {props.item.description}
+        </span>
         <small>{effectLabel(props.item)}</small>
       </td>
       <td>

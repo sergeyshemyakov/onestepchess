@@ -20,7 +20,7 @@ describe("I7 leak-test helper self-test (#27)", () => {
   });
 
   it("passes on a clean surface", () => {
-    const view = render(<div>board reserved · T−04:12</div>);
+    const view = render(<div>board is yours · T−04:12</div>);
     expect(() =>
       assertNoGameIdentity(view.container, ["gentle-rook-042", "gm_123"]),
     ).not.toThrow();

@@ -10,7 +10,11 @@ import { CardCache } from "../../cards/raster.js";
 import { buildCardSvg, type CardOutcome } from "../../cards/svg.js";
 import type { Coordinator } from "../../coordinator/queue.js";
 import { schema } from "../../db/open.js";
-import { findTerminalReplayGame, parseStoredReplay } from "../../replays.js";
+import {
+  findTerminalReplayGame,
+  parseStoredReplay,
+  repetitionAdjudicationFor,
+} from "../../replays.js";
 import { type AppEnv, AppError } from "../app.js";
 import {
   cardQuerySchema,
@@ -284,58 +288,130 @@ export function registerHumanRoutes(
             )
             .all();
     const jobByGame = new Map(jobs.map((job) => [job.gameId, job]));
+    const groupedParticipations =
+      query.status === "ongoing"
+        ? participations.map((participation) => [participation])
+        : [
+            ...participations
+              .reduce((byGame, participation) => {
+                const group = byGame.get(participation.game.id) ?? [];
+                group.push(participation);
+                byGame.set(participation.game.id, group);
+                return byGame;
+              }, new Map<string, (typeof participations)[number][]>())
+              .values(),
+          ];
     const pageSize =
       query.status === "ongoing"
         ? deps.config().PAGE_SIZE_ACTIVE
         : deps.config().PAGE_SIZE_FINISHED;
-    const total = participations.length;
+    const total = groupedParticipations.length;
     const pageCount = Math.ceil(total / pageSize);
-    const selected = participations.slice(
+    const selected = groupedParticipations.slice(
       (query.page - 1) * pageSize,
       query.page * pageSize,
     );
-    const items = selected.map(({ claim, game }) => {
-      if (
-        claim.moveUci === null ||
-        claim.moveSan === null ||
-        claim.movedAt === null ||
-        claim.fenBefore === null
-      )
-        throw new Error(`moved claim ${claim.id} lacks move data`);
-      const entry = entryByClaim.get(claim.id);
-      const common = {
-        yourMove: { uci: claim.moveUci, san: claim.moveSan },
-        yourSide: claim.side,
-        demo: claim.demo,
-        stakeMicroUsdc: claim.stakeMicrousdc,
-        claimedAt: new Date(claim.createdAt).toISOString(),
-        movedAt: new Date(claim.movedAt).toISOString(),
-      };
-      if (query.status === "ongoing")
+    const items = selected.map((group) => {
+      const first = group[0];
+      if (first === undefined) throw new Error("empty participation group");
+      const { claim, game } = first;
+      for (const participation of group) {
+        if (
+          participation.claim.moveUci === null ||
+          participation.claim.moveSan === null ||
+          participation.claim.movedAt === null ||
+          participation.claim.fenBefore === null
+        )
+          throw new Error(
+            `moved claim ${participation.claim.id} lacks move data`,
+          );
+      }
+      if (query.status === "ongoing") {
+        if (
+          claim.moveUci === null ||
+          claim.moveSan === null ||
+          claim.movedAt === null ||
+          claim.fenBefore === null
+        )
+          throw new Error(`moved claim ${claim.id} lacks move data`);
         return {
-          ...common,
+          yourMove: { uci: claim.moveUci, san: claim.moveSan },
+          yourSide: claim.side,
+          demo: claim.demo,
+          stakeMicroUsdc: claim.stakeMicrousdc,
+          claimedAt: new Date(claim.createdAt).toISOString(),
+          movedAt: new Date(claim.movedAt).toISOString(),
           fenBeforeYourMove: claim.fenBefore,
-          payTxid: entry?.payTxid ?? null,
+          payTxid: entryByClaim.get(claim.id)?.payTxid ?? null,
         };
+      }
       if (
         game.result === null ||
         game.termination === null ||
         game.finishedAt === null
       )
         throw new Error(`terminal game ${game.id} lacks result data`);
-      if (claim.demo)
+      const ordered = [...group].sort(
+        (a, b) =>
+          (a.claim.movedPly ?? Number.MAX_SAFE_INTEGER) -
+          (b.claim.movedPly ?? Number.MAX_SAFE_INTEGER),
+      );
+      const thinkingTimeMs = ordered.reduce(
+        (totalMs, participation) =>
+          totalMs +
+          Math.max(
+            0,
+            (participation.claim.movedAt as number) -
+              participation.claim.createdAt,
+          ),
+        0,
+      );
+      const stakeMicroUsdc = ordered.reduce(
+        (totalStake, participation) =>
+          totalStake + participation.claim.stakeMicrousdc,
+        0,
+      );
+      const finishedCommon = {
+        yourSide: claim.side,
+        stakeMicroUsdc,
+        thinkingTimeMs,
+        startedAt: new Date(game.createdAt).toISOString(),
+        result: game.result,
+        termination: game.termination,
+        repetitionAdjudication: repetitionAdjudicationFor(game),
+        finishedAt: new Date(game.finishedAt).toISOString(),
+      };
+      if (ordered.every((participation) => participation.claim.demo))
         return {
-          ...common,
-          result: game.result,
-          termination: game.termination,
+          ...finishedCommon,
+          yourMoves: ordered.map((participation) => ({
+            uci: participation.claim.moveUci as string,
+            san: participation.claim.moveSan as string,
+          })),
+          demo: true,
           payoutMicroUsdc: 0,
           payoutStatus: null,
           statsCounted: false,
-          finishedAt: new Date(game.finishedAt).toISOString(),
         };
-      if (entry === undefined || claim.movedPly === null)
-        throw new Error(`staked claim ${claim.id} lacks entry data`);
-      const payout = entry.payoutAmount ?? 0;
+      for (const participation of ordered) {
+        if (participation.claim.movedPly === null)
+          throw new Error(
+            `staked game ${game.id} has a claim without moved ply`,
+          );
+        if (
+          !participation.claim.demo &&
+          entryByClaim.get(participation.claim.id) === undefined
+        )
+          throw new Error(
+            `staked claim ${participation.claim.id} lacks entry data`,
+          );
+      }
+      const payout = ordered.reduce(
+        (totalPayout, participation) =>
+          totalPayout +
+          (entryByClaim.get(participation.claim.id)?.payoutAmount ?? 0),
+        0,
+      );
       const job = jobByGame.get(game.id);
       const payoutStatus =
         payout === 0
@@ -346,19 +422,24 @@ export function registerHumanRoutes(
               ? "failed"
               : "queued";
       return {
-        ...common,
+        ...finishedCommon,
+        yourMoves: ordered.map((participation) => ({
+          uci: participation.claim.moveUci as string,
+          san: participation.claim.moveSan as string,
+          ply: participation.claim.movedPly as number,
+        })),
+        demo: false,
         gameId: game.id,
         gameName: game.name,
         finalFen: game.fen,
-        result: game.result,
-        termination: game.termination,
-        yourPly: claim.movedPly,
-        payTxid: entry.payTxid,
+        payTxid:
+          ordered.length === 1
+            ? (entryByClaim.get(claim.id)?.payTxid ?? null)
+            : null,
         payoutMicroUsdc: payout,
         payoutTxid: job?.txid ?? null,
         payoutStatus,
         statsCounted: true,
-        finishedAt: new Date(game.finishedAt).toISOString(),
       };
     });
     return c.json({ items, page: query.page, pageCount, total });
@@ -408,6 +489,7 @@ export function registerHumanRoutes(
       name: game.name,
       result: game.result,
       termination: game.termination,
+      repetitionAdjudication: repetitionAdjudicationFor(game),
       endspielPly: game.endspielPly,
       createdAt: new Date(game.createdAt).toISOString(),
       finishedAt: new Date(game.finishedAt).toISOString(),

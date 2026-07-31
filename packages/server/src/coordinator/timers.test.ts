@@ -193,4 +193,22 @@ describe("timer service", () => {
     expect(timers.armed("payoutAttempt", "pj_1")).toBe(true);
     expect(timers.armed("nudge", "clm_2")).toBe(true);
   });
+
+  it("skips nudges already due when restoring timers at boot", () => {
+    const { database, timers } = setup();
+    seedOpenClaim(database, 30_000);
+    database.sqlite
+      .prepare(
+        `INSERT INTO claims (id, game_id, player, side, stake_microusdc, status, created_at, deadline, moved_at, nudge_due_at)
+         VALUES ('clm_due', 'gm_1', 'addr-a', 'white', 1000, 'moved', 0, 1000, 1000, 10000),
+                ('clm_future', 'gm_1', 'addr-a', 'black', 1000, 'moved', 0, 1000, 1000, 20000)`,
+      )
+      .run();
+
+    vi.setSystemTime(15_000);
+    rearmTimers(database.db, timers, Date.now(), 120);
+
+    expect(timers.armed("nudge", "clm_due")).toBe(false);
+    expect(timers.armed("nudge", "clm_future")).toBe(true);
+  });
 });

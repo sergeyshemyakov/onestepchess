@@ -72,8 +72,9 @@ export function parseGameRules(rulesJson: string): GameRules {
   return gameRulesSchema.parse(JSON.parse(rulesJson));
 }
 
-/** Boot re-arm (F1 step 7): every timer is derived from its DB deadline
- * column; no timer state survives only in memory. */
+/** Boot re-arm (F1 step 7): timers are derived from DB deadline columns; no
+ * timer state survives only in memory. Overdue nudges are handled by the
+ * periodic global sweep so a restart cannot fan out historic notifications. */
 export function rearmTimers(
   db: Db,
   timers: TimerService,
@@ -113,7 +114,7 @@ export function rearmTimers(
     )
     .all();
   for (const claim of pendingNudges) {
-    if (claim.nudgeDueAt !== null) {
+    if (claim.nudgeDueAt !== null && claim.nudgeDueAt > now) {
       timers.arm("nudge", claim.id, claim.nudgeDueAt);
     }
   }

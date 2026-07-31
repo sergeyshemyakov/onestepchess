@@ -77,7 +77,7 @@ export function Timer(props: {
     const pct = Math.round((left / total) * 200) / 2;
     return (
       <span className={className} data-phase={phase}>
-        ▮ board reserved
+        ▮ board is yours
         <span className="bar">
           <i style={{ width: `${Math.min(100, pct)}%` }} />
         </span>

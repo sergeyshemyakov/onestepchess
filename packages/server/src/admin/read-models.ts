@@ -11,7 +11,11 @@ import {
   type OperationalState,
   readReconciliationReport,
 } from "../operations/reconciliation.js";
-import { configEditable, configEffect } from "./config-metadata.js";
+import {
+  configDescription,
+  configEditable,
+  configEffect,
+} from "./config-metadata.js";
 
 const HOUR_MS = 3_600_000;
 const PAGE_SIZE = 25;
@@ -641,6 +645,7 @@ export function adminConfig(deps: AdminReadDeps) {
           overrideValue:
             override === undefined ? null : JSON.parse(override.valueJson),
           effectiveValue: current[typedKey],
+          description: configDescription(typedKey),
           effect: configEffect(typedKey),
           editable: configEditable(typedKey),
           updatedAt: iso(override?.updatedAt ?? null),

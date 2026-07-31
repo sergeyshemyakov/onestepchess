@@ -1,8 +1,10 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "react-router";
 import type { ApiClient } from "../api/client.js";
 import type { ReplayPly, ReplayView } from "../api/schemas.js";
 import { AppShell } from "../components/AppShell.jsx";
+import { replayPath } from "../games/items.js";
+import { repetitionAdjudicationNotice } from "../games/outcome.js";
 import { copyText } from "../lib/clipboard.js";
 import { formatGameLabel, formatMicroUsdc } from "../lib/format.js";
 import { toReplayerPlies } from "../replay/plies.js";
@@ -12,7 +14,22 @@ import { NotFound } from "./NotFound.jsx";
 
 // F-W6 public replay: one GET renders everything; the page never calls
 // authenticated endpoints. Unknown or non-terminal ids 404 → NotFound with
-// no retry loop. `?ply=` is a client-side own-move hint from finished cards.
+// no retry loop. `?plies=` carries shareable own-move hints from finished cards.
+
+export function parseHighlightedPlies(
+  value: string | null,
+  maximum: number,
+): number[] {
+  if (value === null || value === "") return [];
+  return [
+    ...new Set(
+      value
+        .split(",")
+        .map(Number)
+        .filter((ply) => Number.isInteger(ply) && ply >= 1 && ply <= maximum),
+    ),
+  ].sort((a, b) => a - b);
+}
 
 function downloadPgn(replay: ReplayView): void {
   try {
@@ -20,7 +37,7 @@ function downloadPgn(replay: ReplayView): void {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `${replay.name}.pgn`;
+    anchor.download = `${replay.gameId.replace(/^gm_/, "")}.pgn`;
     anchor.click();
     URL.revokeObjectURL(url);
   } catch {
@@ -31,23 +48,27 @@ function downloadPgn(replay: ReplayView): void {
 export function Replay(props: { readonly client: ApiClient }) {
   const { gameId } = useParams();
   const [searchParams] = useSearchParams();
-  const hintParam = Number(searchParams.get("ply") ?? "");
   const { load, retry } = useReplay(props.client, gameId);
+  const rawPlies = searchParams.get("plies");
+  const highlightPlies = useMemo(
+    () =>
+      parseHighlightedPlies(
+        rawPlies,
+        load.kind === "ready"
+          ? load.replay.plies.length
+          : Number.MAX_SAFE_INTEGER,
+      ),
+    [load, rawPlies],
+  );
   const [ply, setPly] = useState(0);
   const [author, setAuthor] = useState<ReplayPly["author"] | null>(null);
   const [copied, setCopied] = useState(false);
-  // The query hint applies when a replay loads; scrubbing owns it afterward.
-  // biome-ignore lint/correctness/useExhaustiveDependencies(hintParam): changing only ?ply= must not reset the current scrub position
+  // The first query hint applies when a replay loads; scrubbing owns it afterward.
+  const initialHighlightPly = highlightPlies[0] ?? 0;
   useEffect(() => {
     if (load.kind !== "ready") return;
-    const hint =
-      Number.isInteger(hintParam) &&
-      hintParam >= 1 &&
-      hintParam <= load.replay.plies.length
-        ? hintParam
-        : 0;
-    setPly(hint);
-  }, [load]);
+    setPly(initialHighlightPly);
+  }, [load, initialHighlightPly]);
 
   if (load.kind === "missing") {
     return <NotFound standalone />;
@@ -75,13 +96,10 @@ export function Replay(props: { readonly client: ApiClient }) {
     );
   }
   const replay = load.replay;
-
-  const highlightPly =
-    Number.isInteger(hintParam) &&
-    hintParam >= 1 &&
-    hintParam <= replay.plies.length
-      ? hintParam
-      : undefined;
+  const finalNotice = repetitionAdjudicationNotice(
+    replay.result,
+    replay.repetitionAdjudication,
+  );
 
   return (
     <AppShell showSystemBanner={false}>
@@ -93,13 +111,16 @@ export function Replay(props: { readonly client: ApiClient }) {
             </header>
             <Replayer
               plies={toReplayerPlies(replay.plies)}
+              autoPlay
               controls
+              speedControl
               loop
               loopToggle
               moveFx="glide"
               ply={ply}
               onScrub={setPly}
-              {...(highlightPly === undefined ? {} : { highlightPly })}
+              highlightPlies={highlightPlies}
+              {...(finalNotice === null ? {} : { finalNotice })}
             />
           </div>
           <div className="movelist" data-testid="move-list">
@@ -118,7 +139,7 @@ export function Replay(props: { readonly client: ApiClient }) {
                   className={[
                     "plyrow",
                     item.ply === ply ? "cur" : "",
-                    item.ply === highlightPly ? "own" : "",
+                    highlightPlies.includes(item.ply) ? "own" : "",
                   ]
                     .filter(Boolean)
                     .join(" ")}
@@ -163,7 +184,11 @@ export function Replay(props: { readonly client: ApiClient }) {
             className="btn mini"
             onClick={() => {
               void copyText(
-                `${window.location.origin}/replay/${replay.gameId}`,
+                `${window.location.origin}${
+                  highlightPlies.length === 0
+                    ? `/replay/${replay.gameId}`
+                    : replayPath(replay.gameId, highlightPlies)
+                }`,
               ).then((success) => {
                 if (success) setCopied(true);
               });

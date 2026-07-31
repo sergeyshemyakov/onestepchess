@@ -1,4 +1,4 @@
-import type { GameResult } from "../api/schemas.js";
+import type { GameResult, RepetitionAdjudication } from "../api/schemas.js";
 
 export type Outcome = "won" | "lost" | "draw" | "aborted";
 
@@ -23,4 +23,14 @@ export function outcomeGlyph(outcome: Outcome): string {
     case "aborted":
       return "ABORTED — fully refunded";
   }
+}
+
+export function repetitionAdjudicationNotice(
+  result: GameResult,
+  adjudication: RepetitionAdjudication,
+): string | null {
+  if (adjudication === null || (result !== "white" && result !== "black")) {
+    return null;
+  }
+  return `${result === "white" ? "White" : "Black"} won on repetition · material White ${adjudication.whiteMaterialPoints} – Black ${adjudication.blackMaterialPoints}`;
 }

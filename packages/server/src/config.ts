@@ -1,6 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { parseEnv } from "node:util";
 import { coreConfigSchema } from "@onestepchess/core";
 import { z } from "zod";
 
@@ -41,7 +43,7 @@ export const serverConfigSchema = coreConfigSchema
   .extend({
     TIMER_REVEAL_SECONDS: positiveInt.default(120),
     NEXT_GAME_NUDGE_SECONDS: positiveInt.default(20),
-    PAGE_SIZE_ACTIVE: positiveInt.default(10),
+    PAGE_SIZE_ACTIVE: positiveInt.default(5),
     PAGE_SIZE_FINISHED: positiveInt.default(10),
     NONCE_TTL_SECONDS: positiveInt.default(300),
     JWT_TTL_HOURS: positiveInt.default(24),
@@ -51,6 +53,7 @@ export const serverConfigSchema = coreConfigSchema
     PAYMENT_RECOVERY_TIMEOUT_SECONDS: positiveInt.default(180),
     RATE_LIMIT_AUTH_PER_IP_MIN: positiveInt.default(10),
     RATE_LIMIT_CLAIMS_PER_IP_MIN: positiveInt.default(30),
+    HUMAN_BOARD_RESERVE_PERCENT: z.number().int().min(0).max(100).default(25),
     SSE_HEARTBEAT_SECONDS: positiveInt.default(25),
     SSE_MAX_CONNECTIONS_PER_PLAYER: positiveInt.default(4),
     EVENTS_RETENTION_DAYS: positiveInt.default(7),
@@ -133,6 +136,23 @@ export type LoadedConfig = {
   readonly env: ServerEnv;
   readonly configPath: string | null;
 };
+
+const SERVER_PACKAGE_ENV_PATH = fileURLToPath(
+  new URL("../.env", import.meta.url),
+);
+
+export function loadServerPackageEnvironment(
+  options: {
+    readonly path?: string;
+    readonly env?: Readonly<Record<string, string | undefined>>;
+  } = {},
+): Readonly<Record<string, string | undefined>> {
+  const runtime = options.env ?? process.env;
+  const path = options.path ?? SERVER_PACKAGE_ENV_PATH;
+  if (!existsSync(path)) return runtime;
+  const packageEnv = parseEnv(readFileSync(path, "utf8"));
+  return { ...packageEnv, ...runtime };
+}
 
 function resolveConfigPath(explicit: string | undefined): string | null {
   if (explicit !== undefined) {

@@ -1,4 +1,5 @@
 import type { ApiClient } from "../api/client.js";
+import { repetitionAdjudicationNotice } from "../games/outcome.js";
 import { DigestLoop } from "./DigestLoop.jsx";
 import { toReplayerPlies } from "./plies.js";
 import { useReplay } from "./useReplay.js";
@@ -8,7 +9,7 @@ import { useReplay } from "./useReplay.js";
 export function CachedDigest(props: {
   readonly client: ApiClient;
   readonly gameId: string;
-  readonly highlightPly: number;
+  readonly highlightPlies: readonly number[];
 }) {
   const { load, retry } = useReplay(props.client, props.gameId);
 
@@ -27,10 +28,15 @@ export function CachedDigest(props: {
       </p>
     );
   }
+  const finalNotice = repetitionAdjudicationNotice(
+    load.replay.result,
+    load.replay.repetitionAdjudication,
+  );
   return (
     <DigestLoop
       plies={toReplayerPlies(load.replay.plies)}
-      highlightPly={props.highlightPly}
+      highlightPlies={props.highlightPlies}
+      {...(finalNotice === null ? {} : { finalNotice })}
     />
   );
 }

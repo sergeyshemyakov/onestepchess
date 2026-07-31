@@ -19,6 +19,7 @@ export function ConnectSheet(props: {
 }) {
   const [wallets, setWallets] = useState<readonly WalletChoice[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const [walletConnected, setWalletConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<PendingRegistration | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -48,6 +49,7 @@ export function ConnectSheet(props: {
       try {
         module = await loadWalletModule();
         const wallet = await module.connect(id);
+        setWalletConnected(true);
         const ref = readRef();
         const outcome = await loginWithWallet({
           client,
@@ -66,6 +68,7 @@ export function ConnectSheet(props: {
             onClose();
             return;
           case "error":
+            setWalletConnected(false);
             setError(outcome.message);
             return;
         }
@@ -75,6 +78,7 @@ export function ConnectSheet(props: {
           return;
         }
         await module?.disconnect().catch(() => undefined);
+        setWalletConnected(false);
         setError(
           "wallet sign-in failed — check your wallet connection, then try again",
         );
@@ -98,6 +102,8 @@ export function ConnectSheet(props: {
       />
     );
   }
+
+  if (walletConnected) return null;
 
   return (
     <div className="modalback">

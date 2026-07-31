@@ -29,81 +29,130 @@ import {
 } from "./release3-harness.js";
 
 const DEFAULT_ENDSPIEL_SCRIPT = [
-  "e2e3",
-  "h7h5",
-  "f1e2",
-  "g8f6",
-  "e2b5",
-  "e7e6",
-  "b5a4",
-  "b7b5",
-  "a2a3",
-  "h8h7",
-  "g2g4",
-  "b5b4",
-  "d1e2",
-  "d8e7",
-  "e1f1",
-  "h7h6",
   "c2c3",
-  "g7g6",
+  "b7b5",
+  "f2f4",
+  "f7f6",
+  "c3c4",
+  "b5c4",
   "h2h3",
-  "b4c3",
-  "d2d3",
-  "f6g4",
-  "e2d1",
-  "e7d8",
-  "b2b4",
-  "d8f6",
-  "d1b3",
-  "f6f5",
-  "a4b5",
-  "f5f3",
-  "a3a4",
   "b8c6",
-  "b1d2",
-  "c6b8",
-  "a1b1",
-  "c7c5",
+  "b1a3",
+  "a7a6",
+  "a3c4",
+  "c6d4",
+  "c4a3",
+  "d4f3",
+  "g1f3",
+  "e7e6",
+  "f3d4",
+  "f8a3",
+  "d4e6",
+  "a3b2",
+  "e6d8",
+  "b2a1",
+  "d8b7",
+  "c8b7",
+  "e2e3",
+  "b7g2",
+  "f1a6",
+  "g2h1",
+  "e1f1",
+  "a8a6",
+  "d1g4",
+  "a6a2",
+  "g4g7",
+  "f6f5",
+  "g7d7",
+  "e8d7",
   "e3e4",
-  "f3f4",
-  "b5a6",
-  "f4h2",
-  "f2f3",
-  "c5c4",
-  "b3c4",
-  "h2h3",
+  "f5e4",
+  "d2d4",
+  "a1d4",
+  "c1b2",
+  "a2b2",
   "f1e1",
-  "h3g2",
-  "d3d4",
-  "c8a6",
-  "c4f1",
-  "g4h2",
-  "f1b5",
-  "a6b5",
-  "e4e5",
-  "g2g3",
+  "b2a2",
+  "f4f5",
+  "g8f6",
   "e1d1",
+  "a2b2",
+  "d1e1",
+  "f6g8",
+  "e1f1",
+  "h1g2",
+  "f1e1",
+  "g2h3",
+  "f5f6",
+  "b2b6",
+  "e1e2",
+  "b6f6",
+  "e2e1",
+  "f6f4",
+  "e1e2",
+  "h3e6",
+  "e2d1",
+  "e4e3",
+  "d1e2",
+  "f4f3",
+  "e2f3",
+  "e6f7",
+  "f3g4",
+  "g8h6",
+  "g4g3",
+  "d4c5",
   "g3h3",
-  "d2c4",
-  "f7f5",
-  "c1e3",
-  "h3f1",
-  "d1c2",
-  "f1c1",
-  "c2b3",
-  "b5a4",
-  "b3a4",
-  "c3c2",
-  "c4b6",
-  "c1a3",
-  "a4b5",
-  "c2b1n",
-  "g1e2",
-  "h5h4",
-  "b6a4",
-  "a3b4",
+  "f7g6",
+  "h3g3",
+  "d7e8",
+  "g3f4",
+  "g6h5",
+  "f4g3",
+  "e8e7",
+  "g3h4",
+  "c7c6",
+  "h4h5",
+  "e7d6",
+  "h5h6",
+  "e3e2",
+  "h6h5",
+  "h7h6",
+  "h5g4",
+  "c5f2",
+  "g4f3",
+  "d6e5",
+  "f3f2",
+  "e2e1r",
+  "f2f3",
+  "h8c8",
+  "f3g2",
+  "c8d8",
+  "g2h3",
+  "e5d6",
+  "h3h2",
+  "d6e5",
+  "h2g3",
+  "e5d5",
+  "g3f3",
+  "e1e7",
+  "f3g3",
+  "d5d6",
+  "g3h4",
+  "e7c7",
+  "h4g4",
+  "d8a8",
+  "g4f3",
+  "c7f7",
+  "f3g2",
+  "a8g8",
+  "g2h3",
+  "f7f3",
+  "h3h2",
+  "g8g5",
+  "h2h1",
+  "f3h3",
 ] as const;
+const ENDSPIEL_ENTRY_PLY = 58;
 
 type Scenario = {
   readonly stack: Release3Harness;
@@ -162,7 +211,7 @@ async function buildScenario(): Promise<Scenario> {
       actor = blackAgents[
         (ply / 2 - 1) % blackAgents.length
       ] as PublicAgentDriver;
-    } else if (ply <= stack.config.ENDSPIEL_PLY) {
+    } else if (ply <= ENDSPIEL_ENTRY_PLY) {
       const whiteBeforeEndspiel = [human, whiteAgents[0], whiteAgents[1]];
       actor = whiteBeforeEndspiel[
         ((ply - 1) / 2) % whiteBeforeEndspiel.length
@@ -170,12 +219,11 @@ async function buildScenario(): Promise<Scenario> {
     } else {
       const whiteAfterEndspiel = [
         whiteAgents[2],
-        whiteAgents[0],
         whiteAgents[1],
+        whiteAgents[0],
       ];
       actor = whiteAfterEndspiel[
-        ((ply - (stack.config.ENDSPIEL_PLY + 1)) / 2) %
-          whiteAfterEndspiel.length
+        ((ply - (ENDSPIEL_ENTRY_PLY + 1)) / 2) % whiteAfterEndspiel.length
       ] as PublicAgentDriver;
     }
 
@@ -196,7 +244,7 @@ async function buildScenario(): Promise<Scenario> {
     }
     stack.advancePacing();
 
-    if (ply === stack.config.ENDSPIEL_PLY) {
+    if (ply === ENDSPIEL_ENTRY_PLY) {
       expect(await human.claim(), "humans are excluded at endspiel").toBeNull();
     }
   }
@@ -241,7 +289,7 @@ describe.sequential("Release 3 public clients", () => {
     const games = stack.database.db.select().from(schema.games).all();
     const finished = games.find((game) => game.id === scenario.finishedGameId);
     expect(finished?.ply).toBe(DEFAULT_ENDSPIEL_SCRIPT.length);
-    expect(finished?.endspielPly).toBe(stack.config.ENDSPIEL_PLY);
+    expect(finished?.endspielPly).toBe(ENDSPIEL_ENTRY_PLY);
     expect(finished?.result).toBe("black");
     expect(finished?.termination).toBe("checkmate");
     expect(
@@ -252,7 +300,7 @@ describe.sequential("Release 3 public clients", () => {
         .some(
           (claim) =>
             claim.player === scenario.human.address &&
-            (claim.movedPly ?? 0) > stack.config.ENDSPIEL_PLY,
+            (claim.movedPly ?? 0) > ENDSPIEL_ENTRY_PLY,
         ),
     ).toBe(false);
     expect(

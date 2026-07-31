@@ -9,6 +9,7 @@ import {
 } from "../lib/fen.js";
 import { useLoopGate } from "../replay/useLoopGate.js";
 import { Board } from "./Board.jsx";
+import { castlingRookMove } from "./castling.js";
 import { PieceGlyph } from "./pieces.jsx";
 import { useSquareSize } from "./useSquareSize.js";
 
@@ -28,9 +29,11 @@ const PHASES: ReadonlyArray<readonly [Phase, number]> = [
 /** SAN letter → piece; anything unrecognised is a pawn. */
 function pieceFromSan(san: string, side: Side): Piece {
   const letter = san[0] ?? "";
-  const type: PieceType = "NBRQK".includes(letter)
-    ? (letter.toLowerCase() as PieceType)
-    : "p";
+  const type: PieceType = san.startsWith("O-O")
+    ? "k"
+    : "NBRQK".includes(letter)
+      ? (letter.toLowerCase() as PieceType)
+      : "p";
   return { type, side };
 }
 
@@ -75,6 +78,15 @@ export function BoardLoop(props: {
   const board = props.fen === undefined ? null : parseFenBoard(props.fen);
   const mover =
     board?.[squareIndex(props.from)] ?? pieceFromSan(props.san, props.side);
+  const rookMove =
+    mover.type === "k" ? castlingRookMove(props.from, props.to) : null;
+  const rook =
+    rookMove === null
+      ? null
+      : (board?.[squareIndex(rookMove.from)] ?? {
+          type: "r" as const,
+          side: props.side,
+        });
   // En passant: a pawn capturing onto an empty square — the victim sits on
   // the target file at the origin rank, not on the target square.
   const enPassant =
@@ -88,7 +100,11 @@ export function BoardLoop(props: {
     props.fen === undefined
       ? EMPTY_FEN
       : fenWithoutSquare(
-          capture ? fenWithoutSquare(props.fen, victimSquare) : props.fen,
+          rookMove === null
+            ? capture
+              ? fenWithoutSquare(props.fen, victimSquare)
+              : props.fen
+            : fenWithoutSquare(props.fen, rookMove.from),
           props.from,
         );
   const position = (square: string) => {
@@ -138,6 +154,22 @@ export function BoardLoop(props: {
         >
           <PieceGlyph type={mover.type} side={mover.side} />
         </span>
+        {rookMove !== null && rook !== null ? (
+          <span
+            className={[
+              "boardloop-piece",
+              phase === "erase" && !reduced ? "erasing" : "",
+              phase === "type" && !reduced ? "typing" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+            style={{
+              transform: position(atTarget ? rookMove.to : rookMove.from),
+            }}
+          >
+            <PieceGlyph type={rook.type} side={rook.side} />
+          </span>
+        ) : null}
       </div>
     </div>
   );

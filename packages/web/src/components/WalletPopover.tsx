@@ -4,7 +4,6 @@ import { type ApiClient, ApiError } from "../api/client.js";
 import type { PlayerView, ProfileView } from "../api/schemas.js";
 import { copyText } from "../lib/clipboard.js";
 import { formatMicroAlgo, formatMicroUsdc } from "../lib/format.js";
-import { readSfx, writeSfx } from "../lib/storage.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 
 /** F-W9 wallet popover. Balances are fetched only while it is open — the
@@ -25,7 +24,6 @@ export function WalletPopover(props: {
     readonly hint: string;
     readonly suggestion?: string;
   } | null>(null);
-  const [sfx, setSfx] = useState(readSfx);
   const dialogRef = useRef<HTMLDivElement>(null);
   useDialogFocusTrap(dialogRef, props.onClose);
   const { client } = props;
@@ -87,7 +85,7 @@ export function WalletPopover(props: {
             setCopiedWhat("address");
           }}
         >
-          {copiedWhat === "address" ? "copied ✓" : "copy"}
+          {copiedWhat === "address" ? "✓" : "📋"}
         </button>
       </div>
 
@@ -100,6 +98,10 @@ export function WalletPopover(props: {
             {formatMicroAlgo(profile.balances.algoMicroAlgo)}
           </span>
         )}
+      </div>
+
+      <div className="poprow">
+        <Link to="/start">need USDC? setup guide ▸</Link>
       </div>
 
       <div className="poprow">
@@ -154,7 +156,7 @@ export function WalletPopover(props: {
           </form>
         ) : (
           <>
-            <span>{nickname}</span>
+            <span>Displayed nick: {nickname}</span>
             <button
               type="button"
               className="btn mini"
@@ -168,7 +170,7 @@ export function WalletPopover(props: {
 
       {profile?.points !== undefined ? (
         <div className="poprow" data-testid="popover-points">
-          points {profile.points}
+          points: {profile.points}
         </div>
       ) : null}
 
@@ -188,7 +190,7 @@ export function WalletPopover(props: {
               setCopiedWhat("invite");
             }}
           >
-            {copiedWhat === "invite" ? "copied ✓" : "copy"}
+            {copiedWhat === "invite" ? "✓" : "📋"}
           </button>
           {profile.referrals !== undefined ? (
             <span className="dim">
@@ -200,21 +202,7 @@ export function WalletPopover(props: {
         </div>
       ) : null}
 
-      <div className="poprow">
-        <Link to="/start">need USDC? setup guide ▸</Link>
-      </div>
-
-      <div className="poprow">
-        <button
-          type="button"
-          className="btn mini"
-          onClick={() => {
-            writeSfx(!sfx);
-            setSfx(!sfx);
-          }}
-        >
-          sfx: {sfx ? "on" : "off"}
-        </button>
+      <div className="poprow" style={{ justifyContent: "space-between" }}>
         <button type="button" className="btn mini" onClick={props.onLogout}>
           log out
         </button>

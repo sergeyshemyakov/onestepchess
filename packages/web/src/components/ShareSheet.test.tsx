@@ -64,12 +64,12 @@ it("copy_link_copies_only_the_game_url", () => {
   render(
     <ShareSheet
       gameId="gm_fin_ok"
-      yourPly={5}
+      yourPlies={[5, 9]}
       refCode="gentle-rook-042"
       onClose={() => undefined}
     />,
   );
-  const url = `${window.location.origin}/replay/gm_fin_ok?ply=5&ref=gentle-rook-042`;
+  const url = `${window.location.origin}/replay/gm_fin_ok?plies=5,9&ref=gentle-rook-042`;
 
   fireEvent.click(screen.getByRole("button", { name: "copy link" }));
 
@@ -105,15 +105,15 @@ it("share_affordances_exist_only_for_owned_staked_wins", async () => {
   expect(await screen.findByRole("button", { name: "share ▸" })).not.toBeNull();
   toast.unmount();
 
-  // -- Built URL always carries the sharer's current refCode and ply.
+  // -- Built URL always carries the sharer's current refCode and owned plies.
   expect(
     shareUrl({
       origin: "https://osc.example",
       gameId: "gm_fin_ok",
-      yourPly: 5,
+      yourPlies: [5, 9],
       refCode: "gentle-rook-042",
     }),
-  ).toBe("https://osc.example/replay/gm_fin_ok?ply=5&ref=gentle-rook-042");
+  ).toBe("https://osc.example/replay/gm_fin_ok?plies=5,9&ref=gentle-rook-042");
 
   // -- The sheet always offers copy link + the X intent.
   const writeText = vi.fn(async () => undefined);
@@ -124,12 +124,12 @@ it("share_affordances_exist_only_for_owned_staked_wins", async () => {
   const sheet = render(
     <ShareSheet
       gameId="gm_fin_ok"
-      yourPly={5}
+      yourPlies={[5, 9]}
       refCode="gentle-rook-042"
       onClose={() => undefined}
     />,
   );
-  const url = `${window.location.origin}/replay/gm_fin_ok?ply=5&ref=gentle-rook-042`;
+  const url = `${window.location.origin}/replay/gm_fin_ok?plies=5,9&ref=gentle-rook-042`;
   expect(screen.getByTestId("share-url").textContent).toBe(url);
   fireEvent.click(screen.getByRole("button", { name: "copy link" }));
   expect(writeText).toHaveBeenCalledWith(url);

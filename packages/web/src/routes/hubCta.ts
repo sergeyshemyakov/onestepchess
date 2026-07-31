@@ -23,7 +23,7 @@ export function playCtaState(input: {
     input.phase === "SIGNING" ||
     input.phase === "SETTLING";
   if (claimOpen) {
-    return { disabled: true, reason: "board reserved — return ▸" };
+    return { disabled: true, reason: "board is yours — return ▸" };
   }
   if (
     input.phase === "QUOTA_OUT" &&

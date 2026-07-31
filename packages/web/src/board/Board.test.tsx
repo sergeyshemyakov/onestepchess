@@ -18,6 +18,8 @@ afterEach(() => {
 
 const START = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 const AFTER_E4 = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
+const AFTER_WHITE_KINGSIDE_CASTLE =
+  "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQ1RK1 b kq - 1 1";
 
 describe("board diff rendering (§8.2)", () => {
   it("re-renders only changed squares between two FENs", () => {
@@ -226,6 +228,39 @@ describe("move FX (§8.2)", () => {
       vi.advanceTimersByTime(400);
       expect(layer.children.length).toBe(0);
       expect(glyph?.style.visibility).toBe("");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("glides the rook alongside the king when a replay reaches castling", () => {
+    vi.useFakeTimers();
+    try {
+      const view = render(<Board fen={AFTER_WHITE_KINGSIDE_CASTLE} />);
+      view.rerender(
+        <Board
+          fen={AFTER_WHITE_KINGSIDE_CASTLE}
+          fx={{ kind: "glide", from: "e1", to: "g1", seq: 1 }}
+        />,
+      );
+      const layer = view.container.querySelector(".fxlayer");
+      if (layer === null) throw new Error("fx layer missing");
+      expect(layer.querySelectorAll(".fx-glide")).toHaveLength(2);
+      expect(
+        view.container.querySelector<SVGElement>('[data-square="g1"] svg.pc')
+          ?.style.visibility,
+      ).toBe("hidden");
+      expect(
+        view.container.querySelector<SVGElement>('[data-square="f1"] svg.pc')
+          ?.style.visibility,
+      ).toBe("hidden");
+
+      vi.advanceTimersByTime(400);
+      expect(layer.children).toHaveLength(0);
+      expect(
+        view.container.querySelector<SVGElement>('[data-square="f1"] svg.pc')
+          ?.style.visibility,
+      ).toBe("");
     } finally {
       vi.useRealTimers();
     }

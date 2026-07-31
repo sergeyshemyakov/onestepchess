@@ -52,7 +52,7 @@ it("ref_capture_is_first_touch_and_cleans_url_without_reload", async () => {
     { path: "/championship?ref=brave-knight-123", client: loggedOutClient() },
     { path: "/archive?ref=brave-knight-123", client: mockClient() },
     {
-      path: "/replay/gm_x?ply=3&ref=brave-knight-123",
+      path: "/replay/gm_x?plies=3,7&ref=brave-knight-123",
       client: loggedOutClient(),
     },
     { path: "/nowhere?ref=brave-knight-123", client: loggedOutClient() },
@@ -64,8 +64,10 @@ it("ref_capture_is_first_touch_and_cleans_url_without_reload", async () => {
       expect(localStorage.getItem("osc.ref")).toBe("brave-knight-123");
     });
     expect(window.location.search).not.toContain("ref=");
-    if (route.path.includes("ply=")) {
-      expect(window.location.search).toContain("ply=3");
+    if (route.path.includes("plies=")) {
+      expect(new URLSearchParams(window.location.search).get("plies")).toBe(
+        "3,7",
+      );
     }
     view.unmount();
     localStorage.clear();

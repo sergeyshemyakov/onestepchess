@@ -11,13 +11,23 @@ import { useDialogFocusTrap } from "../components/useDialogFocusTrap.js";
 import { copyText } from "../lib/clipboard.js";
 import { explorerTxUrl } from "../lib/explorer.js";
 import {
-  formatLocalTime,
+  formatElapsedTime,
+  formatGameDuration,
+  formatGameLabel,
   formatMicroUsdc,
-  formatThinkingTime,
 } from "../lib/format.js";
 import { CachedDigest } from "../replay/CachedDigest.jsx";
-import { isFinishedStakedItem } from "./items.js";
-import { outcomeFor, outcomeGlyph } from "./outcome.js";
+import {
+  finishedMovesLabel,
+  isFinishedStakedItem,
+  ownedPlies,
+  replayPath,
+} from "./items.js";
+import {
+  outcomeFor,
+  outcomeGlyph,
+  repetitionAdjudicationNotice,
+} from "./outcome.js";
 
 export function payoutChip(
   status: FinishedStakedItem["payoutStatus"],
@@ -51,6 +61,10 @@ export function QuickView(props: {
   useDialogFocusTrap(dialogRef, props.onClose);
 
   const outcome = outcomeFor(item.result, item.yourSide);
+  const repetitionNotice = repetitionAdjudicationNotice(
+    item.result,
+    item.repetitionAdjudication,
+  );
 
   if (!isFinishedStakedItem(item)) {
     return (
@@ -65,8 +79,19 @@ export function QuickView(props: {
         >
           <h3>— demo —</h3>
           <p className="mv">{outcomeGlyph(outcome)}</p>
+          {repetitionNotice === null ? null : (
+            <p className="repetition-decision">{repetitionNotice}</p>
+          )}
+          <p className="sub">you played {item.yourSide}</p>
           <p className="sub">
-            your move: {item.yourMove.san} · DEMO — nothing staked, not counted
+            your {item.yourMoves.length === 1 ? "move" : "moves"}:{" "}
+            {finishedMovesLabel(item)} · DEMO — nothing staked, not counted
+          </p>
+          <p className="sub">
+            thinking time: {formatElapsedTime(item.thinkingTimeMs)}
+          </p>
+          <p className="sub">
+            duration {formatGameDuration(item.startedAt, item.finishedAt)}
           </p>
           <p className="dim">replay locked for demo moves</p>
           <div className="modal-actions single">
@@ -79,7 +104,8 @@ export function QuickView(props: {
     );
   }
 
-  const replayPath = `/replay/${item.gameId}?ply=${item.yourPly}`;
+  const plies = ownedPlies(item);
+  const fullReplayPath = replayPath(item.gameId, plies);
   const chip = payoutChip(item.payoutStatus);
 
   return (
@@ -92,18 +118,18 @@ export function QuickView(props: {
         aria-modal="true"
         data-testid="quick-view"
       >
-        <h3>{item.gameName}</h3>
+        <h3>{formatGameLabel(item.gameId)}</h3>
         <CachedDigest
           client={client}
           gameId={item.gameId}
-          highlightPly={item.yourPly}
+          highlightPlies={plies}
         />
         <p className="mv">{outcomeGlyph(outcome)}</p>
         <dl className="qv-fields">
-          <dt>your move</dt>
-          <dd>
-            {item.yourMove.san} · ply {item.yourPly}
-          </dd>
+          <dt>you played</dt>
+          <dd>{item.yourSide}</dd>
+          <dt>your {item.yourMoves.length === 1 ? "move" : "moves"}</dt>
+          <dd>{finishedMovesLabel(item)}</dd>
           <dt>stake</dt>
           <dd>
             {formatMicroUsdc(item.stakeMicroUsdc)}
@@ -144,19 +170,19 @@ export function QuickView(props: {
             ) : null}
           </dd>
           <dt>thinking time</dt>
-          <dd>{formatThinkingTime(item.claimedAt, item.movedAt)}</dd>
-          <dt>finished</dt>
-          <dd>{formatLocalTime(item.finishedAt)}</dd>
+          <dd>{formatElapsedTime(item.thinkingTimeMs)}</dd>
+          <dt>duration</dt>
+          <dd>{formatGameDuration(item.startedAt, item.finishedAt)}</dd>
         </dl>
         <div className="modal-actions pair">
-          <Link className="btn mini" to={replayPath}>
+          <Link className="btn mini" to={fullReplayPath}>
             full replay ▸
           </Link>
           <button
             type="button"
             className="btn mini"
             onClick={() => {
-              void copyText(`${window.location.origin}${replayPath}`).then(
+              void copyText(`${window.location.origin}${fullReplayPath}`).then(
                 (success) => {
                   if (success) setCopied(true);
                 },
@@ -183,7 +209,7 @@ export function QuickView(props: {
         {sharing ? (
           <ShareSheet
             gameId={item.gameId}
-            yourPly={item.yourPly}
+            yourPlies={plies}
             refCode={props.refCode}
             onClose={() => setSharing(false)}
           />

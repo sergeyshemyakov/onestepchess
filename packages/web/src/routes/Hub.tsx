@@ -14,12 +14,23 @@ import { GamePane } from "../components/GamePane.jsx";
 import { PlayerStatus } from "../components/PlayerStatus.jsx";
 import { PromoStrip } from "../components/PromoStrip.jsx";
 import { ShareSheet } from "../components/ShareSheet.jsx";
-import { isFinishedStakedItem } from "../games/items.js";
-import { outcomeFor, outcomeGlyph } from "../games/outcome.js";
+import {
+  finishedMovesLabel,
+  isFinishedStakedItem,
+  ownedPlies,
+  replayPath,
+} from "../games/items.js";
+import {
+  outcomeFor,
+  outcomeGlyph,
+  repetitionAdjudicationNotice,
+} from "../games/outcome.js";
 import { payoutChip } from "../games/QuickView.jsx";
 import { explorerTxUrl } from "../lib/explorer.js";
 import { parseUci } from "../lib/fen.js";
 import {
+  formatElapsedTime,
+  formatGameDuration,
   formatGameLabel,
   formatLocalTime,
   formatMicroUsdc,
@@ -40,7 +51,7 @@ function ActivePane(props: {
   readonly page: GamesPage<OngoingGameItem>;
   readonly meta: Meta;
 }) {
-  const [hero, ...rest] = props.page.items;
+  const [hero] = props.page.items;
   if (hero === undefined) {
     return (
       <div className="empty">
@@ -98,33 +109,12 @@ function ActivePane(props: {
           <dd className="dim">▒▒▒ · pending…</dd>
         </dl>
       </div>
-      {rest.length > 0 ? (
-        <div className="minicards">
-          {rest.map((item, index) => (
-            <span
-              // biome-ignore lint/suspicious/noArrayIndexKey: ongoing entries carry no id on purpose (I7)
-              key={index}
-              className="minicard active-minicard"
-              data-testid="active-minicard"
-            >
-              <span className="mv">{item.yourMove.san}</span> · {item.yourSide}{" "}
-              ·{" "}
-              {item.demo ? (
-                <span className="chip">DEMO</span>
-              ) : (
-                formatMicroUsdc(item.stakeMicroUsdc)
-              )}{" "}
-              · pending…
-            </span>
-          ))}
-        </div>
-      ) : null}
     </div>
   );
 }
 
-/** F-W3 finished hero: replays the full game lazily (cached) with the own
- * ply accented; demo minicards carry no identity and no replay. */
+/** F-W3 latest finished entry: staked games replay lazily; demo games keep
+ * their identity and replay hidden. Older entries live only in the archive. */
 function FinishedPane(props: {
   readonly client: ApiClient;
   readonly page: GamesPage<FinishedGameItem>;
@@ -133,8 +123,8 @@ function FinishedPane(props: {
 }) {
   const items = props.page.items;
   const [sharing, setSharing] = useState(false);
-  const hero = items.find(isFinishedStakedItem);
-  if (items.length === 0) {
+  const [hero] = items;
+  if (hero === undefined) {
     return (
       <div className="empty">
         <span className="vt">[ NO SIGNAL ]</span>
@@ -143,110 +133,141 @@ function FinishedPane(props: {
     );
   }
 
-  const rest = items.filter((item) => item !== hero);
-  const heroOutcome =
-    hero === undefined ? null : outcomeFor(hero.result, hero.yourSide);
-  const heroPayoutChip =
-    hero === undefined ? null : payoutChip(hero.payoutStatus);
-  return (
-    <div data-testid="finished-pane">
-      {hero !== undefined ? (
-        <div className="herocard" data-testid="finished-hero">
-          <CachedDigest
-            client={props.client}
-            gameId={hero.gameId}
-            highlightPly={hero.yourPly}
-          />
+  const heroOutcome = outcomeFor(hero.result, hero.yourSide);
+  if (!isFinishedStakedItem(hero)) {
+    const repetitionNotice = repetitionAdjudicationNotice(
+      hero.result,
+      hero.repetitionAdjudication,
+    );
+    return (
+      <div data-testid="finished-pane">
+        <div
+          className="herocard demo-finished-hero"
+          data-testid="finished-demo-hero"
+        >
           <dl className="qv-fields">
             <dt>game</dt>
-            <dd className="vt">{formatGameLabel(hero.gameId)}</dd>
+            <dd className="vt">— demo —</dd>
             <dt>result</dt>
+            <dd>{outcomeGlyph(heroOutcome)}</dd>
+            {repetitionNotice === null ? null : (
+              <>
+                <dt>decision</dt>
+                <dd>{repetitionNotice}</dd>
+              </>
+            )}
+            <dt>you played</dt>
+            <dd>{hero.yourSide}</dd>
+            <dt>your {hero.yourMoves.length === 1 ? "move" : "moves"}</dt>
+            <dd className="mv">{finishedMovesLabel(hero)}</dd>
+            <dt>stake</dt>
             <dd>
-              {heroOutcome === null ? null : outcomeGlyph(heroOutcome)}
-              {heroOutcome === "won" ? (
-                <>
-                  {" "}
-                  <button
-                    type="button"
-                    className="btn pri mini"
-                    onClick={() => setSharing(true)}
-                  >
-                    share ▸
-                  </button>
-                </>
-              ) : null}
+              <span className="chip">DEMO</span>
             </dd>
-            <dt>your move</dt>
-            <dd>
-              {hero.yourMove.san} · ply {hero.yourPly}
-            </dd>
-            <dt>payout</dt>
-            <dd>
-              {formatMicroUsdc(hero.payoutMicroUsdc)}
-              {heroPayoutChip !== null ? (
-                <span className="chip"> {heroPayoutChip}</span>
-              ) : null}
-              {hero.payoutTxid !== null ? (
-                <>
-                  {" "}
-                  <a
-                    href={explorerTxUrl(
-                      props.meta.network.explorerBaseUrl,
-                      hero.payoutTxid,
-                    )}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    tx ↗
-                  </a>
-                </>
-              ) : null}
-            </dd>
+            <dt>replay</dt>
+            <dd className="dim">locked for demo moves</dd>
+            <dt>thinking time</dt>
+            <dd>{formatElapsedTime(hero.thinkingTimeMs)}</dd>
+            <dt>duration</dt>
+            <dd>{formatGameDuration(hero.startedAt, hero.finishedAt)}</dd>
           </dl>
-          <p>
-            <Link to={`/replay/${hero.gameId}?ply=${hero.yourPly}`}>
-              full replay ▸
-            </Link>
-          </p>
-          {sharing ? (
-            <ShareSheet
-              gameId={hero.gameId}
-              yourPly={hero.yourPly}
-              refCode={props.refCode}
-              onClose={() => setSharing(false)}
-            />
-          ) : null}
         </div>
-      ) : null}
-      {rest.length > 0 ? (
-        <div className="minicards">
-          {rest.map((item, index) =>
-            isFinishedStakedItem(item) ? (
-              <Link
-                key={item.gameId}
-                className="minicard"
-                to={`/replay/${item.gameId}?ply=${item.yourPly}`}
-              >
-                <span className="vt">{formatGameLabel(item.gameId)}</span> ·{" "}
-                {outcomeGlyph(outcomeFor(item.result, item.yourSide))} ·{" "}
-                {formatMicroUsdc(item.payoutMicroUsdc)}
-              </Link>
-            ) : (
-              <span
-                // biome-ignore lint/suspicious/noArrayIndexKey: demo entries carry no id on purpose (I7)
-                key={`demo-${index}`}
-                className="minicard demo"
-                data-testid="finished-demo-minicard"
-              >
-                {outcomeGlyph(outcomeFor(item.result, item.yourSide))} ·{" "}
-                <span className="mv">{item.yourMove.san}</span> ·{" "}
-                <span className="chip">DEMO</span> · replay locked for demo
-                moves
-              </span>
-            ),
-          )}
-        </div>
-      ) : null}
+      </div>
+    );
+  }
+
+  const heroPayoutChip = payoutChip(hero.payoutStatus);
+  const plies = ownedPlies(hero);
+  const fullReplayPath = replayPath(hero.gameId, plies);
+  return (
+    <div data-testid="finished-pane">
+      <div className="herocard" data-testid="finished-hero">
+        <CachedDigest
+          client={props.client}
+          gameId={hero.gameId}
+          highlightPlies={plies}
+        />
+        <dl className="qv-fields">
+          <dt>game</dt>
+          <dd className="vt">{formatGameLabel(hero.gameId)}</dd>
+          <dt>result</dt>
+          <dd>
+            {outcomeGlyph(heroOutcome)}
+            {heroOutcome === "won" ? (
+              <>
+                {" "}
+                <button
+                  type="button"
+                  className="btn pri mini"
+                  onClick={() => setSharing(true)}
+                >
+                  share ▸
+                </button>
+              </>
+            ) : null}
+          </dd>
+          <dt>you played</dt>
+          <dd>{hero.yourSide}</dd>
+          <dt>your {hero.yourMoves.length === 1 ? "move" : "moves"}</dt>
+          <dd>{finishedMovesLabel(hero)}</dd>
+          <dt>stake</dt>
+          <dd>
+            {formatMicroUsdc(hero.stakeMicroUsdc)}
+            {hero.payTxid !== null ? (
+              <>
+                {" "}
+                <a
+                  href={explorerTxUrl(
+                    props.meta.network.explorerBaseUrl,
+                    hero.payTxid,
+                  )}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  tx ↗
+                </a>
+              </>
+            ) : null}
+          </dd>
+          <dt>payout</dt>
+          <dd>
+            {formatMicroUsdc(hero.payoutMicroUsdc)}
+            {heroPayoutChip !== null ? (
+              <span className="chip"> {heroPayoutChip}</span>
+            ) : null}
+            {hero.payoutTxid !== null ? (
+              <>
+                {" "}
+                <a
+                  href={explorerTxUrl(
+                    props.meta.network.explorerBaseUrl,
+                    hero.payoutTxid,
+                  )}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  tx ↗
+                </a>
+              </>
+            ) : null}
+          </dd>
+          <dt>thinking time</dt>
+          <dd>{formatElapsedTime(hero.thinkingTimeMs)}</dd>
+          <dt>duration</dt>
+          <dd>{formatGameDuration(hero.startedAt, hero.finishedAt)}</dd>
+        </dl>
+        <p>
+          <Link to={fullReplayPath}>full replay ▸</Link>
+        </p>
+        {sharing ? (
+          <ShareSheet
+            gameId={hero.gameId}
+            yourPlies={plies}
+            refCode={props.refCode}
+            onClose={() => setSharing(false)}
+          />
+        ) : null}
+      </div>
     </div>
   );
 }

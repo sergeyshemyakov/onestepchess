@@ -19,8 +19,8 @@ const coreConfigObject = z
         "must have at most two decimal places",
       )
       .default(2),
-    ENDSPIEL_PLY: positiveInteger.default(60),
     ENDSPIEL_PIECES: z.number().int().min(2).max(32).default(10),
+    REPETITION_WIN_MARGIN: positiveInteger.default(3),
     MAX_PLIES: positiveInteger.default(300),
     MIN_PLY_INTERVAL_SECONDS: positiveInteger.default(20),
     COOLDOWN_PLIES: positiveInteger.default(6),
@@ -36,21 +36,7 @@ const coreConfigObject = z
   })
   .passthrough();
 
-function validateEndspielPly(
-  config: { readonly ENDSPIEL_PLY: number; readonly MAX_PLIES: number },
-  context: z.core.$RefinementCtx<unknown>,
-): void {
-  if (config.ENDSPIEL_PLY > config.MAX_PLIES) {
-    context.addIssue({
-      code: "custom",
-      path: ["ENDSPIEL_PLY"],
-      message: "must be less than or equal to MAX_PLIES",
-    });
-  }
-}
-
-export const coreConfigSchema =
-  coreConfigObject.superRefine(validateEndspielPly);
+export const coreConfigSchema = coreConfigObject;
 
 export type CoreConfig = Readonly<z.infer<typeof coreConfigSchema>>;
 
@@ -62,8 +48,8 @@ export const gameRulesSchema = coreConfigObject
     DRAW_FEE: true,
     PROTOCOL_FEE_BPS: true,
     HUMAN_TARGET_MULT: true,
-    ENDSPIEL_PLY: true,
     ENDSPIEL_PIECES: true,
+    REPETITION_WIN_MARGIN: true,
     MAX_PLIES: true,
     MIN_PLY_INTERVAL_SECONDS: true,
     COOLDOWN_PLIES: true,
@@ -72,7 +58,6 @@ export const gameRulesSchema = coreConfigObject
     CLAIM_TTL_ENDSPIEL: true,
     STALL_ABORT_HOURS: true,
   })
-  .strip()
-  .superRefine(validateEndspielPly);
+  .strip();
 
 export type GameRules = Readonly<z.infer<typeof gameRulesSchema>>;

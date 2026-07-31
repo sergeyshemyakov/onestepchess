@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { formatCountdown, secondsUntil } from "../lib/format.js";
 
-/** `▮ board reserved · T−mm:ss · return ▸` — shown whenever a claim is open
+/** `▮ board is yours · T−mm:ss · return ▸` — shown whenever a claim is open
  * and the play surface isn't visible, so a claim never silently expires
  * while browsing (F-W7 subset). Countdown derives from the server deadline
  * vs the local clock at render (§4.5). */
@@ -25,7 +25,7 @@ export function ClaimBar(props: {
   return (
     <div className="claimbar">
       <span className="blink">▮</span>
-      board reserved — you have a move to make ·{" "}
+      board is yours — you have a move to make ·{" "}
       <b>T−{formatCountdown(left)}</b>
       <button type="button" className="btn mini" onClick={props.onReturn}>
         return to board ▸

@@ -208,20 +208,21 @@ describe("static and discovery serving (§6.6)", () => {
     const term = await (await app.request("/replay/gm_term")).text();
     expect(term).not.toBe(shell);
     expect(term).not.toContain("<!-- osc:og -->");
-    expect(term).toContain(
-      '<meta property="og:title" content="Knightmare &amp; &lt;fun&gt;">',
-    );
+    expect(term).toContain('<meta property="og:title" content="Game term">');
     expect(term).toContain(
       `<meta property="og:image" content="${publicBaseUrl}/api/v1/games/gm_term/card.png">`,
     );
     expect(term).toContain(
       '<meta name="twitter:card" content="summary_large_image">',
     );
-    // The raw name never appears unescaped.
+    // The retired word-list name never appears in the public metadata.
     expect(term).not.toContain("Knightmare & <fun>");
+    expect(term).not.toContain("Knightmare &amp; &lt;fun&gt;");
 
-    // ?ply forwards into the card image URL.
-    const termPly = await (await app.request("/replay/gm_term?ply=2")).text();
+    // The last owned ply forwards into the single-position card image URL.
+    const termPly = await (
+      await app.request("/replay/gm_term?plies=1,2")
+    ).text();
     expect(termPly).toContain(
       `${publicBaseUrl}/api/v1/games/gm_term/card.png?ply=2`,
     );

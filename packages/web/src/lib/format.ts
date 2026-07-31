@@ -39,15 +39,38 @@ export function formatThinkingTime(
   claimedAtIso: string,
   movedAtIso: string,
 ): string {
-  const seconds = Math.max(
-    0,
-    Math.round(
-      (new Date(movedAtIso).getTime() - new Date(claimedAtIso).getTime()) /
-        1_000,
-    ),
+  return formatElapsedTime(
+    new Date(movedAtIso).getTime() - new Date(claimedAtIso).getTime(),
   );
+}
+
+export function formatElapsedTime(durationMs: number): string {
+  const seconds = Math.max(0, Math.round(durationMs / 1_000));
   if (seconds < 60) return `${seconds}s`;
   return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
+export function formatGameDuration(
+  startedAtIso: string,
+  finishedAtIso: string,
+): string {
+  const started = new Date(startedAtIso);
+  const finished = new Date(finishedAtIso);
+  const clock = (value: Date) =>
+    `${String(value.getHours()).padStart(2, "0")}:${String(value.getMinutes()).padStart(2, "0")}`;
+  const totalMinutes = Math.max(
+    0,
+    Math.round((finished.getTime() - started.getTime()) / 60_000),
+  );
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  const parts = [
+    ...(hours > 0 ? [`${hours} ${hours === 1 ? "hr" : "hrs"}`] : []),
+    ...(minutes > 0 || hours === 0
+      ? [`${minutes} ${minutes === 1 ? "min" : "mins"}`]
+      : []),
+  ];
+  return `${clock(started)} - ${clock(finished)} (${parts.join(" ")})`;
 }
 
 /** Public game label — the URL id, not the word-list name: names collide

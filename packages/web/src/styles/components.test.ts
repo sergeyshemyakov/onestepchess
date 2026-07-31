@@ -23,3 +23,25 @@ it("keeps the final-move board preview compact", () => {
     /\.confirm-board-loop \{\s*width: min\(220px, 100%\);\s*margin: 8px 0 12px;\s*margin-inline: auto/,
   );
 });
+
+it("gives payout notifications enough width for the confirmation link", () => {
+  expect(css).toMatch(
+    /#toasts \{[^}]*width: min\(380px, calc\(100vw - 40px\)\)/s,
+  );
+});
+
+it("centers the setup heading while left-aligning its centered copy column", () => {
+  expect(css).toMatch(/\.guide \{\s*text-align: center;/);
+  expect(css).toMatch(
+    /\.checklist \{[^}]*max-width: 62ch;[^}]*margin: 14px auto 0;[^}]*text-align: left;/s,
+  );
+  expect(css).toMatch(
+    /\.guide-full \{[^}]*max-width: 62ch;[^}]*margin: 18px auto 0;[^}]*text-align: left;/s,
+  );
+});
+
+it("removes the dashed coach box", () => {
+  const coach = css.match(/\.coach \{([^}]*)\}/)?.[1] ?? "";
+  expect(coach).toContain("white-space: pre-line");
+  expect(coach).not.toContain("border");
+});

@@ -30,7 +30,6 @@ import { ShellLiveContext } from "../components/ShellLiveContext.js";
 import { useToasts } from "../components/Toasts.jsx";
 import { explorerTxUrl } from "../lib/explorer.js";
 import { formatMicroUsdc } from "../lib/format.js";
-import { readSfx } from "../lib/storage.js";
 import { useMeta } from "../meta/MetaContext.jsx";
 
 export type LiveEvent = {
@@ -75,20 +74,6 @@ function alertExpiring(deadline: string): () => void {
     if (document.title.startsWith("⏱ ")) document.title = original;
   }, 4_000);
 
-  if (readSfx() && typeof AudioContext === "function") {
-    const audio = new AudioContext();
-    const oscillator = audio.createOscillator();
-    const gain = audio.createGain();
-    gain.gain.value = 0.035;
-    oscillator.frequency.value = 740;
-    oscillator.connect(gain);
-    gain.connect(audio.destination);
-    oscillator.start();
-    oscillator.stop(audio.currentTime + 0.08);
-    oscillator.addEventListener("ended", () => void audio.close(), {
-      once: true,
-    });
-  }
   return () => {
     clearTimeout(timer);
     if (document.title.startsWith("⏱ ")) document.title = original;
@@ -380,7 +365,7 @@ export function LiveProvider(props: {
         {share === null ? null : (
           <ShareSheet
             gameId={share.gameId}
-            yourPly={share.yourPly}
+            yourPlies={[share.yourPly]}
             refCode={profileRef.current?.refCode ?? null}
             onClose={() => setShare(null)}
           />

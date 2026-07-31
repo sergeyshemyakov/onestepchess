@@ -78,46 +78,56 @@ const terminationSchema = z.enum([
   "max_plies",
   "aborted",
 ]);
+const repetitionAdjudicationSchema = z
+  .object({
+    whiteMaterialPoints: nonNegativeIntegerSchema,
+    blackMaterialPoints: nonNegativeIntegerSchema,
+    winMargin: positiveIntegerSchema,
+  })
+  .nullable();
 
-const gameItemCommonSchema = z.object({
+export const ongoingGameItemSchema = z.object({
   yourMove: moveSchema,
   yourSide: sideSchema,
   demo: z.boolean(),
   stakeMicroUsdc: nonNegativeIntegerSchema,
   claimedAt: isoTimestampSchema,
   movedAt: isoTimestampSchema,
-});
-
-export const ongoingGameItemSchema = gameItemCommonSchema.extend({
   fenBeforeYourMove: z.string(),
   payTxid: z.string().nullable(),
 });
 export type OngoingGameItem = z.infer<typeof ongoingGameItemSchema>;
 
-const finishedDemoGameItemSchema = gameItemCommonSchema.extend({
-  demo: z.literal(true),
+const finishedGameItemCommonSchema = z.object({
+  yourSide: sideSchema,
+  stakeMicroUsdc: nonNegativeIntegerSchema,
+  thinkingTimeMs: nonNegativeIntegerSchema,
+  startedAt: isoTimestampSchema,
   result: gameResultSchema,
   termination: terminationSchema,
-  payoutMicroUsdc: z.literal(0),
-  payoutStatus: z.null(),
-  statsCounted: z.literal(false),
+  repetitionAdjudication: repetitionAdjudicationSchema,
   finishedAt: isoTimestampSchema,
 });
 
-const finishedStakedGameItemSchema = gameItemCommonSchema.extend({
+const finishedDemoGameItemSchema = finishedGameItemCommonSchema.extend({
+  demo: z.literal(true),
+  yourMoves: z.array(moveSchema).min(1),
+  payoutMicroUsdc: z.literal(0),
+  payoutStatus: z.null(),
+  statsCounted: z.literal(false),
+});
+
+const finishedStakedGameItemSchema = finishedGameItemCommonSchema.extend({
   demo: z.literal(false),
   gameId: z.string(),
   gameName: z.string(),
   finalFen: z.string(),
-  result: gameResultSchema,
-  termination: terminationSchema,
-  yourPly: positiveIntegerSchema,
-  payTxid: z.string(),
+  yourMoves: z.array(moveSchema.extend({ ply: positiveIntegerSchema })).min(1),
+  payTxid: z.string().nullable(),
   payoutMicroUsdc: nonNegativeIntegerSchema,
   payoutTxid: z.string().nullable(),
   payoutStatus: z.enum(["none", "queued", "confirmed", "failed"]),
   statsCounted: z.literal(true),
-  finishedAt: isoTimestampSchema,
 });
 
 export const finishedGameItemSchema = z.discriminatedUnion("demo", [
@@ -149,6 +159,7 @@ export const replayViewSchema = z.object({
   name: z.string(),
   result: gameResultSchema,
   termination: terminationSchema,
+  repetitionAdjudication: repetitionAdjudicationSchema,
   endspielPly: positiveIntegerSchema.nullable(),
   createdAt: isoTimestampSchema,
   finishedAt: isoTimestampSchema,

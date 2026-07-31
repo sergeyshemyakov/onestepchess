@@ -75,7 +75,7 @@ function leakyClient() {
 }
 
 it("hub_and_archive_never_correlate_ongoing_or_demo_games", async () => {
-  // -- Hub active pane: hero + minicards render no identity.
+  // -- Hub active pane: only the latest hero renders, with no identity.
   const client = leakyClient();
   const hub = render(
     <Providers client={client}>
@@ -83,17 +83,15 @@ it("hub_and_archive_never_correlate_ongoing_or_demo_games", async () => {
     </Providers>,
   );
   await screen.findByTestId("active-hero");
-  expect(screen.getAllByTestId("active-minicard")).toHaveLength(1);
+  expect(screen.queryByTestId("active-minicard")).toBeNull();
   assertNoGameIdentity(hub.container, identitySeeds);
 
-  // -- Hub finished pane: the staked hero labels its game by public id
-  //    (the replay-page label); the demo minicard must not — and must not
-  //    link anywhere.
+  // -- Hub finished pane: only the staked hero labels its game by public id;
+  //    older demo entries remain available in the archive.
   fireEvent.click(screen.getByRole("tab", { name: "LAST FINISHED" }));
   await screen.findByTestId("finished-hero");
   expect(screen.getByText("Game fin_ok")).not.toBeNull();
-  const demoCard = await screen.findByTestId("finished-demo-minicard");
-  expect(demoCard.querySelector("a")).toBeNull();
+  expect(screen.queryByTestId("finished-demo-minicard")).toBeNull();
   assertNoGameIdentity(hub.container, identitySeeds);
   hub.unmount();
 

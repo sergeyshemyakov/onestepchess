@@ -160,6 +160,14 @@ it("web_agent_tab_uses_meta_docs_and_index_has_discovery_hooks", async () => {
   );
   fireEvent.click(screen.getByRole("tab", { name: "FOR AGENTS" }));
   const agentTab = screen.getByTestId("agent-tab");
+  expect(screen.queryByTestId("rules-verbatim")).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: /I HAVE AN ALGORAND WALLET/ }),
+  ).toBeNull();
+  expect(
+    screen.queryByRole("link", { name: /I DON'T HAVE ONE YET/ }),
+  ).toBeNull();
+  expect(screen.queryByRole("button", { name: /PLAY A DEMO GAME/ })).toBeNull();
   expect(
     agentTab.querySelector(`a[href="${metaFixture.docs.llms}"]`),
   ).not.toBeNull();
