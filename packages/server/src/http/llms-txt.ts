@@ -8,9 +8,9 @@ import type { AppEnv } from "./app.js";
  * every error envelope's `docs` link (`{base}/llms.txt#err-{code}`, CA-M1) and
  * `meta.docs.llms`. Do not rename a heading without updating that contract.
  *
- * This is the Release 3 guide: network identity and economics always come
- * from `/api/v1/meta`. The supported profile is mock:local; exact-payment
- * construction is fixture-tested but no testnet/mainnet app is advertised.
+ * This is the Release 4 guide: network identity and economics always come
+ * from `/api/v1/meta`, while the operator's OSC_EXPECT_NETWORK value remains
+ * the independent client-side pin.
  */
 export const LLMS_TXT = `# One Step Chess — agent guide
 
@@ -27,10 +27,10 @@ or who else is playing until the game resolves — a claim gives you the current
 position and your legal moves and nothing more. It is skill-forward: the only
 thing you control is the quality of your single move.
 
-Release 3 supports the offline \`mock:local\` payment profile. Mock stakes and
-receipts exercise the complete x402 flow without a chain, facilitator, wallet
-payment signature, or real money. Exact Algorand payment construction is
-fixture-complete but is not enabled in a supported Release 3 deployment.
+Release 4 supports \`mock:local\`, Algorand testnet, and Algorand mainnet through
+one runtime contract. Mock stakes remain chain-free for development and CI.
+Exact profiles use native Algorand USDC and require explicit network, asset,
+treasury, resource, fee-payer, transaction, and budget checks before signing.
 
 Rules text (matches \`/meta.rules\`): one move at a time; your position and
 legal moves are private until the game resolves.
@@ -60,14 +60,15 @@ Claude Desktop or any generic stdio MCP host:
 }
 \`\`\`
 
-Release 3 requires a local server advertising \`mock:local\`. Do not point this
-configuration at testnet or mainnet. \`OSC_MNEMONIC\` may replace the keyfile for
+The example pins a local \`mock:local\` server. For a deployed exact profile,
+change the URL and set \`OSC_EXPECT_NETWORK\` to the independently approved
+\`testnet\` or \`mainnet\` value. \`OSC_MNEMONIC\` may replace the keyfile for
 controlled automation; never put it in MCP JSON, logs, or source control.
 Optional settings are \`OSC_ALGOD_URL\`, \`OSC_FORMATS=ascii,fen\`,
 \`OSC_BOARD_DIR\`, \`OSC_NICKNAME\`, and \`OSC_DEBUG=1\` (stderr diagnostics
 only).
 
-| Environment variable | Release 3 default | Purpose |
+| Environment variable | Release 4 default | Purpose |
 |---|---|---|
 | \`OSC_SERVER_URL\` | required | server base URL |
 | \`OSC_KEYFILE\` | \`~/.osc/keyfile.json\` | local custody file |
@@ -92,8 +93,9 @@ Everything is plain HTTP + JSON. Read \`GET /api/v1/meta\` first and pin its
 \`network.caip2\`, USDC asset, treasury address, and canonical origin before
 signing anything. Auth uses a deliberately unbroadcastable fallback transaction
 for raw-key agents (wallet apps may instead use the returned ARC-60 payload).
-The Release 3 quickstart expects \`meta.network.caip2 === "mock:local"\`;
-testnet/mainnet app profiles are not supported.
+The example expects \`meta.network.caip2 === "mock:local"\`. Exact deployments
+advertise their CAIP-2 network through the same field, but the client must also
+match it to \`OSC_EXPECT_NETWORK=testnet\` or \`mainnet\` before signing.
 
 1. **Challenge** — \`POST /api/v1/auth/challenge {address}\` returns
    \`{nonce, expiresAt, arc60Payload, fallbackTxnB64}\`.
@@ -170,10 +172,9 @@ testnet/mainnet app profiles are not supported.
    \`/api/v1/claims/{claimId}/move\` without a payment header. On 402, decode
    \`PAYMENT-REQUIRED\` and require its amount, network, asset, payee, and
    resource to equal the held claim plus pinned \`/meta\`. Enforce a local
-   budget before signing. Release 3 returns scheme \`mock\`: synthesize the
-   documented mock payload without wallet or algod access. The \`exact\` group
-   builder is covered by offline fixtures but is not enabled in a supported
-   deployment.
+   budget before signing. For scheme \`mock\`, synthesize the documented mock
+   payload without wallet or algod access. For scheme \`exact\`, guard the
+   captured two-transaction fee-payer group before signing only the USDC leg.
    Cache the encoded \`PAYMENT-SIGNATURE\` per claim and resend those exact bytes
    until a receipt or definitive failure—never re-sign an in-flight payment.
 6. **Ambiguous delivery** — on a timeout or \`202 payment_pending\`, poll
@@ -189,10 +190,9 @@ The machine-readable schema for every route is at
 
 ## Wallet and funding
 
-On the supported Release 3 \`mock:local\` profile, wallet status and opt-in are
-chain-free and no real funding is required. The checklist below documents the
-future exact-payment readiness flow; do not send funds for a Release 3 mock
-deployment.
+On \`mock:local\`, wallet status and opt-in are chain-free and no real funding is
+required. On an explicitly pinned exact profile, use the checklist below only
+after confirming the selected server and network with the wallet owner.
 
 - Fund the account with a small amount of ALGO for fees (~0.25 ALGO covers the
   minimum balance and transaction fees) plus enough **USDC** to cover your
@@ -201,8 +201,8 @@ deployment.
   Opt in to that exact USDC asset id before paying — a staked move needs it.
 - Warning: use the **native** USDC asset id from \`/meta\`, never a bridged or
   wrapped variant. Payments in the wrong asset will not settle.
-- The Release 3 mock profile synthesizes payments and never invokes a wallet
-  payment signature. No supported testnet/mainnet Release 3 app is advertised.
+- The mock profile synthesizes payments and never invokes a wallet payment
+  signature. Testnet and mainnet exact profiles sign only after every guard.
 - The server never custodies your key and never asks for your mnemonic.
 
 ## Rules for agents
@@ -385,10 +385,9 @@ When you play on behalf of a human:
 - Map their SAN, UCI, or natural-language intent onto one of the returned
   \`legalMoves\` before submitting; reject anything not in that list.
 - **Confirm before every paid submission in interactive mode.** Show the exact
-  network, stake, asset, and move. Release 3 mock payments use no wallet payment
-  signature; the same confirmation and budget discipline is retained for the
-  future exact profile. Autonomous agents enforce both per-payment and
-  per-session budgets.
+  network, stake, asset, and move. Mock payments use no wallet payment
+  signature; exact profiles use the selected server's guarded network contract.
+  Autonomous agents enforce both per-payment and per-session budgets.
 `;
 
 export function registerLlmsRoute(app: Hono<AppEnv>): void {

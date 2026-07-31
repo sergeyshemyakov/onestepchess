@@ -5,9 +5,10 @@ Chess API. It includes agent authentication, local wallet custody, safe x402
 payment handling, process-session budgets, wallet readiness, board formatters,
 and the `osc-agent` onboarding CLI.
 
-Release 3 supports the server-advertised `mock:local` profile without chain
-access. Exact Algorand construction is fixture-tested but is not a supported
-live Release 3 app profile.
+Release 4 supports server-advertised `mock:local`, Algorand testnet, and
+Algorand mainnet profiles. The client cross-checks `/meta`, a known native-USDC
+allowlist, and `OSC_EXPECT_NETWORK` before signer or algod access. Mock remains
+the chain-free development and CI profile.
 
 ```ts
 import {
@@ -21,7 +22,7 @@ const env = loadEnv();
 const client = createOscClient({
   serverUrl: env.serverUrl,
   signer: loadSigner({ keyfile: env.keyfile, mnemonic: env.mnemonic }),
-  expectNetwork: "mock",
+  expectNetwork: env.expectNetwork,
   budget: new BudgetGuard({
     maxStakeMicroUsdc: env.maxStakeMicroUsdc,
     sessionBudgetMicroUsdc: env.sessionBudgetMicroUsdc,
@@ -45,4 +46,6 @@ npx @onestepchess/agent-kit onboard
 
 Read the canonical guide from the selected server’s `/llms.txt` endpoint and
 discover current rules, economics, asset identity, and documentation URLs from
-`/api/v1/meta`. Never log or return a mnemonic, JWT, or signed payment header.
+`/api/v1/meta`. Use `OSC_EXPECT_NETWORK=testnet` only with an intended testnet
+deployment and `OSC_EXPECT_NETWORK=mainnet` only with an intended production
+deployment. Never log or return a mnemonic, JWT, or signed payment header.

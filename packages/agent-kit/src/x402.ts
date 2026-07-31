@@ -30,6 +30,67 @@ const NETWORK_LABELS = new Map<string, "mainnet" | "testnet" | "mock">([
   ["mock:local", "mock"],
 ]);
 
+const DEFAULT_ALGOD_URLS = new Map([
+  [MAINNET_CAIP2, "https://mainnet-api.4160.nodely.dev"],
+  [TESTNET_CAIP2, "https://testnet-api.4160.nodely.dev"],
+]);
+
+export function assertSupportedNetwork(input: {
+  readonly meta: Meta;
+  readonly expectNetwork?: "mainnet" | "testnet" | "mock";
+}): "mainnet" | "testnet" | "mock" {
+  const label = NETWORK_LABELS.get(input.meta.network.caip2);
+  if (label === undefined) {
+    throw new OscClientError(
+      "NETWORK_MISMATCH",
+      `unsupported server network ${input.meta.network.caip2}`,
+    );
+  }
+  if (input.expectNetwork !== undefined && label !== input.expectNetwork) {
+    throw new OscClientError(
+      "NETWORK_MISMATCH",
+      `server network does not match the ${input.expectNetwork} pin`,
+    );
+  }
+  const expectedAsset =
+    label === "mainnet"
+      ? MAINNET_USDC_ASSET
+      : label === "testnet"
+        ? TESTNET_USDC_ASSET
+        : input.meta.network.usdcAssetId;
+  if (input.meta.network.usdcAssetId !== expectedAsset) {
+    throw new OscClientError(
+      "NETWORK_MISMATCH",
+      `server USDC asset does not match the ${label} allowlist`,
+    );
+  }
+  if (
+    label !== "mock" &&
+    !algosdk.isValidAddress(input.meta.network.treasuryAddress)
+  ) {
+    throw new OscClientError(
+      "NETWORK_MISMATCH",
+      "server treasury is not a valid Algorand address",
+    );
+  }
+  return label;
+}
+
+export function resolveAlgodUrl(meta: Meta, override?: string): string {
+  assertSupportedNetwork({ meta });
+  const resolved =
+    override ??
+    meta.network.algodUrl ??
+    DEFAULT_ALGOD_URLS.get(meta.network.caip2);
+  if (resolved === undefined) {
+    throw new OscClientError(
+      "NETWORK_MISMATCH",
+      `no algod endpoint is known for ${meta.network.caip2}`,
+    );
+  }
+  return resolved.replace(/\/+$/, "");
+}
+
 function decodeHeader<T>(
   header: string,
   parser: { parse(value: unknown): T },
@@ -57,6 +118,12 @@ export function assertTrustedPayment(input: {
   readonly resourceUrl: string;
   readonly expectNetwork?: "mainnet" | "testnet" | "mock";
 }): PaymentRequirements {
+  const label = assertSupportedNetwork({
+    meta: input.meta,
+    ...(input.expectNetwork === undefined
+      ? {}
+      : { expectNetwork: input.expectNetwork }),
+  });
   const requirement = input.paymentRequired.accepts[0];
   if (requirement === undefined) {
     throw new OscClientError(
@@ -89,16 +156,15 @@ export function assertTrustedPayment(input: {
     mismatch("payTo", input.meta.network.treasuryAddress, requirement.payTo);
   }
 
-  const label =
+  const requirementLabel =
     NETWORK_LABELS.get(requirement.network) ??
     mismatch(
       "network allowlist",
       "known Algorand USDC network",
       requirement.network,
     );
-  if (input.expectNetwork !== undefined && label !== input.expectNetwork) {
-    mismatch("network pin", input.expectNetwork, label);
-  }
+  if (requirementLabel !== label)
+    mismatch("network pin", label, requirementLabel);
   const assetAllowed =
     (requirement.network === MAINNET_CAIP2 &&
       requirement.asset === MAINNET_USDC_ASSET) ||
@@ -110,7 +176,11 @@ export function assertTrustedPayment(input: {
   }
   if (requirement.scheme === "exact") {
     const feePayer = requirement.extra.feePayer;
-    if (typeof feePayer !== "string" || !algosdk.isValidAddress(feePayer)) {
+    if (
+      typeof feePayer !== "string" ||
+      !algosdk.isValidAddress(feePayer) ||
+      requirement.extra.decimals !== 6
+    ) {
       mismatch("feePayer", "valid Algorand address", String(feePayer));
     }
   }
@@ -164,6 +234,8 @@ function guardExactGroup(input: {
   if (
     feeTransaction === undefined ||
     paymentTransaction === undefined ||
+    feeTransaction.type !== "pay" ||
+    paymentTransaction.type !== "axfer" ||
     feeTransaction.payment === undefined ||
     paymentTransaction.assetTransfer === undefined
   ) {
@@ -176,6 +248,8 @@ function guardExactGroup(input: {
   const genesis = input.requirement.network.split(":")[1] ?? "";
   const encodedGenesis = (transaction: algosdk.Transaction) =>
     Buffer.from(transaction.genesisHash ?? new Uint8Array()).toString("base64");
+  const noteText = (transaction: algosdk.Transaction) =>
+    new TextDecoder().decode(transaction.note ?? new Uint8Array());
   if (
     typeof feePayer !== "string" ||
     feeTransaction.sender.toString() !== feePayer ||
@@ -196,12 +270,15 @@ function guardExactGroup(input: {
     feeTransaction.lastValid !== paymentTransaction.lastValid ||
     encodedGenesis(feeTransaction) !== genesis ||
     encodedGenesis(paymentTransaction) !== genesis ||
+    feeTransaction.genesisID !== paymentTransaction.genesisID ||
     feeTransaction.group === undefined ||
     paymentTransaction.group === undefined ||
     Buffer.compare(
       Buffer.from(feeTransaction.group),
       Buffer.from(paymentTransaction.group),
-    ) !== 0
+    ) !== 0 ||
+    !noteText(feeTransaction).startsWith("x402-fee-payer-") ||
+    !noteText(paymentTransaction).startsWith("x402-payment-v2-")
   ) {
     throw new OscClientError(
       "NETWORK_MISMATCH",

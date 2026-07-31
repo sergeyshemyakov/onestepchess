@@ -6,6 +6,7 @@ import {
   OscApiError,
   OscClientError,
   type Profile,
+  runCli,
 } from "@onestepchess/agent-kit";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createMcpServer, type McpKit, TOOL_CONTRACT } from "./index.js";
@@ -468,7 +469,7 @@ describe("@onestepchess/mcp Release 3 protocol", () => {
     ).toBe(10);
   });
 
-  it("mcp_errors_preserve_code_hint_docs_and_budget_recovery", async () => {
+  it("agent_release4_cli_mcp_and_errors_never_emit_mnemonic_jwt_or_signed_payment_bytes", async () => {
     let thrown: unknown = new Error("not configured");
     const client = await connect(
       fakeKit({
@@ -533,6 +534,22 @@ describe("@onestepchess/mcp Release 3 protocol", () => {
     expect(toolText(internal)).toContain("INTERNAL");
     expect(toolText(internal)).not.toContain("secret-marker");
     expect(JSON.stringify(internal)).not.toContain("/repo/internal");
+
+    const cliOutput: string[] = [];
+    const cliErrors: string[] = [];
+    await expect(
+      runCli(
+        ["status"],
+        { OSC_SERVER_URL: "secret-marker" },
+        {
+          stdout: { write: (text) => cliOutput.push(text) },
+          stderr: { write: (text) => cliErrors.push(text) },
+        },
+      ),
+    ).resolves.toBe(1);
+    expect([...cliOutput, ...cliErrors].join("\n")).not.toContain(
+      "secret-marker",
+    );
   });
 
   it("mcp_prompts_encode_autonomous_and_interactive_safety_rules", async () => {

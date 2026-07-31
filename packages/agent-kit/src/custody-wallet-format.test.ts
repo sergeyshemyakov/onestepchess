@@ -8,6 +8,8 @@ import {
   createWallet,
   FUNDING_CHECKLIST,
   loadSigner,
+  MAINNET_CAIP2,
+  MAINNET_USDC_ASSET,
   type Meta,
   optInUsdc,
   registerFormatter,
@@ -263,7 +265,7 @@ describe("agent-kit custody, wallet, CLI, and formats", () => {
     ).rejects.toMatchObject({ code: "ALGOD_UNAVAILABLE" });
   });
 
-  it("agent_optin_is_idempotent_and_rejects_unsafe_txn_before_signing", async () => {
+  it("agent_wallet_status_and_optin_use_guarded_params_for_each_supported_network", async () => {
     const signing = vi.fn();
     const currentSigner = signer(walletAccount, signing);
     const alreadyFetch = vi.fn(async () => json(accountBody({ usdc: 0 })));
@@ -342,6 +344,40 @@ describe("agent-kit custody, wallet, CLI, and formats", () => {
       (guardedTransaction?.lastValid ?? 0n) -
         (guardedTransaction?.firstValid ?? 0n),
     ).toBe(1000n);
+
+    const mainnetMeta: Meta = {
+      ...testnetMeta,
+      network: {
+        ...testnetMeta.network,
+        caip2: MAINNET_CAIP2,
+        usdcAssetId: MAINNET_USDC_ASSET,
+      },
+    };
+    const mainnetFetch = vi.fn(async () => json({}, 404));
+    await expect(
+      walletStatus(currentSigner, mainnetMeta, { fetch: mainnetFetch }),
+    ).resolves.toMatchObject({ missing: "fund_algo", ready: false });
+    expect(mainnetFetch).toHaveBeenCalledTimes(1);
+
+    const rejectedNetworkFetch = vi.fn(async () => json({}, 404));
+    await expect(
+      walletStatus(
+        currentSigner,
+        {
+          ...mainnetMeta,
+          network: { ...mainnetMeta.network, usdcAssetId: TESTNET_USDC_ASSET },
+        },
+        { fetch: rejectedNetworkFetch },
+      ),
+    ).rejects.toMatchObject({ code: "NETWORK_MISMATCH" });
+    expect(rejectedNetworkFetch).not.toHaveBeenCalled();
+
+    await expect(
+      walletStatus(currentSigner, mockMeta, {
+        fetch: rejectedNetworkFetch,
+      }),
+    ).resolves.toMatchObject({ mock: true, ready: true });
+    expect(rejectedNetworkFetch).not.toHaveBeenCalled();
   });
 
   it("agent_mock_wallet_operations_contact_no_chain", async () => {

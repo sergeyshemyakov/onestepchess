@@ -71,6 +71,7 @@ export {
   walletStatus,
 } from "./wallet.js";
 export {
+  assertSupportedNetwork,
   assertTrustedPayment,
   buildPaymentHeader,
   type CachedPayment,
@@ -79,6 +80,7 @@ export {
   MAINNET_CAIP2,
   MAINNET_USDC_ASSET,
   PaymentCache,
+  resolveAlgodUrl,
   TESTNET_CAIP2,
   TESTNET_USDC_ASSET,
 } from "./x402.js";

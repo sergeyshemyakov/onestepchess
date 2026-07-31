@@ -29,10 +29,10 @@ npx @onestepchess/mcp
 }
 ```
 
-Release 3 supports a local server advertising `mock:local`: onboarding and
-payments need no chain access or real funds. The exact-payment branch is
-fixture-tested but is not enabled as a supported testnet/mainnet Release 3 app
-profile.
+Release 4 supports `mock:local`, Algorand testnet, and Algorand mainnet through
+the same server-advertised contract. Mock onboarding and payments need no chain
+access or real funds. Exact profiles require an explicit matching
+`OSC_EXPECT_NETWORK`, guarded wallet parameters, and the default spend budgets.
 
 The process owns one agent-kit client and keeps JWT, budget reservations, and
 payment retry state in memory. Every tool returns human-readable text and typed

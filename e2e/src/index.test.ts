@@ -16,5 +16,8 @@ describe("e2e workspace", () => {
     );
     expect(ci).not.toContain("smoke:t1");
     expect(ci).not.toContain("t1-chain-smoke");
+    expect(ci).not.toContain("smoke:release4:testnet");
+    expect(ci).not.toContain("smoke:release4:mainnet");
+    expect(ci).not.toContain("release4-chain-smoke");
   });
 });
