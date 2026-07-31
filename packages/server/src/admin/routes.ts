@@ -17,6 +17,7 @@ import {
   adminGames,
   adminOverview,
   adminPlayer,
+  adminPlayers,
 } from "./read-models.js";
 
 const pageQuery = z.object({
@@ -31,6 +32,10 @@ const errorsQuery = pageQuery.extend({
 });
 const gamesQuery = pageQuery.extend({
   status: z.enum(["active", "endspiel", "finished", "aborted"]).optional(),
+  q: z.string().max(100).optional(),
+});
+const playersQuery = pageQuery.extend({
+  kind: z.enum(["human", "agent"]).optional(),
   q: z.string().max(100).optional(),
 });
 const pauseBody = z
@@ -137,6 +142,15 @@ export function registerAdminRoutes(
       return result;
     }),
   );
+  app.get("/api/v1/admin/players", (c) => {
+    const input = query(playersQuery, c.req.query());
+    return cached(
+      c,
+      deps,
+      `players:${input.kind ?? ""}:${input.q ?? ""}:${input.page}`,
+      () => adminPlayers(deps, input),
+    );
+  });
   app.get("/api/v1/admin/players/:address", (c) =>
     cached(c, deps, `players:${c.req.param("address")}`, () => {
       const result = adminPlayer(deps, c.req.param("address"));

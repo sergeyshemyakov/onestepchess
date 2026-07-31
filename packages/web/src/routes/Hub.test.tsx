@@ -242,6 +242,70 @@ describe("I7 leak tests (#31)", () => {
 });
 
 describe("edge states (#31, F-W10 rows)", () => {
+  it("highlights the player's side while a board is ready", async () => {
+    renderHub();
+    fireEvent.click(await screen.findByRole("button", { name: /▸ PLAY/ }));
+
+    const side = await screen.findByText(/YOU PLAY WHITE/);
+    expect(side.classList).toContain("ready-side");
+  });
+
+  it("NO_BOARDS manual retry has its own cooldown and does not reset the auto-retry timer", async () => {
+    const createClaim = vi.fn(async () => ({
+      kind: "none" as const,
+      retryAfterSeconds: 8,
+    }));
+    const client = mockClient({ createClaim } as never);
+    renderHub(client);
+    fireEvent.click(await screen.findByRole("button", { name: /▸ PLAY/ }));
+
+    const retry = await screen.findByRole("button", { name: /retry now/i });
+    expect((retry as HTMLButtonElement).disabled).toBe(true);
+    expect(retry.classList).toContain("cooling");
+
+    await waitFor(
+      () => expect((retry as HTMLButtonElement).disabled).toBe(false),
+      { timeout: 2_000 },
+    );
+    await screen.findByText("NO BOARDS FREE :: retrying in 00:04");
+    fireEvent.click(retry);
+
+    await waitFor(() => expect(createClaim).toHaveBeenCalledTimes(2));
+    expect((retry as HTMLButtonElement).disabled).toBe(true);
+    expect(
+      screen.queryByText("NO BOARDS FREE :: retrying in 00:05"),
+    ).toBeNull();
+    await waitFor(
+      () => expect((retry as HTMLButtonElement).disabled).toBe(false),
+      { timeout: 2_000 },
+    );
+  });
+
+  it("NO_BOARDS centers its countdown and explains why a board may be unavailable", async () => {
+    const client = mockClient({
+      createClaim: vi.fn(async () => ({
+        kind: "none" as const,
+        retryAfterSeconds: 5,
+      })),
+    } as never);
+    renderHub(client);
+    fireEvent.click(await screen.findByRole("button", { name: /▸ PLAY/ }));
+
+    const countdown = await screen.findByText(/NO BOARDS FREE :: retrying in/);
+    expect(countdown.classList).toContain("no-boards-countdown");
+    expect(
+      screen.getByText("> you can't play different sides in a game"),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(
+        "> you can't play soon after your previous move in a game",
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByText("> other humans or bots could be thinking long"),
+    ).not.toBeNull();
+  });
+
   it("NO_BOARDS auto-retry countdown loops from the five-second backoff", async () => {
     const createClaim = vi.fn(async () => ({
       kind: "none" as const,

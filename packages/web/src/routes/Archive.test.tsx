@@ -222,6 +222,6 @@ it("archive_keeps_player_identity_and_wdl_stats_in_the_shared_header", async () 
     await screen.findByRole("button", { name: /night-owl/ }),
   ).not.toBeNull();
   expect((await screen.findByTestId("stats-chip")).textContent).toContain(
-    "W 12 · D 3 · L 9 · 50%",
+    "W 12 · D 3 · L 9 · 57%",
   );
 });

@@ -91,6 +91,15 @@ describe("claiming branch (§5.5)", () => {
     });
   });
 
+  it("NO_BOARDS accepts a board found by an independent manual recheck", () => {
+    const next = playReducer(at("NO_BOARDS", { retryAfterSeconds: 5 }), {
+      type: "CLAIM_READY",
+      claim,
+    });
+
+    expect(next).toMatchObject({ phase: "FOCUS", claim });
+  });
+
   it("NO_BOARDS retries start at five seconds and double after every miss", () => {
     const firstMiss = playReducer(at("CLAIMING"), {
       type: "NO_BOARDS",

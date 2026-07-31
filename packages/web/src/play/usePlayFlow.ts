@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
-import type { ApiClient } from "../api/client.js";
+import type { ApiClient, CreateClaimResult } from "../api/client.js";
 import type { ClaimStatus, ErrorEnvelope, Meta, Move } from "../api/schemas.js";
 import { readClaimDraft } from "../lib/storage.js";
 import { syncDraft } from "./draft.js";
@@ -39,10 +39,48 @@ export function usePlayFlow(args: {
   const { client, address, enabled } = args;
   const previousState = useRef<PlayState>(initialPlayState);
   const claimInFlight = useRef(false);
+  const manualClaimInFlight = useRef(false);
   const submitInFlight = useRef(false);
   const rehydrated = useRef(false);
   const guest = args.guest === true;
   const claimOptions = guest ? ANONYMOUS_CLAIM_OPTIONS : undefined;
+
+  const applyCreateClaimResult = useCallback(
+    (result: CreateClaimResult, preserveNoBoards: boolean) => {
+      switch (result.kind) {
+        case "claim":
+          dispatch({ type: "CLAIM_READY", claim: result.claim });
+          break;
+        case "none":
+          if (!preserveNoBoards) {
+            dispatch({
+              type: "NO_BOARDS",
+              retryAfterSeconds: result.retryAfterSeconds,
+            });
+          }
+          break;
+        case "quota":
+          dispatch({
+            type: "QUOTA_OUT",
+            retryAfterSeconds: result.retryAfterSeconds,
+          });
+          break;
+        case "paused":
+          dispatch({ type: "PAUSED" });
+          break;
+        case "guest_used":
+          dispatch({ type: "GUEST_DEMO_USED" });
+          break;
+        case "turnstile_failed":
+          dispatch({
+            type: "GUEST_GATE_FAILED",
+            envelope: result.envelope,
+          });
+          break;
+      }
+    },
+    [],
+  );
 
   const applyClaimStatus = useCallback(
     (
@@ -113,42 +151,35 @@ export function usePlayFlow(args: {
             }
           : {},
       )
-      .then((result) => {
-        switch (result.kind) {
-          case "claim":
-            dispatch({ type: "CLAIM_READY", claim: result.claim });
-            break;
-          case "none":
-            dispatch({
-              type: "NO_BOARDS",
-              retryAfterSeconds: result.retryAfterSeconds,
-            });
-            break;
-          case "quota":
-            dispatch({
-              type: "QUOTA_OUT",
-              retryAfterSeconds: result.retryAfterSeconds,
-            });
-            break;
-          case "paused":
-            dispatch({ type: "PAUSED" });
-            break;
-          case "guest_used":
-            dispatch({ type: "GUEST_DEMO_USED" });
-            break;
-          case "turnstile_failed":
-            dispatch({
-              type: "GUEST_GATE_FAILED",
-              envelope: result.envelope,
-            });
-            break;
-        }
-      })
+      .then((result) => applyCreateClaimResult(result, false))
       .catch(() => dispatch({ type: "NO_BOARDS", retryAfterSeconds: 5 }))
       .finally(() => {
         claimInFlight.current = false;
       });
-  }, [state.phase, state.demo, state.turnstileToken, state.ref, client]);
+  }, [
+    state.phase,
+    state.demo,
+    state.turnstileToken,
+    state.ref,
+    client,
+    applyCreateClaimResult,
+  ]);
+
+  const retryClaimNow = useCallback(() => {
+    if (state.phase !== "NO_BOARDS" || manualClaimInFlight.current) return;
+    if (guest) {
+      dispatch({ type: "RETRY" });
+      return;
+    }
+    manualClaimInFlight.current = true;
+    client
+      .createClaim(state.demo ? { demo: true } : {})
+      .then((result) => applyCreateClaimResult(result, true))
+      .catch(() => undefined)
+      .finally(() => {
+        manualClaimInFlight.current = false;
+      });
+  }, [state.phase, state.demo, guest, client, applyCreateClaimResult]);
 
   // Demo settle: plain POST, no header, no wallet, ever (F-W4).
   // biome-ignore lint/correctness/useExhaustiveDependencies: fires on the phase transition only — re-running on claim/move context would double-submit
@@ -364,7 +395,14 @@ export function usePlayFlow(args: {
 
   const send = useCallback((event: PlayEvent) => dispatch(event), []);
 
-  return { state, send, checkExpiry, refreshClaim, refreshStatus } as const;
+  return {
+    state,
+    send,
+    checkExpiry,
+    refreshClaim,
+    refreshStatus,
+    retryClaimNow,
+  } as const;
 }
 
 export type PlayFlow = ReturnType<typeof usePlayFlow>;

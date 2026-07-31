@@ -517,6 +517,99 @@ describe("Release 3 admin reads", () => {
     });
   });
 
+  it("admin_players_lists_registered_users_with_operator_metrics", async () => {
+    const stack = setup();
+    stack.database.db
+      .update(schema.players)
+      .set({
+        createdAt: 100,
+        wins: 3,
+        draws: 2,
+        losses: 1,
+        points: 90,
+        abandonCount: 2,
+      })
+      .where(eq(schema.players.address, "alice"))
+      .run();
+    stack.database.db
+      .update(schema.players)
+      .set({ createdAt: 50 })
+      .where(eq(schema.players.address, "admin-wallet"))
+      .run();
+    stack.database.db
+      .insert(schema.players)
+      .values([
+        {
+          address: "agent-address",
+          kind: "agent",
+          nickname: "builder-bot",
+          createdAt: 200,
+        },
+        {
+          address: "guest_demo",
+          kind: "guest",
+          nickname: null,
+          createdAt: 300,
+        },
+      ])
+      .run();
+    const gameId = seedGame(stack);
+    seedMovedStake(stack, gameId);
+    stack.database.db
+      .update(schema.stakeEntries)
+      .set({ payoutAmount: 2_500 })
+      .where(eq(schema.stakeEntries.player, "alice"))
+      .run();
+
+    const response = await stack.app.request("/api/v1/admin/players?page=1", {
+      headers: tokenHeaders(),
+    });
+    const body = (await response.json()) as {
+      items: Array<Record<string, unknown>>;
+      total: number;
+    };
+    expect(body.total).toBe(3);
+    expect(body.items[0]).toMatchObject({
+      address: "alice",
+      nickname: "alice",
+      kind: "human",
+      abandonCount: 2,
+      points: 90,
+      netPnlMicroUsdc: 1_500,
+      stats: { moves: 6, wins: 3, draws: 2, losses: 1, winratePct: 75 },
+      lastActiveAt: new Date(stack.now()).toISOString(),
+    });
+    expect(body.items).not.toContainEqual(
+      expect.objectContaining({ address: "guest_demo" }),
+    );
+
+    const filtered = await stack.app.request(
+      "/api/v1/admin/players?page=1&kind=agent&q=builder",
+      { headers: tokenHeaders() },
+    );
+    expect(await filtered.json()).toMatchObject({
+      total: 1,
+      items: [{ address: "agent-address", kind: "agent" }],
+    });
+  });
+
+  it("admin_player_winrate_excludes_draws", async () => {
+    const stack = setup();
+    stack.database.db
+      .update(schema.players)
+      .set({ wins: 3, draws: 20, losses: 1 })
+      .where(eq(schema.players.address, "alice"))
+      .run();
+
+    const response = await stack.app.request("/api/v1/admin/players/alice", {
+      headers: tokenHeaders(),
+    });
+
+    expect(await response.json()).toMatchObject({
+      stats: { moves: 24, wins: 3, draws: 20, losses: 1, winratePct: 75 },
+    });
+  });
+
   it("admin_config_read_reports_defaults_overrides_effective_values_and_history", async () => {
     const stack = setup();
     await jsonRequest(stack, "/api/v1/admin/config/QUOTA_AGENT", "PUT", {

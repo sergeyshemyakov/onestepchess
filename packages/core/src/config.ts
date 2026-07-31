@@ -20,9 +20,9 @@ const coreConfigObject = z
       )
       .default(2),
     ENDSPIEL_PIECES: z.number().int().min(2).max(32).default(10),
-    REPETITION_WIN_MARGIN: positiveInteger.default(3),
+    REPETITION_WIN_MARGIN: positiveInteger.default(1),
     MAX_PLIES: positiveInteger.default(300),
-    MIN_PLY_INTERVAL_SECONDS: positiveInteger.default(20),
+    MIN_PLY_INTERVAL_SECONDS: positiveInteger.default(1),
     COOLDOWN_PLIES: positiveInteger.default(6),
     CLAIM_TTL_HUMAN: positiveInteger.default(600),
     CLAIM_TTL_AGENT: positiveInteger.default(90),

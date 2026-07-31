@@ -54,19 +54,79 @@ function StatusDialog(props: {
   readonly children: ReactNode;
   readonly onClose: () => void;
   readonly closeLabel?: string;
+  readonly action?: ReactNode;
 }) {
   return (
     <div className="modalback">
       <div className="modal" role="dialog" aria-modal="true">
         <h3>{props.title}</h3>
         {props.children}
-        <div className="modal-actions single">
+        <div
+          className={`modal-actions ${props.action === undefined ? "single" : "pair"}`}
+        >
           <button type="button" className="btn mini" onClick={props.onClose}>
             {props.closeLabel ?? "← back"}
           </button>
+          {props.action}
         </div>
       </div>
     </div>
+  );
+}
+
+function NoBoardsDialog(props: {
+  readonly retryAfterSeconds: number;
+  readonly onAutoRetry: () => void;
+  readonly onRetryNow: () => void;
+  readonly onClose: () => void;
+}) {
+  const [retryCoolingDown, setRetryCoolingDown] = useState(true);
+
+  useEffect(() => {
+    if (!retryCoolingDown) return;
+    const cooldown = window.setTimeout(() => setRetryCoolingDown(false), 1_000);
+    return () => window.clearTimeout(cooldown);
+  }, [retryCoolingDown]);
+
+  const retryNow = () => {
+    if (retryCoolingDown) return;
+    setRetryCoolingDown(true);
+    props.onRetryNow();
+  };
+
+  return (
+    <StatusDialog
+      title="NO BOARDS"
+      onClose={props.onClose}
+      action={
+        <button
+          type="button"
+          className={`btn mini pri retry-now${retryCoolingDown ? " cooling" : ""}`}
+          disabled={retryCoolingDown}
+          onClick={retryNow}
+        >
+          <span className="retry-icon" aria-hidden="true">
+            ↻
+          </span>{" "}
+          RETRY NOW
+        </button>
+      }
+    >
+      <p className="mv no-boards-countdown">
+        <CountdownLine
+          seconds={props.retryAfterSeconds}
+          onDone={props.onAutoRetry}
+          render={(left) =>
+            `NO BOARDS FREE :: retrying in ${formatCountdown(left)}`
+          }
+        />
+      </p>
+      <div className="no-boards-reminders">
+        <p>&gt; you can't play different sides in a game</p>
+        <p>&gt; you can't play soon after your previous move in a game</p>
+        <p>&gt; other humans or bots could be thinking long</p>
+      </div>
+    </StatusDialog>
   );
 }
 
@@ -205,22 +265,17 @@ export function PlayView(props: {
       ) : null}
 
       {state.phase === "NO_BOARDS" ? (
-        <StatusDialog title="NO BOARDS" onClose={() => send({ type: "ACK" })}>
-          <p className="mv">
-            <CountdownLine
-              seconds={Math.max(
-                1,
-                Math.ceil(
-                  state.retryAfterSeconds ?? INITIAL_NO_BOARDS_RETRY_SECONDS,
-                ),
-              )}
-              onDone={() => send({ type: "RETRY" })}
-              render={(left) =>
-                `NO BOARDS FREE :: retrying in ${formatCountdown(left)}`
-              }
-            />
-          </p>
-        </StatusDialog>
+        <NoBoardsDialog
+          retryAfterSeconds={Math.max(
+            1,
+            Math.ceil(
+              state.retryAfterSeconds ?? INITIAL_NO_BOARDS_RETRY_SECONDS,
+            ),
+          )}
+          onAutoRetry={() => send({ type: "RETRY" })}
+          onRetryNow={props.flow.retryClaimNow}
+          onClose={() => send({ type: "ACK" })}
+        />
       ) : null}
 
       {state.phase === "QUOTA_OUT" ? (
@@ -295,7 +350,9 @@ export function PlayView(props: {
           <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
             <div className="panel">
               <h3>YOUR MOVE</h3>
-              <p className="sidebadge">
+              <p
+                className={`sidebadge${state.phase === "FOCUS" ? " ready-side" : ""}`}
+              >
                 YOU PLAY {claim.yourSide === "white" ? "WHITE ▣" : "BLACK ▢"}
               </p>
               {checkSquare !== null ? (

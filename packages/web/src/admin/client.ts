@@ -10,6 +10,7 @@ import {
   type AdminGameSummary,
   type AdminOverview,
   type AdminPlayer,
+  type AdminPlayers,
   adminActivitySchema,
   adminBonusesSchema,
   adminConfigMutationSchema,
@@ -20,6 +21,7 @@ import {
   adminOverviewSchema,
   adminPauseStateSchema,
   adminPlayerSchema,
+  adminPlayerSummarySchema,
   type GamesPage,
   gamesPageSchema,
 } from "../api/schemas.js";
@@ -131,6 +133,20 @@ export function createAdminClient(
       return json(
         await request(`/admin/players/${encodeURIComponent(address)}`),
         adminPlayerSchema,
+      );
+    },
+
+    async getAdminPlayers(input: {
+      readonly kind?: "human" | "agent";
+      readonly q?: string;
+      readonly page: number;
+    }): Promise<AdminPlayers> {
+      const query = new URLSearchParams({ page: String(input.page) });
+      if (input.kind !== undefined) query.set("kind", input.kind);
+      if (input.q !== undefined && input.q !== "") query.set("q", input.q);
+      return json(
+        await request(`/admin/players?${query.toString()}`),
+        gamesPageSchema(adminPlayerSummarySchema),
       );
     },
 

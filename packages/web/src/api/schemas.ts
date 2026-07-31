@@ -473,6 +473,30 @@ export const adminGameDossierSchema = z.object({
 });
 export type AdminGameDossier = z.infer<typeof adminGameDossierSchema>;
 
+const adminPlayerStatsSchema = z.object({
+  moves: nonNegativeIntegerSchema,
+  wins: nonNegativeIntegerSchema,
+  draws: nonNegativeIntegerSchema,
+  losses: nonNegativeIntegerSchema,
+  winratePct: z.number().nullable(),
+});
+
+export const adminPlayerSummarySchema = z.object({
+  address: z.string(),
+  nickname: z.string().nullable(),
+  kind: z.enum(["human", "agent"]),
+  createdAt: isoTimestampSchema,
+  lastActiveAt: isoTimestampSchema,
+  banned: z.boolean(),
+  deprioritizedUntil: nullableIsoTimestampSchema,
+  abandonCount: nonNegativeIntegerSchema,
+  points: nonNegativeIntegerSchema,
+  stats: adminPlayerStatsSchema,
+  netPnlMicroUsdc: signedIntegerSchema,
+});
+export type AdminPlayerSummary = z.infer<typeof adminPlayerSummarySchema>;
+export type AdminPlayers = GamesPage<AdminPlayerSummary>;
+
 export const adminPlayerSchema = z.object({
   address: z.string(),
   nickname: z.string().nullable(),
@@ -481,13 +505,7 @@ export const adminPlayerSchema = z.object({
   quotaOverride: nonNegativeIntegerSchema.nullable(),
   abandonCount: nonNegativeIntegerSchema,
   deprioritizedUntil: nullableIsoTimestampSchema,
-  stats: z.object({
-    moves: nonNegativeIntegerSchema,
-    wins: nonNegativeIntegerSchema,
-    draws: nonNegativeIntegerSchema,
-    losses: nonNegativeIntegerSchema,
-    winratePct: z.number().nullable(),
-  }),
+  stats: adminPlayerStatsSchema,
   netPnlMicroUsdc: signedIntegerSchema,
   points: nonNegativeIntegerSchema.optional(),
   referredBy: z.string().nullable().optional(),
