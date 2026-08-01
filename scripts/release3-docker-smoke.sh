@@ -51,8 +51,8 @@ docker run --rm \
     }
     database.prepare(`
       INSERT INTO config_overrides (key, value_json, updated_at, updated_by)
-      VALUES ("GAME_POOL_TARGET", "64", 1, "release2-operator")
-    `).run();
+      VALUES (?, ?, ?, ?)
+    `).run("GAME_POOL_TARGET", "64", 1, "release2-operator");
     database.close();
   '
 

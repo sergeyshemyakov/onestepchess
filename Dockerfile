@@ -1,7 +1,9 @@
 FROM node:22-slim AS build
 
+ARG VITE_WALLETCONNECT_PROJECT_ID=""
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
+ENV VITE_WALLETCONNECT_PROJECT_ID=$VITE_WALLETCONNECT_PROJECT_ID
 WORKDIR /app
 
 RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
@@ -25,7 +27,6 @@ RUN pnpm build
 FROM node:22-slim AS runtime
 
 ENV NODE_ENV=production
-ENV RAIL=mock
 ENV PORT=3000
 ENV DB_PATH=/data/osc.sqlite
 WORKDIR /app
