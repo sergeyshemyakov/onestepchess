@@ -483,6 +483,78 @@ describe("Release 4 server profiles and immutable identity (#97)", () => {
     ).toBe(false);
   });
 
+  it("release4_security_surface_has_only_reviewed_wallet_turnstile_and_algod_origins", async () => {
+    const config = serverConfigSchema.parse({
+      CAIP2: MAINNET_CAIP2,
+      ALGOD_URL: "https://mainnet-api.4160.nodely.dev",
+      WALLETCONNECT_RELAY_URL: "wss://relay.walletconnect.org",
+    });
+    const headers = securityHeaders({
+      config,
+      publicBaseUrl: "https://osc.example",
+    });
+    expect(headers["Strict-Transport-Security"]).toBe(
+      "max-age=63072000; includeSubDomains",
+    );
+    expect(headers["Referrer-Policy"]).toBe("strict-origin-when-cross-origin");
+    expect(headers["X-Content-Type-Options"]).toBe("nosniff");
+
+    const csp = headers["Content-Security-Policy"] ?? "";
+    for (const directive of [
+      "default-src 'self'",
+      "object-src 'none'",
+      "base-uri 'self'",
+      "frame-ancestors 'none'",
+      "script-src 'self' https://challenges.cloudflare.com",
+      "frame-src https://challenges.cloudflare.com",
+      "img-src 'self' data: blob:",
+      "style-src 'self'",
+      "font-src 'self'",
+    ]) {
+      expect(csp).toContain(directive);
+    }
+    expect(csp).not.toContain("*");
+    expect(csp).not.toContain("unsafe-inline");
+    expect(csp).not.toContain("unsafe-eval");
+
+    const walletMatrix = [
+      {
+        wallet: "Pera",
+        origins: [
+          "https://wc.perawallet.app",
+          "https://wallet-connect-a.perawallet.app",
+          "wss://wallet-connect-a.perawallet.app",
+        ],
+      },
+      { wallet: "Defly", origins: ["https://static.defly.app"] },
+      { wallet: "Lute", origins: [] },
+    ];
+    expect(walletMatrix.map(({ wallet }) => wallet)).toEqual([
+      "Pera",
+      "Defly",
+      "Lute",
+    ]);
+    for (const { origins } of walletMatrix) {
+      for (const origin of origins) expect(csp).toContain(origin);
+    }
+    for (const origin of [
+      "https://mainnet-api.4160.nodely.dev",
+      "wss://relay.walletconnect.org",
+      "https://challenges.cloudflare.com",
+      "https://bridge.walletconnect.org",
+      "wss://bridge.walletconnect.org",
+    ]) {
+      expect(csp).toContain(origin);
+    }
+    expect(csp).not.toContain("testnet-api.4160.nodely.dev");
+
+    const app = createApp({ logger: createLogger({ level: "silent" }) });
+    const crossOrigin = await app.request("/missing", {
+      headers: { Origin: "https://untrusted.example" },
+    });
+    expect(crossOrigin.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
   it("server_logs_openapi_admin_and_static_assets_are_free_of_secrets_and_profile_leakage", () => {
     const secret = "release-four-secret-sentinel-never-emit";
     const chunks: string[] = [];

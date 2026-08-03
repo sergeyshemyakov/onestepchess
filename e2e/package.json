@@ -12,7 +12,8 @@
     "smoke:t1": "pnpm --dir .. exec tsx e2e/src/release4-chain-smoke.ts testnet",
     "smoke:release4:testnet": "pnpm --dir .. exec tsx e2e/src/release4-chain-smoke.ts testnet",
     "smoke:release4:mainnet": "pnpm --dir .. exec tsx e2e/src/release4-chain-smoke.ts mainnet",
-    "verify:release4:evidence": "pnpm --dir .. exec tsx e2e/src/verify-release4-evidence.ts"
+    "verify:release4:evidence": "pnpm --dir .. exec tsx e2e/src/verify-release4-evidence.ts",
+    "verify:release4:promotion": "pnpm --dir .. exec tsx e2e/src/verify-release4-promotion.ts"
   },
   "devDependencies": {
     "@onestepchess/agent-kit": "workspace:*",
