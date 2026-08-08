@@ -5,6 +5,8 @@ import type { ConnectedWallet, WalletChoice } from "./provider.js";
 
 export function PaymentWalletSheet(props: {
   readonly address: string;
+  /** Deployment CAIP-2 network — selects which network the wallet connects on. */
+  readonly caip2: string;
   readonly onConnected: (wallet: ConnectedWallet) => void;
   readonly onCancel: () => void;
 }) {
@@ -17,7 +19,7 @@ export function PaymentWalletSheet(props: {
 
   useEffect(() => {
     let cancelled = false;
-    loadWalletModule()
+    loadWalletModule(props.caip2)
       .then((module) => {
         if (!cancelled) setWallets(module.listWallets());
       })
@@ -27,7 +29,7 @@ export function PaymentWalletSheet(props: {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [props.caip2]);
 
   const connect = useCallback(
     async (id: string) => {
@@ -35,11 +37,13 @@ export function PaymentWalletSheet(props: {
       setBusy(true);
       setError(null);
       try {
-        const module = await loadWalletModule();
+        const module = await loadWalletModule(props.caip2);
         const wallet = await module.connect(id);
         if (wallet.address !== props.address) {
           await module.disconnect().catch(() => undefined);
-          setError("reconnect the wallet used for this account");
+          setError(
+            `reconnect the wallet used for this account: ${props.address}`,
+          );
           return;
         }
         props.onConnected(wallet);
@@ -72,17 +76,23 @@ export function PaymentWalletSheet(props: {
           <p className="console">&gt; loading wallet support…</p>
         ) : (
           <div className="walletbox">
-            {wallets.map((wallet) => (
-              <button
-                key={wallet.id}
-                type="button"
-                className="btn mini"
-                disabled={busy}
-                onClick={() => connect(wallet.id)}
-              >
-                ▸ {wallet.name}
-              </button>
-            ))}
+            <h4>WALLETS</h4>
+            <div
+              className="act"
+              style={{ flexDirection: "column", alignItems: "stretch" }}
+            >
+              {wallets.map((wallet) => (
+                <button
+                  key={wallet.id}
+                  type="button"
+                  className="btn mini"
+                  disabled={busy}
+                  onClick={() => connect(wallet.id)}
+                >
+                  ▸ {wallet.name}
+                </button>
+              ))}
+            </div>
           </div>
         )}
         {error === null ? null : (

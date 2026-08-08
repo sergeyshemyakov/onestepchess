@@ -413,6 +413,9 @@ describe("Release 4 starter-stake claim and opt-in (#98)", () => {
     seedPlayer(stack, ineligible);
     seedPlayer(stack, agent, "agent");
     seedDemo(stack, human.addr.toString());
+    stack.rail.control.setAccountInfo(human.addr.toString(), {
+      optedInUsdc: false,
+    });
     const humanHeaders = authorization(stack, human);
     const available = await stack.app.request("/api/v1/my/profile", {
       headers: humanHeaders,
@@ -434,11 +437,18 @@ describe("Release 4 starter-stake claim and opt-in (#98)", () => {
     expect(await claimed.json()).toMatchObject({
       bonus: { status: "claimed" },
     });
+    stack.database.db
+      .update(schema.bonuses)
+      .set({ algoTxid: "ALGO_CONFIRMATION_TX" })
+      .where(eq(schema.bonuses.player, human.addr.toString()))
+      .run();
     stack.setConfig({ BONUS_ENABLED: false });
     const cold = await stack.app.request("/api/v1/my/profile", {
       headers: humanHeaders,
     });
-    expect(await cold.json()).toMatchObject({ bonus: { status: "claimed" } });
+    expect(await cold.json()).toMatchObject({
+      bonus: { status: "claimed", algoTxid: "ALGO_CONFIRMATION_TX" },
+    });
     const disabled = await stack.app.request("/api/v1/my/bonus/claim", {
       method: "POST",
       headers: authorization(stack, ineligible),
@@ -455,6 +465,135 @@ describe("Release 4 starter-stake claim and opt-in (#98)", () => {
     expect(document.paths).toHaveProperty("/api/v1/my/bonus/claim");
     expect(document.paths).toHaveProperty("/api/v1/my/bonus/optin-txn");
     expect(document.paths).toHaveProperty("/api/v1/my/bonus/optin");
+  });
+
+  it("welcome_stake_stays_offered_when_USDC_is_sufficient_but_ALGO_is_not", async () => {
+    const stack = setup();
+    const usdcRich = algosdk.generateAccount();
+    seedPlayer(stack, usdcRich);
+    seedDemo(stack, usdcRich.addr.toString());
+    stack.rail.control.setBalances(usdcRich.addr.toString(), {
+      usdcMicroUsdc: 500_000,
+      algoMicroAlgo: 0,
+    });
+    stack.rail.control.setAccountInfo(usdcRich.addr.toString(), {
+      optedInUsdc: true,
+    });
+
+    const profile = (await (
+      await stack.app.request("/api/v1/my/profile", {
+        headers: authorization(stack, usdcRich),
+      })
+    ).json()) as Record<string, unknown>;
+    expect(profile).toMatchObject({ bonus: { status: "available" } });
+    const claimed = await stack.app.request("/api/v1/my/bonus/claim", {
+      method: "POST",
+      headers: authorization(stack, usdcRich),
+    });
+    expect(claimed.status).toBe(200);
+  });
+
+  it("welcome_stake_skips_wallets_with_sufficient_USDC_and_ALGO_and_advances_already_opted_in_wallets", async () => {
+    const stack = setup();
+    const sufficient = algosdk.generateAccount();
+    seedPlayer(stack, sufficient);
+    seedDemo(stack, sufficient.addr.toString());
+    stack.rail.control.setBalances(sufficient.addr.toString(), {
+      usdcMicroUsdc: 500_000,
+      algoMicroAlgo: 500_000,
+    });
+
+    const profile = (await (
+      await stack.app.request("/api/v1/my/profile", {
+        headers: authorization(stack, sufficient),
+      })
+    ).json()) as Record<string, unknown>;
+    expect(profile).not.toHaveProperty("bonus");
+    const rejected = await stack.app.request("/api/v1/my/bonus/claim", {
+      method: "POST",
+      headers: authorization(stack, sufficient),
+    });
+    expect(rejected.status).toBe(403);
+    expect(stack.database.db.select().from(schema.bonuses).all()).toHaveLength(
+      0,
+    );
+
+    const optedIn = algosdk.generateAccount();
+    seedPlayer(stack, optedIn);
+    seedDemo(stack, optedIn.addr.toString());
+    stack.rail.control.setAccountInfo(optedIn.addr.toString(), {
+      optedInUsdc: true,
+    });
+    const claimed = await stack.app.request("/api/v1/my/bonus/claim", {
+      method: "POST",
+      headers: authorization(stack, optedIn),
+    });
+    expect(claimed.status).toBe(200);
+    expect(
+      stack.database.db
+        .select({ status: schema.bonuses.status })
+        .from(schema.bonuses)
+        .where(eq(schema.bonuses.player, optedIn.addr.toString()))
+        .get(),
+    ).toEqual({ status: "opted_in" });
+  });
+
+  it("welcome_stake_rejects_a_fresh_wallet_before_claim_when_starter_ALGO_cannot_preserve_the_treasury_floor", async () => {
+    const stack = setup();
+    const fresh = algosdk.generateAccount();
+    seedPlayer(stack, fresh);
+    seedDemo(stack, fresh.addr.toString());
+    stack.rail.control.setBalances(fresh.addr.toString(), {
+      usdcMicroUsdc: 0,
+      algoMicroAlgo: 0,
+    });
+    stack.rail.control.setAccountInfo(fresh.addr.toString(), {
+      optedInUsdc: false,
+    });
+    stack.rail.control.setBalances(stack.rail.treasuryAddress, {
+      algoMicroAlgo: 1_250_999,
+    });
+
+    const response = await stack.app.request("/api/v1/my/bonus/claim", {
+      method: "POST",
+      headers: authorization(stack, fresh),
+    });
+
+    expect(response.status).toBe(429);
+    expect(await response.json()).toMatchObject({
+      error: "BONUS_UNAVAILABLE",
+      hint: "starter ALGO is temporarily unavailable — try again shortly",
+    });
+    expect(stack.database.db.select().from(schema.bonuses).all()).toHaveLength(
+      0,
+    );
+  });
+
+  it("welcome_stake_initial_profile_marks_an_existing_half_ALGO_as_ready", async () => {
+    const stack = setup();
+    const ready = algosdk.generateAccount();
+    seedPlayer(stack, ready);
+    seedDemo(stack, ready.addr.toString());
+    stack.rail.control.setBalances(ready.addr.toString(), {
+      usdcMicroUsdc: 0,
+      algoMicroAlgo: 500_000,
+    });
+    stack.rail.control.setAccountInfo(ready.addr.toString(), {
+      optedInUsdc: false,
+    });
+
+    const claim = await stack.app.request("/api/v1/my/bonus/claim", {
+      method: "POST",
+      headers: authorization(stack, ready),
+    });
+    expect(claim.status).toBe(200);
+    const profile = await stack.app.request("/api/v1/my/profile", {
+      headers: authorization(stack, ready),
+    });
+
+    expect(await profile.json()).toMatchObject({
+      bonus: { status: "claimed", algoReady: true },
+    });
   });
 
   it("bonus_optin_guard_rejects_every_unsafe_transaction_before_relay", async () => {

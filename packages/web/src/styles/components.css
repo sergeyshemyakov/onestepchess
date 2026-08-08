@@ -10,6 +10,14 @@ a.chip.click {
   border-radius: 3px;
 }
 
+/* Anchors styled as buttons must center their label like real buttons do,
+ * including inside the coarse-pointer 44px min-height. */
+a.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
 .btn {
   font: inherit;
   background: none;
@@ -229,6 +237,18 @@ a.chip.click {
 .appnav {
   display: flex;
   gap: 6px;
+}
+/* Primary navigation reads brighter and slightly larger than status chips —
+ * these are the two main destinations, not metadata. */
+.appnav .chip.click {
+  color: var(--ph);
+  border-color: var(--ph-dim);
+  font-size: 13px;
+  padding: 4px 14px;
+}
+.appnav .chip.click:hover {
+  color: var(--ph-hi);
+  border-color: var(--ph);
 }
 .reconnect {
   color: var(--accent);
@@ -1535,9 +1555,12 @@ body.fx .admin-shell svg.pc {
     gap: 10px;
     flex-wrap: wrap;
   }
+  /* On phones the primary nav gets its own row: BOARDS pinned left,
+   * ARCHIVE pinned right, regardless of how the rest of the bar wraps. */
   .appnav {
     order: 3;
     width: 100%;
+    justify-content: space-between;
   }
   .claimbar {
     padding: 5px 12px;
@@ -1574,6 +1597,10 @@ body.fx .admin-shell svg.pc {
   gap: 30px;
   align-items: start;
   padding: 26px 60px 8px;
+}
+/* Shrinks with the viewport so the full tagline fits on phone screens. */
+.landtitle {
+  font-size: clamp(34px, 10.5vw, 62px);
 }
 .landfn .howitworks {
   padding: 12px 0;

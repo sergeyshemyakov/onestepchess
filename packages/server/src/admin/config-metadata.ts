@@ -64,6 +64,10 @@ const CONFIG_DESCRIPTIONS = {
   REFERRAL_QUALIFY_MOVES: "Staked moves needed to qualify a referral.",
   REFERRAL_POINTS: "Points awarded for a qualified referral.",
   PUBLIC_STATS_ENABLED: "Whether aggregate public stats appear on the site.",
+  TOWER_BANNER_ENABLED:
+    "Whether the Tower integration banner appears on the site.",
+  CHAMP_BANNER_ENABLED:
+    "Whether the championship promo banner appears on the site.",
   CARD_CACHE_MAX: "Maximum rendered share cards held in memory.",
   CAIP2: "CAIP-2 identifier for the active Algorand network.",
   USDC_ASA: "ASA identifier for the accepted native USDC asset.",

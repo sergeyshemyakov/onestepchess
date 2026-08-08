@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { dismissTowerTeaser, towerTeaserDismissed } from "../lib/storage.js";
+import { useMeta } from "../meta/MetaContext.jsx";
 
 export function TowerTeaser() {
+  const { meta } = useMeta();
   const [dismissed, setDismissed] = useState(() => towerTeaserDismissed());
-  if (dismissed) return null;
+  if (meta?.banners.tower !== true || dismissed) return null;
 
   return (
     <div className="promostrip towerstrip" data-testid="tower-teaser">

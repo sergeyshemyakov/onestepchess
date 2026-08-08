@@ -68,6 +68,12 @@ describe("server config composition", () => {
     expect(loaded.config.GUEST_TOKEN_TTL_DAYS).toBe(30);
   });
 
+  it("banner_flags_default_to_disabled", () => {
+    const loaded = loadConfig({ env: baseEnv });
+    expect(loaded.config.TOWER_BANNER_ENABLED).toBe(false);
+    expect(loaded.config.CHAMP_BANNER_ENABLED).toBe(false);
+  });
+
   it("validates the configurable human board reserve percentage", () => {
     expect(
       serverConfigSchema.parse({ HUMAN_BOARD_RESERVE_PERCENT: 0 }),

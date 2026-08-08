@@ -6,7 +6,11 @@ import type { WalletModule } from "./provider.js";
 
 let loaded: Promise<WalletModule> | null = null;
 
-export function loadWalletModule(): Promise<WalletModule> {
+/** `caip2` is the deployment's `meta.network.caip2`; it selects the network the
+ * branded wallets connect on. The module is created once and memoised, so the
+ * first caller's network wins — that is fine because it is a deployment
+ * constant, identical across every call site. */
+export function loadWalletModule(caip2: string): Promise<WalletModule> {
   // Pera and Defly still transitively load WalletConnect v1 code that expects
   // the Node-style alias even though the SDK is running in a browser.
   const runtime = globalThis as typeof globalThis & {
@@ -14,7 +18,7 @@ export function loadWalletModule(): Promise<WalletModule> {
   };
   runtime.global ??= globalThis;
   loaded ??= import("./provider.js").then((module) =>
-    module.createWalletModule(),
+    module.createWalletModule({ caip2 }),
   );
   return loaded;
 }

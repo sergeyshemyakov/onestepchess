@@ -1,5 +1,5 @@
 import type { PaymentRail } from "@onestepchess/core";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, sql } from "drizzle-orm";
 import type { ServerConfig } from "../config.js";
 import type { Coordinator } from "../coordinator/queue.js";
 import { appendLedgerEntry } from "../db/ledger.js";
@@ -27,6 +27,13 @@ export type ReconciliationReport = {
 export class OperationalState {
   facilitator = { healthy: true, lastCheckAt: null as number | null };
 }
+
+/** The chain balance is read before the book, and balance queries can trail a
+ * facilitator-confirmed transaction by a few rounds — so ledger entries booked
+ * inside this window may legitimately be absent from the chain figure. Without
+ * it every reconciliation that races an in-flight settlement raises a false
+ * drift alarm and pauses gameplay. */
+export const CHAIN_BALANCE_SKEW_MS = 30_000;
 
 export type ReconciliationDeps = {
   readonly coordinator: Coordinator;
@@ -145,12 +152,44 @@ export function registerOperationalCommands(deps: ReconciliationDeps): void {
           )
           .get()?.amount,
       );
-      const totalOutboundTolerance = outboundTolerance + submittedFunding;
+      const skewCutoff = ctx.now - CHAIN_BALANCE_SKEW_MS;
+      const recentInboundBook = scalar(
+        deps.db
+          .select({
+            amount: sql<number>`coalesce(sum(${schema.ledger.deltaMicrousdc}), 0)`,
+          })
+          .from(schema.ledger)
+          .where(
+            and(
+              eq(schema.ledger.refType, "stake"),
+              gt(schema.ledger.ts, skewCutoff),
+            ),
+          )
+          .get()?.amount,
+      );
+      const recentOutboundBook = -scalar(
+        deps.db
+          .select({
+            amount: sql<number>`coalesce(sum(${schema.ledger.deltaMicrousdc}), 0)`,
+          })
+          .from(schema.ledger)
+          .where(
+            and(
+              inArray(schema.ledger.refType, ["payout", "bonus"]),
+              gt(schema.ledger.ts, skewCutoff),
+            ),
+          )
+          .get()?.amount,
+      );
+      const totalInboundTolerance = inboundTolerance + recentOutboundBook;
+      const totalOutboundTolerance =
+        outboundTolerance + submittedFunding + recentInboundBook;
       const book =
         accountBalance(deps.db, "treasury") +
         accountBalance(deps.db, "protocol");
       const drift = book - payload.usdcMicroUsdc;
-      const ok = drift >= -inboundTolerance && drift <= totalOutboundTolerance;
+      const ok =
+        drift >= -totalInboundTolerance && drift <= totalOutboundTolerance;
       const requiredRefundCoverage = refundCoverageRequiredMicroUsdc(deps.db);
       const belowRefundCoverage =
         payload.usdcMicroUsdc < requiredRefundCoverage;
@@ -160,7 +199,7 @@ export function registerOperationalCommands(deps: ReconciliationDeps): void {
         bookMicroUsdc: book,
         chainMicroUsdc: payload.usdcMicroUsdc,
         driftMicroUsdc: drift,
-        inboundToleranceMicroUsdc: inboundTolerance,
+        inboundToleranceMicroUsdc: totalInboundTolerance,
         outboundToleranceMicroUsdc: totalOutboundTolerance,
         ok,
         belowRefundCoverage,
@@ -210,7 +249,7 @@ export function registerOperationalCommands(deps: ReconciliationDeps): void {
               requestId: null,
               contextJson: JSON.stringify({
                 driftMicroUsdc: drift,
-                inboundToleranceMicroUsdc: inboundTolerance,
+                inboundToleranceMicroUsdc: totalInboundTolerance,
                 outboundToleranceMicroUsdc: totalOutboundTolerance,
               }),
             })
@@ -218,7 +257,7 @@ export function registerOperationalCommands(deps: ReconciliationDeps): void {
           ctx.afterCommit(() => {
             void deps.alerts.emit("reconciliation_drift", {
               driftMicroUsdc: drift,
-              inboundToleranceMicroUsdc: inboundTolerance,
+              inboundToleranceMicroUsdc: totalInboundTolerance,
               outboundToleranceMicroUsdc: totalOutboundTolerance,
             });
           });

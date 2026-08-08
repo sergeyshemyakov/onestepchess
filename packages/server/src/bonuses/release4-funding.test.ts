@@ -18,6 +18,7 @@ import {
 } from "../operations/reconciliation.js";
 import {
   type FundingExecutorDeps,
+  hasAlgoFundingCapacity,
   rearmBonusFunding,
   registerFundingCommands,
   runFundingExecutor,
@@ -290,7 +291,12 @@ function seedStake(stack: Stack, account: algosdk.Account): void {
 }
 
 describe("Release 4 recoverable starter-stake funding (#99)", () => {
-  it("bonus_funding_skips_algo_for_opted_in_or_sufficient_accounts_and_never_creates_a_phantom_job", async () => {
+  it("algo_funding_guard_preserves_the_floor_after_the_flat_transaction_fee", () => {
+    expect(hasAlgoFundingCapacity(1_250_999, 250_000, 1_000_000)).toBe(false);
+    expect(hasAlgoFundingCapacity(1_251_000, 250_000, 1_000_000)).toBe(true);
+  });
+
+  it("bonus_funding_skips_algo_for_opted_in_or_half_algo_accounts_and_never_creates_a_phantom_job", async () => {
     const stack = setup();
     const opted = algosdk.generateAccount();
     const exact = algosdk.generateAccount();
@@ -302,11 +308,15 @@ describe("Release 4 recoverable starter-stake funding (#99)", () => {
     });
     stack.rail.control.setAccountInfo(exact.addr.toString(), {
       optedInUsdc: false,
-      spendableAlgoMicro: 101_000,
+    });
+    stack.rail.control.setBalances(exact.addr.toString(), {
+      algoMicroAlgo: 500_000,
     });
     stack.rail.control.setAccountInfo(below.addr.toString(), {
       optedInUsdc: false,
-      spendableAlgoMicro: 100_999,
+    });
+    stack.rail.control.setBalances(below.addr.toString(), {
+      algoMicroAlgo: 499_999,
     });
 
     await runFundingExecutor(stack.deps);
@@ -325,6 +335,29 @@ describe("Release 4 recoverable starter-stake funding (#99)", () => {
         (job) => job.player === below.addr.toString() && job.leg === "algo",
       ),
     ).toHaveLength(1);
+  });
+
+  it("fresh_wallet_claim_receives_the_ALGO_leg_before_USDC_opt_in", async () => {
+    const stack = setup();
+    const fresh = algosdk.generateAccount();
+    seedBonus(stack, fresh);
+    stack.rail.control.setAccountInfo(fresh.addr.toString(), {
+      optedInUsdc: false,
+    });
+    stack.rail.control.setBalances(fresh.addr.toString(), {
+      usdcMicroUsdc: 0,
+      algoMicroAlgo: 0,
+    });
+
+    await runFundingExecutor(stack.deps);
+
+    expect(
+      stack.database.db
+        .select()
+        .from(schema.fundingJobs)
+        .where(eq(schema.fundingJobs.player, fresh.addr.toString()))
+        .get(),
+    ).toMatchObject({ leg: "algo", status: "confirmed" });
   });
 
   it("bonus_funding_persists_signed_bytes_txid_and_validity_before_each_broadcast", async () => {

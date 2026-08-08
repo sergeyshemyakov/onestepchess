@@ -75,7 +75,7 @@ it("championship_teaser_and_stats_follow_feature_contract", async () => {
 
   // -- Tower teaser is text + link only, and no World Chess brand asset
   //    exists anywhere in the bundle's source tree.
-  const teaser = screen.getByTestId("tower-teaser");
+  const teaser = await screen.findByTestId("tower-teaser");
   expect(teaser.querySelector("img")).toBeNull();
   expect(teaser.querySelector("svg")).toBeNull();
   expect(teaser.querySelector("a")).not.toBeNull();

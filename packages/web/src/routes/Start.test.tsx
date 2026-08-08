@@ -26,7 +26,5 @@ it("setup_guide_centers_its_copy_and_links_supported_algorand_wallets", () => {
   expect(
     screen.getByRole("link", { name: "Defly ↗" }).getAttribute("href"),
   ).toBe("https://defly.app/");
-  expect(
-    screen.getByRole("link", { name: "Lute ↗" }).getAttribute("href"),
-  ).toBe("https://lute.app/");
+  expect(screen.queryByRole("link", { name: "Lute ↗" })).toBeNull();
 });

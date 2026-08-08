@@ -314,7 +314,7 @@ export function inspectRelease4Artifact(
 
 const walletCertificationSchema = z
   .object({
-    wallet: z.enum(["pera", "defly", "lute"]),
+    wallet: z.enum(["pera", "defly"]),
     platform: z.enum([
       "ios-safari",
       "android-chrome",
@@ -343,17 +343,13 @@ export const release4SecurityEvidenceSchema = z
         cors: z.literal("same_origin_only"),
       })
       .strict(),
-    walletMatrix: z.array(walletCertificationSchema).min(3),
+    walletMatrix: z.array(walletCertificationSchema).min(2),
     reviewedConnectOriginsSha256: sha256Schema,
     findings: z.literal(0),
   })
   .strict()
   .superRefine((evidence, context) => {
-    const required = [
-      "pera:ios-safari",
-      "defly:android-chrome",
-      "lute:desktop-chrome",
-    ];
+    const required = ["pera:ios-safari", "defly:android-chrome"];
     const recorded = new Set(
       evidence.walletMatrix.map((row) => `${row.wallet}:${row.platform}`),
     );

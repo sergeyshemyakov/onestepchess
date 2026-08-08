@@ -135,7 +135,7 @@ export function Landing(props: {
     >
       <div className="landsplit" data-testid="landing-split">
         <div className="landfn">
-          <h1 style={{ fontSize: 62 }}>
+          <h1 className="landtitle">
             ONLY ONE MOVE.<span className="blink">▊</span>
           </h1>
           <HowItWorks meta={props.meta} tab={audience} onTab={setAudience} />
@@ -223,7 +223,7 @@ export function Landing(props: {
         >
           · GitHub ↗
         </a>
-        <a href="#rules">· rules</a>
+        <Link to="/rules">· rules</Link>
       </div>
       {gamePanePhase ? (
         gamePaneDismissed ? null : (

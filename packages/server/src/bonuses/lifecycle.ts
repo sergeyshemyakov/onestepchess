@@ -5,6 +5,21 @@ import type { Db } from "../db/open.js";
 import { schema } from "../db/open.js";
 
 const DAY_MS = 86_400_000;
+export const BONUS_SKIP_USDC_MICRO = 500_000;
+export const BONUS_SKIP_ALGO_MICRO = 500_000;
+
+/** A wallet already holding both playable USDC and fee ALGO gets no starter
+ * stake offer at all — only such wallets skip it; a wallet missing either leg
+ * still sees the full flow so it ends up able to play. */
+export function hasSufficientBalancesForStarterStake(balances: {
+  readonly usdcMicroUsdc: number;
+  readonly algoMicroAlgo: number;
+}) {
+  return (
+    balances.usdcMicroUsdc >= BONUS_SKIP_USDC_MICRO &&
+    balances.algoMicroAlgo >= BONUS_SKIP_ALGO_MICRO
+  );
+}
 
 export type BonusLifecycleDeps = {
   readonly coordinator: Coordinator;
@@ -112,13 +127,24 @@ export function bonusProfileStatus(
   deps: Pick<BonusLifecycleDeps, "db" | "config">,
   playerAddress: string,
   now: number,
-): { readonly status: "available" | "claimed" | "opted_in" | "funded" } | null {
+): {
+  readonly status: "available" | "claimed" | "opted_in" | "funded";
+  readonly algoTxid?: string;
+  readonly algoReady?: boolean;
+} | null {
   const row = deps.db
-    .select({ status: schema.bonuses.status })
+    .select({
+      status: schema.bonuses.status,
+      algoTxid: schema.bonuses.algoTxid,
+    })
     .from(schema.bonuses)
     .where(eq(schema.bonuses.player, playerAddress))
     .get();
-  if (row !== undefined) return { status: row.status };
+  if (row !== undefined)
+    return {
+      status: row.status,
+      ...(row.algoTxid === null ? {} : { algoTxid: row.algoTxid }),
+    };
   const facts = factsForPlayer(deps, playerAddress, now);
   return facts !== null && evaluateBonusEligibility(facts).eligible
     ? { status: "available" }

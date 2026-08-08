@@ -3,9 +3,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Meta } from "../api/schemas.js";
 import { loginWithWallet } from "../auth/login.js";
 import {
+  brandedWalletChainId,
   type ConnectedWallet,
   connectWithStaleSessionRecovery,
   createWalletModule,
+  networkIdForCaip2,
+  recoversStaleSession,
 } from "./provider.js";
 
 afterEach(() => {
@@ -32,6 +35,13 @@ describe("Release 1 wallet surface", () => {
     expect(provider.connect).toHaveBeenCalledTimes(2);
   });
 
+  it("defly_and_walletconnect_recover_a_stale_session_like_pera", () => {
+    expect(recoversStaleSession("pera")).toBe(true);
+    expect(recoversStaleSession("defly")).toBe(true);
+    expect(recoversStaleSession("walletconnect")).toBe(true);
+    expect(recoversStaleSession("mnemonic")).toBe(false);
+  });
+
   it("pera_does_not_reopen_after_the_user_closes_the_connect_modal", async () => {
     const cancelled = Object.assign(new Error("closed"), {
       name: "PeraWalletConnectError",
@@ -55,7 +65,6 @@ describe("Release 1 wallet surface", () => {
     for (const provider of [
       "@perawallet/connect",
       "@blockshake/defly-connect",
-      "lute-connect",
     ]) {
       expect(import.meta.resolve(provider)).toContain(provider);
     }
@@ -70,9 +79,48 @@ describe("Release 1 wallet surface", () => {
     ).toEqual([
       { id: "pera", name: "Pera" },
       { id: "defly", name: "Defly" },
-      { id: "lute", name: "Lute" },
       { id: "mnemonic", name: "dev wallet (mnemonic)" },
     ]);
+  });
+
+  it("wallet_login_targets_testnet_network_for_a_testnet_deployment", () => {
+    // The deployment's CAIP-2 network — not a hardcoded MAINNET — drives which
+    // network the branded wallets (Pera/Defly/etc.) are asked to connect on. A
+    // testnet server must ask Pera for testnet or Pera reports a network
+    // mismatch and never reaches the (testnet-aware) signing step.
+    expect(
+      networkIdForCaip2(
+        "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=",
+      ),
+    ).toBe("testnet");
+    expect(
+      networkIdForCaip2(
+        "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=",
+      ),
+    ).toBe("mainnet");
+    // mock:local keeps the mainnet profile so the never-submitted fallback
+    // auth artifact renders consistently in real wallet apps (§6.3).
+    expect(networkIdForCaip2("mock:local")).toBe("mainnet");
+  });
+
+  it("pera_and_defly_declare_the_testnet_chain_id_on_a_testnet_deployment", () => {
+    // use-wallet builds the Pera/Defly SDK clients from the STATIC registration
+    // options and never forwards the active network, and those SDKs default to
+    // chainId 4160 which they treat as mainnet. A testnet Pera app then rejects
+    // the sign request with SIGN_TXN_NETWORK_MISMATCH. The deployment CAIP-2
+    // must therefore be baked into the branded wallet options as the numeric
+    // Algorand chain id (416001 mainnet / 416002 testnet).
+    expect(
+      brandedWalletChainId(
+        "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=",
+      ),
+    ).toBe(416002);
+    expect(
+      brandedWalletChainId(
+        "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=",
+      ),
+    ).toBe(416001);
+    expect(brandedWalletChainId("mock:local")).toBe(416001);
   });
 
   it("invalid mnemonic input explains the error and remains retryable", async () => {
@@ -111,7 +159,7 @@ describe("Release 1 wallet surface", () => {
   });
 });
 
-it("wallet_auth_prefers_arc60_and_supports_pera_defly_lute", async () => {
+it("wallet_auth_prefers_arc60_and_supports_pera_defly", async () => {
   const choices = createWalletModule({
     includeMnemonic: false,
     walletConnectProjectId: "deployment-project-id",
@@ -119,7 +167,6 @@ it("wallet_auth_prefers_arc60_and_supports_pera_defly_lute", async () => {
   expect(choices.map((choice) => choice.name)).toEqual([
     "Pera",
     "Defly",
-    "Lute",
     "WalletConnect",
   ]);
 
@@ -138,7 +185,7 @@ it("wallet_auth_prefers_arc60_and_supports_pera_defly_lute", async () => {
     player: {
       address,
       kind: "human" as const,
-      nickname: "lute-player",
+      nickname: "arc60-player",
       createdAt: "2026-07-21T14:00:00Z",
     },
     jwt: "jwt",
@@ -151,9 +198,9 @@ it("wallet_auth_prefers_arc60_and_supports_pera_defly_lute", async () => {
     signatureB64: "c2ln",
     authenticatorDataB64: "YXV0aA==",
   }));
-  const lute: ConnectedWallet = {
+  const arc60Wallet: ConnectedWallet = {
     address,
-    walletName: "Lute",
+    walletName: "arc60-capable",
     signTransactions: vi.fn(),
     signData,
   };
@@ -161,14 +208,14 @@ it("wallet_auth_prefers_arc60_and_supports_pera_defly_lute", async () => {
     // biome-ignore lint/suspicious/noExplicitAny: focused auth client double
     client: client as any,
     meta: { network: { caip2: "mock:local" } } as Meta,
-    wallet: lute,
+    wallet: arc60Wallet,
   });
   expect(result.kind).toBe("signed-in");
   expect(signData).toHaveBeenCalledWith("e30=", {
     scope: 1,
     encoding: "base64",
   });
-  expect(lute.signTransactions).not.toHaveBeenCalled();
+  expect(arc60Wallet.signTransactions).not.toHaveBeenCalled();
   expect(authVerify).toHaveBeenCalledWith({
     address,
     method: "arc60",

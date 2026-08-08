@@ -42,7 +42,7 @@ treasury, and an untracked environment file. The live chain slice runs with:
 pnpm --filter @onestepchess/e2e smoke:release4:testnet
 ```
 
-The complete application drill must additionally record Pera, Defly, and Lute
+The complete application drill must additionally record Pera and Defly
 auth/payment; agent-kit payment; starter-stake ALGO, opt-in, and USDC legs;
 payout; admin pause/recovery; all four forced-crash boundaries; clean
 reconciliation; backup/restore; and the green Release 3 public-client,

@@ -6,7 +6,11 @@ import {
   NICKNAME_PATTERN,
   nicknameTaken,
 } from "../../auth/nickname.js";
-import { bonusProfileStatus } from "../../bonuses/lifecycle.js";
+import {
+  BONUS_SKIP_ALGO_MICRO,
+  bonusProfileStatus,
+  hasSufficientBalancesForStarterStake,
+} from "../../bonuses/lifecycle.js";
 import { CardCache } from "../../cards/raster.js";
 import { buildCardSvg, type CardOutcome } from "../../cards/svg.js";
 import type { Coordinator } from "../../coordinator/queue.js";
@@ -163,6 +167,33 @@ export function registerHumanRoutes(
     const balances =
       include === "balances" ? await deps.rail.getBalances(address) : undefined;
     // Points and referral fields are humans-only (F15) — absent for agents.
+    let bonus =
+      player.kind === "human"
+        ? bonusProfileStatus(deps, address, deps.now())
+        : null;
+    if (
+      bonus?.status === "available" ||
+      (bonus?.status === "claimed" && bonus.algoTxid === undefined)
+    ) {
+      try {
+        const eligibilityBalances =
+          balances ?? (await deps.rail.getBalances(address));
+        if (
+          bonus.status === "available" &&
+          hasSufficientBalancesForStarterStake(eligibilityBalances)
+        ) {
+          bonus = null;
+        } else if (
+          bonus.status === "claimed" &&
+          eligibilityBalances.algoMicroAlgo >= BONUS_SKIP_ALGO_MICRO
+        ) {
+          bonus = { ...bonus, algoReady: true };
+        }
+      } catch {
+        // A transient chain read must not permanently hide an otherwise
+        // eligible starter stake; the claim route repeats the guard.
+      }
+    }
     const incentives =
       player.kind === "human"
         ? {
@@ -172,10 +203,7 @@ export function registerHumanRoutes(
               joined: player.refJoined,
               qualified: player.refQualified,
             },
-            ...(() => {
-              const bonus = bonusProfileStatus(deps, address, deps.now());
-              return bonus === null ? {} : { bonus };
-            })(),
+            ...(bonus === null ? {} : { bonus }),
           }
         : {};
     return c.json({

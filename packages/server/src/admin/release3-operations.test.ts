@@ -9,6 +9,7 @@ import { Coordinator } from "../coordinator/queue.js";
 import { registerResolution } from "../coordinator/resolution.js";
 import { TimerService } from "../coordinator/timers.js";
 import { CoordinatorViews } from "../coordinator/views.js";
+import { appendLedgerEntry } from "../db/ledger.js";
 import { type OpenedDatabase, openDatabase, schema } from "../db/open.js";
 import { createApp } from "../http/app.js";
 import { createLogger } from "../logger.js";
@@ -336,6 +337,77 @@ describe("Release 3 reconciliation and recovery", () => {
       .run();
     const rejected = await runReconciliation(stack.reconciliation, "scheduled");
     expect(rejected.ok).toBe(false);
+  });
+
+  it("reconciliation_tolerates_recently_booked_stake_missing_from_chain_snapshot", async () => {
+    const stack = setup();
+    await runReconciliation(stack.reconciliation, "boot");
+    stack.setNow(1_060_000);
+    appendLedgerEntry(stack.database.db, {
+      ts: stack.now(),
+      account: "treasury",
+      deltaMicrousdc: 1_000,
+      refType: "stake",
+      refId: "pi_recent",
+    });
+    // The chain snapshot (still 1_000_000) has not caught up with the
+    // just-confirmed settlement; 5s later is inside the 30s skew window.
+    stack.setNow(1_065_000);
+
+    const report = await runReconciliation(stack.reconciliation, "scheduled");
+
+    expect(report).toMatchObject({ driftMicroUsdc: 1_000, ok: true });
+    expect(readPauseState(stack.database.db)).toMatchObject({
+      mode: "running",
+    });
+    expect(
+      stack.database.db
+        .select()
+        .from(schema.errorLog)
+        .all()
+        .filter((row) => row.code === "reconciliation_drift"),
+    ).toHaveLength(0);
+    expect(stack.transport).not.toHaveBeenCalled();
+  });
+
+  it("reconciliation_flags_positive_drift_older_than_chain_skew_window", async () => {
+    const stack = setup();
+    await runReconciliation(stack.reconciliation, "boot");
+    stack.setNow(1_060_000);
+    appendLedgerEntry(stack.database.db, {
+      ts: stack.now(),
+      account: "treasury",
+      deltaMicrousdc: 1_000,
+      refType: "stake",
+      refId: "pi_stale",
+    });
+    // 31s later the chain still lacks the funds: a real discrepancy, not skew.
+    stack.setNow(1_091_000);
+
+    const report = await runReconciliation(stack.reconciliation, "scheduled");
+
+    expect(report).toMatchObject({ driftMicroUsdc: 1_000, ok: false });
+  });
+
+  it("reconciliation_tolerates_recently_booked_payout_still_in_chain_snapshot", async () => {
+    const stack = setup();
+    await runReconciliation(stack.reconciliation, "boot");
+    stack.setNow(1_060_000);
+    appendLedgerEntry(stack.database.db, {
+      ts: stack.now(),
+      account: "treasury",
+      deltaMicrousdc: -1_000,
+      refType: "payout",
+      refId: "job_recent",
+    });
+    stack.setNow(1_065_000);
+
+    const report = await runReconciliation(stack.reconciliation, "scheduled");
+
+    expect(report).toMatchObject({ driftMicroUsdc: -1_000, ok: true });
+    expect(readPauseState(stack.database.db)).toMatchObject({
+      mode: "running",
+    });
   });
 
   it("reconciliation_drift_pauses_once_and_alerts_once", async () => {

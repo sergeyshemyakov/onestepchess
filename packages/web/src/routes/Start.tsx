@@ -37,22 +37,14 @@ export function Start(props: {
                 rel="noopener noreferrer"
               >
                 Pera ↗
-              </a>
-              ,{" "}
+              </a>{" "}
+              or{" "}
               <a
                 href="https://defly.app/"
                 target="_blank"
                 rel="noopener noreferrer"
               >
                 Defly ↗
-              </a>{" "}
-              or{" "}
-              <a
-                href="https://lute.app/"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Lute ↗
               </a>
               .
             </b>{" "}

@@ -175,7 +175,7 @@ it("registration_loads_turnstile_only_when_required", async () => {
   };
   const wallet: ConnectedWallet = {
     address: playerFixture.address,
-    walletName: "Lute",
+    walletName: "arc60-capable",
     signTransactions: vi.fn(),
     signData: vi.fn(async () => signed),
   };

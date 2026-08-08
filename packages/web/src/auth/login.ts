@@ -42,7 +42,7 @@ export async function loginWithWallet(deps: {
 
   let proofBody: Record<string, unknown>;
   if (wallet.signData !== undefined) {
-    // ARC-60 signData branch (Lute).
+    // ARC-60 signData branch, for wallets that support it.
     let signed: { signatureB64: string; authenticatorDataB64: string };
     try {
       signed = await wallet.signData(challenge.arc60Payload.data, {

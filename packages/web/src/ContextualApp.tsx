@@ -21,6 +21,9 @@ const Hub = lazy(() =>
 const Start = lazy(() =>
   import("./routes/Start.jsx").then((module) => ({ default: module.Start })),
 );
+const Rules = lazy(() =>
+  import("./routes/Rules.jsx").then((module) => ({ default: module.Rules })),
+);
 const Championship = lazy(() =>
   import("./routes/Championship.jsx").then((module) => ({
     default: module.Championship,
@@ -98,6 +101,12 @@ function StartRoute(props: { readonly client: ApiClient }) {
   return <Start client={props.client} meta={meta} onSignedIn={onSignedIn} />;
 }
 
+function RulesRoute() {
+  const { meta } = useMeta();
+  if (meta === null) return <BootSkeleton />;
+  return <Rules meta={meta} />;
+}
+
 function ArchiveRoute(props: { readonly client: ApiClient }) {
   const { session } = useSession();
   const { meta } = useMeta();
@@ -131,6 +140,7 @@ export function ContextualApp(props: {
                   path="/start"
                   element={<StartRoute client={props.client} />}
                 />
+                <Route path="/rules" element={<RulesRoute />} />
                 <Route path="/championship" element={<Championship />} />
                 <Route
                   path="/archive"

@@ -125,6 +125,7 @@ function NoBoardsDialog(props: {
         <p>&gt; you can't play different sides in a game</p>
         <p>&gt; you can't play soon after your previous move in a game</p>
         <p>&gt; other humans or bots could be thinking long</p>
+        <p>&gt; only bots play in the endspiel</p>
       </div>
     </StatusDialog>
   );
@@ -557,9 +558,6 @@ function ConfirmMorph(props: {
         props.acceptedMove.claimId === claim?.claimId ? (
           <p className="console" data-testid="move-accepted-line">
             &gt; move accepted
-            {props.acceptedMove.txid === null
-              ? " · demo"
-              : ` · txid ${props.acceptedMove.txid}`}
           </p>
         ) : null}
 
@@ -606,7 +604,7 @@ function Receipt(props: {
                 target="_blank"
                 rel="noopener noreferrer"
               >
-                txid {receipt.txid} ↗
+                tx ↗
               </a>
             ) : (
               "settled"

@@ -99,6 +99,8 @@ export const serverConfigSchema = coreConfigSchema
     REFERRAL_QUALIFY_MOVES: positiveInt.default(3),
     REFERRAL_POINTS: nonnegativeInt.default(50),
     PUBLIC_STATS_ENABLED: z.boolean().default(false),
+    TOWER_BANNER_ENABLED: z.boolean().default(false),
+    CHAMP_BANNER_ENABLED: z.boolean().default(false),
     CARD_CACHE_MAX: positiveInt.default(200),
     CAIP2: z.string().min(1).default("mock:local"),
     USDC_ASA: z

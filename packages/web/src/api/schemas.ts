@@ -61,6 +61,10 @@ export const metaSchema = z.object({
     banner: z.string().nullable(),
   }),
   turnstileSiteKey: z.string(),
+  banners: z.object({
+    tower: z.boolean(),
+    championship: z.boolean(),
+  }),
   // Present only when the server enables public stats (F-W13 strip gating).
   stats: z
     .object({
@@ -135,7 +139,13 @@ export const profileSchema = playerSchema.extend({
       qualified: nonNegativeIntegerSchema,
     })
     .optional(),
-  bonus: z.object({ status: bonusStatusSchema }).optional(),
+  bonus: z
+    .object({
+      status: bonusStatusSchema,
+      algoTxid: z.string().optional(),
+      algoReady: z.boolean().optional(),
+    })
+    .optional(),
 });
 export type ProfileView = z.infer<typeof profileSchema>;
 

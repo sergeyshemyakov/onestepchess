@@ -252,11 +252,7 @@ async function buildExactHeader(input: {
         requirement: input.requirement,
         signerAddress: wallet.address,
       });
-      const clientTransaction = transactions[1];
-      if (clientTransaction === undefined) {
-        throw new Error("exact payment client transaction is missing");
-      }
-      const signed = await wallet.signTransactions([clientTransaction]);
+      const signed = await wallet.signTransactions(transactions, [1]);
       return [null, signed];
     },
   };

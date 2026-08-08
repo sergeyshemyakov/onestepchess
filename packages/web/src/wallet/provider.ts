@@ -13,6 +13,53 @@ import algosdk from "algosdk";
 
 const MNEMONIC_STORAGE_KEY = "@txnlab/use-wallet:v4_mnemonic";
 
+// Client mirror of the server's genesis→network map (server/src/auth/genesis.ts).
+// The branded wallets (Pera/Defly/…) enforce their own selected network at
+// connect time, so the deployment's CAIP-2 — not a hardcoded MAINNET — decides
+// which network they are asked for; otherwise a testnet wallet reports a
+// network mismatch before signing is ever attempted.
+const MAINNET_GENESIS_HASH_B64 = "wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=";
+const TESTNET_GENESIS_HASH_B64 = "SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=";
+
+export function networkIdForCaip2(caip2: string): NetworkId {
+  // `mock:local` keeps the mainnet profile so the never-submitted fallback auth
+  // artifact renders consistently in real wallet apps (§6.3).
+  if (caip2 === "mock:local") return NetworkId.MAINNET;
+  if (caip2.startsWith("algorand:")) {
+    const reference = caip2.slice("algorand:".length);
+    if (
+      reference.length > 0 &&
+      TESTNET_GENESIS_HASH_B64.startsWith(reference)
+    ) {
+      return NetworkId.TESTNET;
+    }
+    if (
+      reference.length > 0 &&
+      MAINNET_GENESIS_HASH_B64.startsWith(reference)
+    ) {
+      return NetworkId.MAINNET;
+    }
+  }
+  throw new Error(`unsupported CAIP-2 network: ${caip2}`);
+}
+
+/** Numeric Algorand chain id the Pera/Defly WalletConnect SDKs expect. Unlike
+ * the generic WalletConnect wallet, use-wallet builds these clients from their
+ * static registration options and never forwards the active network, and the
+ * SDKs default to 4160 which they map to mainnet — so a testnet Pera app
+ * rejects the sign request (SIGN_TXN_NETWORK_MISMATCH). Baking the deployment's
+ * chain id into the wallet options is the only way to reach them. */
+export function brandedWalletChainId(caip2: string): 416001 | 416002 | 416003 {
+  switch (networkIdForCaip2(caip2)) {
+    case NetworkId.TESTNET:
+      return 416002;
+    case NetworkId.BETANET:
+      return 416003;
+    default:
+      return 416001;
+  }
+}
+
 function normalizeMnemonic(value: string): string {
   return value.trim().replace(/\s+/g, " ");
 }
@@ -71,9 +118,10 @@ export type ConnectedWallet = {
   readonly walletName: string;
   readonly signTransactions: (
     txns: readonly algosdk.Transaction[],
+    indexesToSign?: readonly number[],
   ) => Promise<Uint8Array>;
-  /** ARC-60 branch — present only when the wallet supports signData
-   * (currently Lute); the fallback-txn path is used otherwise (F-W2). */
+  /** ARC-60 branch — present only when the wallet supports signData;
+   * the fallback-txn path is used otherwise (F-W2). */
   readonly signData?: (
     dataB64: string,
     metadata: { readonly scope: number; readonly encoding: string },
@@ -93,6 +141,10 @@ export type WalletModule = {
 export type WalletModuleOptions = {
   readonly walletConnectProjectId?: string;
   readonly includeMnemonic?: boolean;
+  /** The deployment's CAIP-2 network (`meta.network.caip2`). Drives which
+   * network the branded wallets connect on. Defaults to the mock/mainnet
+   * profile when absent. */
+  readonly caip2?: string;
 };
 
 type ConnectableWallet<Account> = {
@@ -131,9 +183,18 @@ function abortFrom(cause: unknown): Error {
   return error;
 }
 
-/** Pera/WalletConnect can leave a stale persisted session after an interrupted
- * handoff. The old UI cleaned it only after surfacing an error, making the
- * user's second click succeed. Recover once within the original click. */
+/** The WalletConnect-based wallets (Pera, Defly, generic WalletConnect) can
+ * leave a stale persisted session after an interrupted handoff. The old UI
+ * cleaned it only after surfacing an error, making the user's second click
+ * succeed. Recover once within the original click. */
+export function recoversStaleSession(id: string): boolean {
+  return (
+    id === WalletId.PERA ||
+    id === WalletId.DEFLY ||
+    id === WalletId.WALLETCONNECT
+  );
+}
+
 export async function connectWithStaleSessionRecovery<Account>(
   wallet: ConnectableWallet<Account>,
   recoverStaleSession: boolean,
@@ -164,10 +225,12 @@ export function createWalletModule(
     options.walletConnectProjectId ??
     import.meta.env.VITE_WALLETCONNECT_PROJECT_ID;
   const includeMnemonic = options.includeMnemonic ?? import.meta.env.DEV;
+  const caip2 = options.caip2 ?? "mock:local";
+  const network = networkIdForCaip2(caip2);
+  const chainId = brandedWalletChainId(caip2);
   const wallets: SupportedWallet[] = [
-    WalletId.PERA,
-    WalletId.DEFLY,
-    { id: WalletId.LUTE, options: { siteName: "One Step Chess" } },
+    { id: WalletId.PERA, options: { chainId } },
+    { id: WalletId.DEFLY, options: { chainId } },
   ];
   if (
     walletConnectProjectId !== undefined &&
@@ -197,15 +260,12 @@ export function createWalletModule(
   }
   const manager = new WalletManager({
     wallets: wallets as [SupportedWallet, ...SupportedWallet[]],
-    // The fallback auth artifact uses the mainnet genesis profile even in
-    // mock deployments so real wallet apps can render it consistently.
-    defaultNetwork: includeMnemonic ? NetworkId.LOCALNET : NetworkId.MAINNET,
+    defaultNetwork: includeMnemonic ? NetworkId.LOCALNET : network,
   });
 
   const names: Record<string, string> = {
     [WalletId.PERA]: "Pera",
     [WalletId.DEFLY]: "Defly",
-    [WalletId.LUTE]: "Lute",
     [WalletId.WALLETCONNECT]: "WalletConnect",
     [WalletId.MNEMONIC]: "dev wallet (mnemonic)",
   };
@@ -237,8 +297,11 @@ export function createWalletModule(
     return {
       address,
       walletName: names[wallet.id] ?? wallet.metadata.name,
-      signTransactions: async (txns) => {
-        const signed = await wallet.signTransactions([...txns]);
+      signTransactions: async (txns, indexesToSign) => {
+        const signed = await wallet.signTransactions(
+          [...txns],
+          indexesToSign === undefined ? undefined : [...indexesToSign],
+        );
         const bytes = signed.find((entry) => entry !== null);
         if (bytes === null || bytes === undefined) {
           throw new Error("wallet returned no signature");
@@ -260,11 +323,11 @@ export function createWalletModule(
       const wallet = manager.wallets.find((candidate) => candidate.id === id);
       if (wallet === undefined) throw new Error(`unknown wallet: ${id}`);
       await manager.setActiveNetwork(
-        id === WalletId.MNEMONIC ? NetworkId.LOCALNET : NetworkId.MAINNET,
+        id === WalletId.MNEMONIC ? NetworkId.LOCALNET : network,
       );
       const accounts = await connectWithStaleSessionRecovery(
         wallet,
-        id === WalletId.PERA,
+        recoversStaleSession(id),
       );
       const address = wallet.activeAccount?.address ?? accounts[0]?.address;
       if (address === undefined) throw new Error("wallet connected no account");

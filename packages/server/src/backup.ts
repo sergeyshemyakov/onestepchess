@@ -30,6 +30,42 @@ function utcDate(now: number): string {
   return new Date(now).toISOString().slice(0, 10);
 }
 
+function lastDueBackupDate(now: number, hourUtc: number): string {
+  const at = new Date(now);
+  const due = new Date(
+    Date.UTC(
+      at.getUTCFullYear(),
+      at.getUTCMonth(),
+      at.getUTCDate(),
+      hourUtc,
+      0,
+      0,
+      0,
+    ),
+  );
+  if (due.getTime() > now) due.setUTCDate(due.getUTCDate() - 1);
+  return utcDate(due.getTime());
+}
+
+/** True when the newest snapshot predates the most recent `hourUtc` boundary.
+ * The nightly timer only fires at the next boundary, so a restart that spans
+ * one or more boundaries would otherwise leave the newest backup stale until
+ * the following night; callers run a catch-up snapshot at boot instead. */
+export function needsCatchUpBackup(
+  backupDir: string,
+  now: number,
+  hourUtc: number,
+): boolean {
+  if (!existsSync(backupDir)) return true;
+  const latest = readdirSync(backupDir)
+    .filter((name) => BACKUP_RE.test(name))
+    .sort()
+    .at(-1);
+  if (latest === undefined) return true;
+  const latestDate = latest.slice("osc-".length, "osc-".length + 10);
+  return latestDate < lastDueBackupDate(now, hourUtc);
+}
+
 /** Milliseconds until the next `hourUtc:00:00` UTC boundary from `now`. */
 export function nextBackupDelayMs(now: number, hourUtc: number): number {
   const at = new Date(now);

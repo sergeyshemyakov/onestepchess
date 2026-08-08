@@ -28,7 +28,7 @@ export function ConnectSheet(props: {
 
   useEffect(() => {
     let cancelled = false;
-    loadWalletModule()
+    loadWalletModule(meta.network.caip2)
       .then((module) => {
         if (!cancelled) setWallets(module.listWallets());
       })
@@ -38,7 +38,7 @@ export function ConnectSheet(props: {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [meta.network.caip2]);
 
   const pick = useCallback(
     async (id: string) => {
@@ -47,7 +47,7 @@ export function ConnectSheet(props: {
       setError(null);
       let module: WalletModule | null = null;
       try {
-        module = await loadWalletModule();
+        module = await loadWalletModule(meta.network.caip2);
         const wallet = await module.connect(id);
         setWalletConnected(true);
         const ref = readRef();

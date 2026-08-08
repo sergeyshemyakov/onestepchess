@@ -75,6 +75,10 @@ export function registerDiscoveryRoutes(
       },
       status: { mode: deps.mode(), banner: state?.banner ?? null },
       turnstileSiteKey: config.TURNSTILE_SITE_KEY,
+      banners: {
+        tower: config.TOWER_BANNER_ENABLED,
+        championship: config.CHAMP_BANNER_ENABLED,
+      },
       // The stats strip ships dark; present only when PUBLIC_STATS_ENABLED and
       // the boot-rebuilt counters are wired (F16 step 4).
       ...(config.PUBLIC_STATS_ENABLED && deps.publicStats !== undefined

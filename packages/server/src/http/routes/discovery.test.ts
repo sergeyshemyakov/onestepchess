@@ -48,6 +48,20 @@ describe("discovery meta and profile (F12)", () => {
     opened.sqlite.close();
   });
 
+  it("meta_banners_reflect_the_banner_config_flags", async () => {
+    const off = setup();
+    const offBody = await (await off.app.request("/api/v1/meta")).json();
+    expect(offBody.banners).toEqual({ tower: false, championship: false });
+    off.opened.sqlite.close();
+
+    const on = setup({
+      config: { TOWER_BANNER_ENABLED: true, CHAMP_BANNER_ENABLED: true },
+    });
+    const onBody = await (await on.app.request("/api/v1/meta")).json();
+    expect(onBody.banners).toEqual({ tower: true, championship: true });
+    on.opened.sqlite.close();
+  });
+
   it("public_stats_are_gated_and_rebuild_to_sql_ground_truth", async () => {
     // Seed a mixed history: two humans, one agent, one guest; three settled
     // staked moves (two human, one agent); two terminal games, one active.

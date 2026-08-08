@@ -19,6 +19,7 @@ import {
   ongoingItemFixture,
   Providers,
   playerFixture,
+  profileFixture,
   replayFixture,
 } from "../test/fixtures.jsx";
 import { assertNoGameIdentity } from "../test/leak.js";
@@ -236,7 +237,10 @@ describe("I7 leak tests (#31)", () => {
     assertNoGameIdentity(view.container, IDENTITY_SEEDS);
     fireEvent.click(screen.getByRole("button", { name: /sign & commit/ }));
     await screen.findByTestId("receipt");
-    expect(screen.getByTestId("receipt").textContent).toContain("mocktx_9");
+    expect(screen.getByTestId("receipt").textContent).not.toContain("mocktx_9");
+    expect(screen.getByTestId("receipt").querySelector("a")?.textContent).toBe(
+      "tx ↗",
+    );
     expect(
       screen
         .getByTestId("receipt")
@@ -511,6 +515,58 @@ describe("disabled-CTA reason matrix (#31)", () => {
     const reopened = await screen.findByRole("dialog", { name: "game" });
     expect(within(reopened).getByText(/YOU PLAY WHITE/)).not.toBeNull();
     expect(client.createClaim).toHaveBeenCalledTimes(1);
+  });
+
+  it("reserved_demo_and_staked_boards_disable_the_other_play_mode", async () => {
+    const staked = renderHub();
+    fireEvent.click(await screen.findByRole("button", { name: /▸ PLAY/ }));
+    await screen.findByText(/YOU PLAY WHITE/);
+    expect(screen.getByRole("button", { name: /DEMO PLAY/ })).toHaveProperty(
+      "disabled",
+      true,
+    );
+    staked.view.unmount();
+
+    const client = mockClient({
+      createClaim: vi.fn(async () => ({
+        kind: "claim" as const,
+        claim: claimFixture({ demo: true, stakeMicroUsdc: 0 }),
+        created: true,
+      })),
+    } as never);
+    renderHub(client);
+    fireEvent.click(await screen.findByRole("button", { name: /DEMO PLAY/ }));
+    await screen.findByText(/YOU PLAY WHITE/);
+    expect(screen.getByRole("button", { name: /▸ PLAY/ })).toHaveProperty(
+      "disabled",
+      true,
+    );
+  });
+
+  it("checks_USDC_before_reserving_a_staked_board", async () => {
+    const createClaim = vi.fn();
+    const getProfile = vi.fn(
+      async (options?: { readonly balances?: boolean }) =>
+        profileFixture(
+          options?.balances === true
+            ? {
+                balances: {
+                  usdcMicroUsdc: 9_999,
+                  algoMicroAlgo: 1_000_000,
+                },
+              }
+            : {},
+        ),
+    );
+    renderHub(mockClient({ createClaim, getProfile } as never));
+
+    fireEvent.click(await screen.findByRole("button", { name: /▸ PLAY/ }));
+
+    expect((await screen.findByRole("alert")).textContent).toMatch(
+      /not enough USDC.*\$0\.01/i,
+    );
+    expect(getProfile).toHaveBeenCalledWith({ balances: true });
+    expect(createClaim).not.toHaveBeenCalled();
   });
 
   it("paused meta disables both CTAs — the banner owns the message", async () => {

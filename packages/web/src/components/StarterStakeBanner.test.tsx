@@ -55,7 +55,7 @@ function banner(
   return { ...render(<StarterStakeBanner {...props} />), props };
 }
 
-it("starter_stake_banner_is_a_pure_projection_of_profile_status_and_bonus_events", () => {
+it("starter_stake_live_funding_waits_for_an_explicit_continue_before_showing_the_final_step", () => {
   const view = banner();
   expect(screen.queryByLabelText("starter stake")).toBeNull();
 
@@ -66,7 +66,29 @@ it("starter_stake_banner_is_a_pure_projection_of_profile_status_and_bonus_events
   view.rerender(
     <StarterStakeBanner {...view.props} profile={profile("claimed")} />,
   );
+  expect(screen.getByText(/ALGO transfer queued/)).not.toBeNull();
   expect(screen.getByRole("button", { name: "ENABLE USDC ▸" })).not.toBeNull();
+  view.rerender(
+    <StarterStakeBanner
+      {...view.props}
+      profile={profileFixture({
+        bonus: { status: "claimed", algoReady: true },
+      })}
+    />,
+  );
+  expect(screen.getByText(/ALGO already available/)).not.toBeNull();
+  view.rerender(
+    <StarterStakeBanner
+      {...view.props}
+      profile={profileFixture({
+        bonus: { status: "claimed", algoTxid: "ALGO_CONFIRMATION_TX" },
+      })}
+    />,
+  );
+  expect(screen.getByText(/ALGO arrived/)).not.toBeNull();
+  expect(screen.getByRole("link", { name: "tx ↗" }).getAttribute("href")).toBe(
+    "https://explorer.example/tx/ALGO_CONFIRMATION_TX",
+  );
   view.rerender(
     <StarterStakeBanner {...view.props} profile={profile("opted_in")} />,
   );
@@ -74,10 +96,20 @@ it("starter_stake_banner_is_a_pure_projection_of_profile_status_and_bonus_events
   view.rerender(
     <StarterStakeBanner {...view.props} profile={profile("funded")} />,
   );
+  expect(screen.getByText(/USDC arrived/)).not.toBeNull();
+  expect(screen.queryByText(/starter stake ready/)).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "CONTINUE ▸" }));
   expect(screen.getByText(/starter stake ready/)).not.toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "PLAY ▸" }));
   expect(screen.queryByLabelText("starter stake")).toBeNull();
   expect(localStorage.getItem("osc.bonusDone")).toBe("acked");
+});
+
+it("starter_stake_initial_snapshot_may_skip_directly_to_the_funded_step", () => {
+  banner({ status: "funded" });
+
+  expect(screen.getByText(/starter stake ready/)).not.toBeNull();
+  expect(screen.queryByRole("button", { name: "CONTINUE ▸" })).toBeNull();
 });
 
 it("starter_stake_claim_is_single_flight_and_renders_server_envelope_hints", async () => {
@@ -156,6 +188,40 @@ it("starter_stake_optin_double_click_stays_single_flight_while_loading_a_fresh_t
   fireEvent.click(enable);
   await waitFor(() => expect(client.getBonusOptInTxn).toHaveBeenCalledTimes(1));
   releaseWallet?.(wallet());
+});
+
+it("starter_stake_banner_polls_for_progress_while_a_chain_transition_is_pending", () => {
+  vi.useFakeTimers();
+  try {
+    const onRefresh = vi.fn();
+    banner({ status: "opted_in", onRefresh });
+    vi.advanceTimersByTime(12_000);
+    expect(onRefresh.mock.calls.length).toBeGreaterThanOrEqual(2);
+
+    cleanup();
+    onRefresh.mockClear();
+    banner({ status: "claimed", onRefresh });
+    vi.advanceTimersByTime(12_000);
+    expect(onRefresh).toHaveBeenCalled();
+
+    cleanup();
+    onRefresh.mockClear();
+    banner({
+      profile: profileFixture({
+        bonus: { status: "claimed", algoTxid: "ALGO_CONFIRMATION_TX" },
+      }),
+      onRefresh,
+    });
+    vi.advanceTimersByTime(12_000);
+    expect(onRefresh).not.toHaveBeenCalled();
+
+    cleanup();
+    banner({ status: "funded", onRefresh });
+    vi.advanceTimersByTime(12_000);
+    expect(onRefresh).not.toHaveBeenCalled();
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("starter_stake_flow_recovers_after_reload_app_switch_stream_reset_and_wallet_disconnect", () => {

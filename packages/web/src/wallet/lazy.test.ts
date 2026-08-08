@@ -14,6 +14,6 @@ afterEach(() => {
 it("wallet intent installs the browser global alias before loading Pera", async () => {
   Reflect.deleteProperty(runtime, "global");
 
-  await expect(loadWalletModule()).resolves.toBeDefined();
+  await expect(loadWalletModule("mock:local")).resolves.toBeDefined();
   expect(runtime.global).toBe(globalThis);
 });

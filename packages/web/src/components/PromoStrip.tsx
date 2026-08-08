@@ -1,12 +1,14 @@
 import { useState } from "react";
 import { Link } from "react-router";
 import { champNoticeDismissed, dismissChampNotice } from "../lib/storage.js";
+import { useMeta } from "../meta/MetaContext.jsx";
 
 /** F-W13 championship promo strip (landing + hub). Dismissal persists in
  * `osc.champNotice` across sessions. Copy is CA-14 (placeholders ship). */
 export function PromoStrip() {
+  const { meta } = useMeta();
   const [dismissed, setDismissed] = useState(champNoticeDismissed);
-  if (dismissed) return null;
+  if (meta?.banners.championship !== true || dismissed) return null;
   return (
     <div className="promostrip" data-testid="champ-promo">
       <Link to="/championship">

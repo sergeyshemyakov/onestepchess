@@ -182,7 +182,11 @@ const profile = playerView.extend({
     })
     .optional(),
   bonus: z
-    .object({ status: z.enum(["available", "claimed", "opted_in", "funded"]) })
+    .object({
+      status: z.enum(["available", "claimed", "opted_in", "funded"]),
+      algoTxid: z.string().optional(),
+      algoReady: z.boolean().optional(),
+    })
     .optional(),
 });
 
@@ -333,6 +337,10 @@ const metaResponse = z.object({
     banner: z.string().nullable(),
   }),
   turnstileSiteKey: z.string(),
+  banners: z.object({
+    tower: z.boolean(),
+    championship: z.boolean(),
+  }),
   // Present only when PUBLIC_STATS_ENABLED (F16 step 4).
   stats: z
     .object({

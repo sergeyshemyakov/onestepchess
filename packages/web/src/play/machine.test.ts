@@ -232,6 +232,16 @@ describe("signing and settling error branches (F-W10 rows)", () => {
     expect(next).toMatchObject({ phase: "CONFIRM", chosenMove: move, claim });
   });
 
+  it("wallet signing failure returns to a closable CONFIRM with its error", () => {
+    const next = playReducer(signing, { type: "PAYMENT_FAILED", envelope });
+    expect(next).toMatchObject({
+      phase: "CONFIRM",
+      chosenMove: move,
+      claim,
+      error: envelope,
+    });
+  });
+
   it("HEADER_READY carries the signed header into SETTLING (memory only)", () => {
     const next = playReducer(signing, { type: "HEADER_READY", header: "hdr" });
     expect(next).toMatchObject({ phase: "SETTLING", paymentHeader: "hdr" });

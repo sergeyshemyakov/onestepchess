@@ -23,7 +23,7 @@ describe("Release 4 promotion evidence", () => {
       recordedAt: at,
       freshDatabaseSha256: sha,
       restoredDatabaseSha256: sha,
-      wallets: { pera: "passed", defly: "passed", lute: "passed" },
+      wallets: { pera: "passed", defly: "passed" },
       humanPayment: transaction,
       agentPayment: transaction,
       payout: transaction,

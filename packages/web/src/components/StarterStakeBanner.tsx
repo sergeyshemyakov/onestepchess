@@ -1,8 +1,9 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { ApiClient } from "../api/client.js";
 import { ApiError } from "../api/http.js";
 import type { Meta, ProfileView } from "../api/schemas.js";
 import { AlgorandMark, KnightMark } from "../board/pieces.jsx";
+import { explorerTxUrl } from "../lib/explorer.js";
 import {
   acknowledgeStarterStake,
   starterStakeAcknowledged,
@@ -29,8 +30,32 @@ export function StarterStakeBanner(props: {
   >(null);
   const [error, setError] = useState<string | null>(null);
   const [acknowledged, setAcknowledged] = useState(starterStakeAcknowledged);
+  const [completionRevealed, setCompletionRevealed] = useState(
+    status === "funded",
+  );
   const paused = props.meta.status.mode === "paused";
   const waiting = waitingForStatus === status;
+  const visibleStatus =
+    status === "funded" && !completionRevealed ? "opted_in" : status;
+
+  // The SSE bonus_updated event is the fast path; a missed event must not
+  // strand the banner mid-flow, so poll while a chain transition is pending
+  // (opt-in confirmation, queued ALGO transfer, or USDC funding in flight).
+  const bonus = props.profile.bonus;
+  const awaitingChain =
+    props.profile.kind === "human" &&
+    status !== undefined &&
+    (waiting ||
+      status === "opted_in" ||
+      (status === "claimed" &&
+        bonus?.algoTxid === undefined &&
+        bonus?.algoReady !== true));
+  const { onRefresh } = props;
+  useEffect(() => {
+    if (!awaitingChain) return;
+    const interval = setInterval(onRefresh, 5_000);
+    return () => clearInterval(interval);
+  }, [awaitingChain, onRefresh]);
 
   const claim = useCallback(async () => {
     if (busy !== null) return;
@@ -83,11 +108,11 @@ export function StarterStakeBanner(props: {
   }
 
   const activeStage =
-    status === "available"
+    visibleStatus === "available"
       ? 0
-      : status === "claimed"
+      : visibleStatus === "claimed"
         ? 1
-        : status === "opted_in"
+        : visibleStatus === "opted_in"
           ? 2
           : 3;
 
@@ -110,18 +135,46 @@ export function StarterStakeBanner(props: {
             </li>
           ))}
         </ol>
-        {status === "available" ? (
+        {visibleStatus === "available" ? (
           <p className="starter-stake-copy">
             claim your one-time starter stake.
           </p>
-        ) : status === "claimed" ? (
-          <p className="starter-stake-copy">
-            a little ALGO is on its way — then enable USDC.
-          </p>
-        ) : status === "opted_in" ? (
-          <p className="starter-stake-copy">
-            USDC enabled — sending your starter stake…
-          </p>
+        ) : visibleStatus === "claimed" ? (
+          props.profile.bonus?.algoTxid === undefined ? (
+            props.profile.bonus?.algoReady === true ? (
+              <p className="starter-stake-copy">
+                ALGO already available — enable USDC when you're ready.
+              </p>
+            ) : (
+              <p className="starter-stake-copy">
+                ALGO transfer queued — enable USDC after it arrives.
+              </p>
+            )
+          ) : (
+            <p className="starter-stake-copy">
+              ALGO arrived — enable USDC.{" "}
+              <a
+                href={explorerTxUrl(
+                  props.meta.network.explorerBaseUrl,
+                  props.profile.bonus.algoTxid,
+                )}
+                target="_blank"
+                rel="noreferrer"
+              >
+                tx ↗
+              </a>
+            </p>
+          )
+        ) : visibleStatus === "opted_in" ? (
+          status === "funded" ? (
+            <p className="starter-stake-copy">
+              USDC arrived — continue when you're ready.
+            </p>
+          ) : (
+            <p className="starter-stake-copy">
+              USDC enabled — sending your starter stake…
+            </p>
+          )
         ) : (
           <p className="starter-stake-copy">
             starter stake ready — PLAY when you are.
@@ -137,7 +190,7 @@ export function StarterStakeBanner(props: {
             {error}
           </p>
         )}
-        {status === "available" ? (
+        {visibleStatus === "available" ? (
           <button
             type="button"
             className="btn pri mini"
@@ -146,7 +199,7 @@ export function StarterStakeBanner(props: {
           >
             {busy === "claim" ? "claiming…" : "CLAIM ▸"}
           </button>
-        ) : status === "claimed" ? (
+        ) : visibleStatus === "claimed" ? (
           <button
             type="button"
             className="btn pri mini"
@@ -155,7 +208,15 @@ export function StarterStakeBanner(props: {
           >
             {busy === "optin" ? "opening wallet…" : "ENABLE USDC ▸"}
           </button>
-        ) : status === "funded" ? (
+        ) : status === "funded" && !completionRevealed ? (
+          <button
+            type="button"
+            className="btn pri mini"
+            onClick={() => setCompletionRevealed(true)}
+          >
+            CONTINUE ▸
+          </button>
+        ) : visibleStatus === "funded" ? (
           <button
             type="button"
             className="btn pri mini"

@@ -272,6 +272,8 @@ export function playReducer(state: PlayState, event: PlayEvent): PlayState {
         case "WALLET_REJECTED":
           // Move preserved, timer still live (F-W10).
           return { ...state, phase: "CONFIRM" };
+        case "PAYMENT_FAILED":
+          return { ...state, phase: "CONFIRM", error: event.envelope };
         case "CLAIM_EXPIRED":
           return terminalExpired(state);
         default:

@@ -175,7 +175,7 @@ the final internal Docker staging before the manual gate is signed off.
 - No dev bots — Release 1 games progress by human moves (endspiel completion is
   proven by the core simulator, not live bots).
 - No SSE, archive/replay, guest flow, incentives, admin, or finished-game UI.
-- No Pera/Defly/Lute certification and no production Turnstile certification.
+- No Pera/Defly certification and no production Turnstile certification.
 - No testnet/mainnet profile and no real payment or payout.
 - Docker is part of the Release 1 gate, but a real private staging deployment
   and human checklist cannot be substituted by local automated tests.

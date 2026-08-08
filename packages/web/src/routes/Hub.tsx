@@ -286,6 +286,11 @@ export function Hub(props: {
   const [pane, setPane] = useState<"active" | "finished">("active");
   const [gamePaneDismissed, setGamePaneDismissed] = useState(false);
   const [walletSheetOpen, setWalletSheetOpen] = useState(false);
+  const [checkingStakeBalance, setCheckingStakeBalance] = useState(false);
+  const [stakeBalanceError, setStakeBalanceError] = useState<string | null>(
+    null,
+  );
+  const stakeBalanceCheckInFlight = useRef(false);
   const walletRequest = useRef<{
     readonly promise: Promise<ConnectedWallet>;
     readonly resolve: (wallet: ConnectedWallet) => void;
@@ -294,7 +299,7 @@ export function Hub(props: {
   const handledLiveSeq = useRef(0);
 
   const getWallet = useCallback(async (): Promise<ConnectedWallet> => {
-    const module = await loadWalletModule();
+    const module = await loadWalletModule(props.meta.network.caip2);
     const connected = module.current();
     if (connected?.address === props.player.address) return connected;
     if (connected !== null) await module.disconnect().catch(() => undefined);
@@ -313,7 +318,7 @@ export function Hub(props: {
     };
     setWalletSheetOpen(true);
     return promise;
-  }, [props.player.address]);
+  }, [props.player.address, props.meta.network.caip2]);
 
   const cancelWallet = useCallback(() => {
     const error = new Error("wallet connection cancelled");
@@ -435,14 +440,49 @@ export function Hub(props: {
   const payout = stake * props.meta.economics.humanTargetMult;
 
   const start = useCallback(
-    (demo: boolean) => {
+    async (demo: boolean) => {
       setGamePaneDismissed(false);
-      if (!claimOpen) {
+      if (claimOpen) return;
+      if (demo) {
+        setStakeBalanceError(null);
         live.consumePlayNudge();
-        send({ type: "PLAY", demo });
+        send({ type: "PLAY", demo: true });
+        return;
       }
+      if (stakeBalanceCheckInFlight.current) return;
+      stakeBalanceCheckInFlight.current = true;
+      setCheckingStakeBalance(true);
+      setStakeBalanceError(null);
+      let checked: Awaited<ReturnType<ApiClient["getProfile"]>>;
+      try {
+        checked = await client.getProfile({ balances: true });
+      } catch {
+        setStakeBalanceError(
+          "could not check your USDC balance — try again before reserving a board",
+        );
+        stakeBalanceCheckInFlight.current = false;
+        setCheckingStakeBalance(false);
+        return;
+      }
+      stakeBalanceCheckInFlight.current = false;
+      setCheckingStakeBalance(false);
+      const usdc = checked.balances?.usdcMicroUsdc;
+      if (usdc === undefined) {
+        setStakeBalanceError(
+          "could not check your USDC balance — try again before reserving a board",
+        );
+        return;
+      }
+      if (usdc < stake) {
+        setStakeBalanceError(
+          `not enough USDC to play — this board needs ${formatMicroUsdc(stake)}`,
+        );
+        return;
+      }
+      live.consumePlayNudge();
+      send({ type: "PLAY", demo: false });
     },
-    [claimOpen, send, live.consumePlayNudge],
+    [claimOpen, client, live.consumePlayNudge, send, stake],
   );
 
   const surfaceVisible = state.phase !== "IDLE";
@@ -462,8 +502,11 @@ export function Hub(props: {
           <button
             type="button"
             className={`bigplay primary${live.playPulse > 0 ? " live-pulse" : ""}`}
-            disabled={!claimOpen && (cta.disabled || stakedQuotaOut)}
-            onClick={() => start(false)}
+            disabled={
+              checkingStakeBalance ||
+              (claimOpen ? state.demo : cta.disabled || stakedQuotaOut)
+            }
+            onClick={() => void start(false)}
           >
             <span className="bp-title">▸ PLAY</span>
             <span className="bp-sub">
@@ -474,8 +517,11 @@ export function Hub(props: {
           <button
             type="button"
             className="bigplay demo"
-            disabled={!claimOpen && (cta.disabled || demoQuotaOut)}
-            onClick={() => start(true)}
+            disabled={
+              checkingStakeBalance ||
+              (claimOpen ? !state.demo : cta.disabled || demoQuotaOut)
+            }
+            onClick={() => void start(true)}
           >
             <span className="bp-title">▸ DEMO PLAY</span>
             <span className="bp-sub">
@@ -483,7 +529,11 @@ export function Hub(props: {
             </span>
           </button>
         </div>
-        {cta.reason !== null ? (
+        {stakeBalanceError !== null ? (
+          <p className="ctareason" role="alert">
+            {stakeBalanceError}
+          </p>
+        ) : cta.reason !== null ? (
           <p className="ctareason">{cta.reason}</p>
         ) : quotaReason !== null ? (
           <p className="ctareason">
@@ -563,6 +613,7 @@ export function Hub(props: {
       {walletSheetOpen ? (
         <PaymentWalletSheet
           address={props.player.address}
+          caip2={props.meta.network.caip2}
           onConnected={(wallet) => {
             walletRequest.current?.resolve(wallet);
             walletRequest.current = null;

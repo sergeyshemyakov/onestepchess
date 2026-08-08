@@ -384,8 +384,8 @@ function exactWallet(): ConnectedWallet {
   return {
     address: payer.addr.toString(),
     walletName: "fixture wallet",
-    signTransactions: vi.fn(async (transactions) => {
-      const transaction = transactions[0];
+    signTransactions: vi.fn(async (transactions, indexesToSign) => {
+      const transaction = transactions[indexesToSign?.[0] ?? 0];
       if (transaction === undefined) throw new Error("missing transaction");
       return transaction.signTxn(payer.sk);
     }),
@@ -623,6 +623,13 @@ it("web_exact_payment_resends_identical_bytes_and_never_resigns_an_inflight_clai
   expect(client.calls[3]?.header).toBe(header);
   expect(getSigner).toHaveBeenCalledTimes(1);
   expect(wallet.signTransactions).toHaveBeenCalledTimes(1);
+  expect(wallet.signTransactions).toHaveBeenCalledWith(
+    expect.arrayContaining([
+      expect.objectContaining({ type: "pay" }),
+      expect.objectContaining({ type: "axfer" }),
+    ]),
+    [1],
+  );
 
   resetHeaderCacheForTests();
   const retryWallet = exactWallet();

@@ -8,7 +8,7 @@ import {
   createTurnstileVerifier,
   type TurnstileVerifier,
 } from "./auth/turnstile.js";
-import { nextBackupDelayMs, runBackup } from "./backup.js";
+import { needsCatchUpBackup, nextBackupDelayMs, runBackup } from "./backup.js";
 import {
   registerFundingCommands,
   runFundingExecutor,
@@ -466,30 +466,35 @@ export async function main(): Promise<void> {
   const backupDir =
     loaded.env.BACKUP_DIR ?? join(dirname(loaded.env.DB_PATH), "backups");
   let backupTimer: ReturnType<typeof setTimeout> | undefined;
+  const startBackup = (): Promise<unknown> =>
+    runBackup({
+      sqlite,
+      backupDir,
+      retentionDays: config.BACKUP_RETENTION_DAYS,
+      now: Date.now,
+      logger,
+    }).then((result) => {
+      if (!result.ok) {
+        return alerts.emit("backup_failure", {
+          message: result.error.message,
+        });
+      }
+      return undefined;
+    });
   const scheduleBackup = (): void => {
     backupTimer = setTimeout(
       () => {
-        void runBackup({
-          sqlite,
-          backupDir,
-          retentionDays: config.BACKUP_RETENTION_DAYS,
-          now: Date.now,
-          logger,
-        })
-          .then((result) => {
-            if (!result.ok) {
-              return alerts.emit("backup_failure", {
-                message: result.error.message,
-              });
-            }
-            return undefined;
-          })
-          .finally(scheduleBackup);
+        void startBackup().finally(scheduleBackup);
       },
       nextBackupDelayMs(Date.now(), config.BACKUP_HOUR_UTC),
     );
     backupTimer.unref?.();
   };
+  // Downtime that spans the nightly boundary leaves the newest snapshot days
+  // old; take one now rather than waiting for the next boundary.
+  if (needsCatchUpBackup(backupDir, Date.now(), config.BACKUP_HOUR_UTC)) {
+    void startBackup();
+  }
   scheduleBackup();
 
   const mode = (): "running" | "paused" => currentMode(db);

@@ -123,7 +123,19 @@ describe("Release 2 live human surfaces", () => {
       }),
       getCurrentClaim: vi.fn(async () => (claimActive ? secondClaim : null)),
       getClaimStatus: vi.fn(async () => ({ status: "moved", receipt })),
-      getProfile: vi.fn(async () => profileFixture({ refCode: "live-rook" })),
+      getProfile: vi.fn(async (options?: { readonly balances?: boolean }) =>
+        profileFixture({
+          refCode: "live-rook",
+          ...(options?.balances === true
+            ? {
+                balances: {
+                  usdcMicroUsdc: 1_000_000,
+                  algoMicroAlgo: 1_000_000,
+                },
+              }
+            : {}),
+        }),
+      ),
       getFinishedGames: vi.fn(async () =>
         resolved
           ? {
@@ -166,7 +178,10 @@ describe("Release 2 live human surfaces", () => {
     });
     await waitFor(() => expect(client.getClaimStatus).toHaveBeenCalled());
     await screen.findByTestId("move-accepted-line");
-    expect(screen.getByTestId("receipt").textContent).toContain(
+    expect(screen.getByTestId("move-accepted-line").textContent).toBe(
+      "> move accepted",
+    );
+    expect(screen.getByTestId("receipt").textContent).not.toContain(
       "MOCK_ACCEPTED_TX",
     );
     fireEvent.click(screen.getByRole("button", { name: "close" }));

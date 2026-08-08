@@ -10,6 +10,11 @@ import { bonusOptInBodySchema } from "../http/contracts.js";
 import { clientIp } from "../http/middleware/client-ip.js";
 import { type SessionAuthDeps, sessionAuth } from "../http/routes/auth.js";
 import { parseJsonBody } from "../http/validation.js";
+import { hasAlgoFundingCapacity } from "./funding.js";
+import {
+  BONUS_SKIP_ALGO_MICRO,
+  hasSufficientBalancesForStarterStake,
+} from "./lifecycle.js";
 import { isSafeBonusOptIn } from "./optin.js";
 
 export type BonusRouteDeps = SessionAuthDeps & {
@@ -46,6 +51,43 @@ export function registerBonusRoutes(
         hint: "starter stakes are available to eligible humans only",
       });
     }
+    let account: Awaited<ReturnType<PaymentRail["getAccountInfo"]>>;
+    try {
+      const [balances, accountInfo] = await Promise.all([
+        deps.rail.getBalances(session.address),
+        deps.rail.getAccountInfo(session.address),
+      ]);
+      if (hasSufficientBalancesForStarterStake(balances)) {
+        throw new AppError("BONUS_NOT_ELIGIBLE", {
+          hint: "this wallet already holds enough ALGO and USDC to play",
+        });
+      }
+      account = accountInfo;
+      if (
+        !account.optedInUsdc &&
+        balances.algoMicroAlgo < BONUS_SKIP_ALGO_MICRO
+      ) {
+        const treasury = await deps.rail.getBalances(deps.rail.treasuryAddress);
+        const config = deps.config();
+        if (
+          !hasAlgoFundingCapacity(
+            treasury.algoMicroAlgo,
+            config.BONUS_ALGO_MICRO,
+            config.TREASURY_MIN_ALGO_MICRO,
+          )
+        ) {
+          throw new AppError("BONUS_UNAVAILABLE", {
+            hint: "starter ALGO is temporarily unavailable — try again shortly",
+          });
+        }
+      }
+    } catch (error) {
+      if (error instanceof AppError) throw error;
+      throw new AppError("DEPENDENCY_UNAVAILABLE", {
+        hint: "unable to check wallet balances; retry shortly",
+        retryAfterSeconds: 5,
+      });
+    }
     const result = await deps.coordinator.dispatch<
       { player: string; claimIp: string },
       | { status: "not_eligible" }
@@ -78,6 +120,13 @@ export function registerBonusRoutes(
         ...(result.result.retryAfterSeconds === undefined
           ? {}
           : { retryAfterSeconds: result.result.retryAfterSeconds }),
+      });
+    }
+    if (account.optedInUsdc) {
+      await deps.coordinator.dispatch({
+        type: "BonusOptInObserved",
+        payload: { player: session.address },
+        refIds: [session.address],
       });
     }
     return c.json({

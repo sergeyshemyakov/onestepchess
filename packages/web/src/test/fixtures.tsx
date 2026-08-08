@@ -41,6 +41,7 @@ export const metaFixture: Meta = {
   quotas: { human: 10, agent: 60, demo: 10, windowMinutes: 60 },
   status: { mode: "running", banner: null },
   turnstileSiteKey: "",
+  banners: { tower: true, championship: true },
   rules: "one move at a time.",
   docs: {
     llms: "http://localhost:3000/llms.txt",
@@ -212,7 +213,18 @@ export function mockClient(overrides: Partial<ApiClient> = {}): ApiClient {
     authLogout: vi.fn(async () => undefined),
     suggestNickname: vi.fn(async () => "gentle-rook-042"),
     probeProfile: vi.fn(async () => playerFixture),
-    getProfile: vi.fn(async () => profileFixture()),
+    getProfile: vi.fn(async (options?: { readonly balances?: boolean }) =>
+      profileFixture(
+        options?.balances === true
+          ? {
+              balances: {
+                usdcMicroUsdc: 1_000_000,
+                algoMicroAlgo: 1_000_000,
+              },
+            }
+          : {},
+      ),
+    ),
     renameProfile: vi.fn(async () => playerFixture),
     getOngoingGames: vi.fn(async () => emptyGamesPage),
     getFinishedGames: vi.fn(async () => emptyGamesPage),

@@ -527,13 +527,8 @@ describe("Release 4 server profiles and immutable identity (#97)", () => {
         ],
       },
       { wallet: "Defly", origins: ["https://static.defly.app"] },
-      { wallet: "Lute", origins: [] },
     ];
-    expect(walletMatrix.map(({ wallet }) => wallet)).toEqual([
-      "Pera",
-      "Defly",
-      "Lute",
-    ]);
+    expect(walletMatrix.map(({ wallet }) => wallet)).toEqual(["Pera", "Defly"]);
     for (const { origins } of walletMatrix) {
       for (const origin of origins) expect(csp).toContain(origin);
     }
@@ -592,7 +587,7 @@ describe("Release 4 server profiles and immutable identity (#97)", () => {
       paths.every((path) => path.startsWith("/data/") && path.length > 6),
     ).toBe(true);
     expect(readFileSync("package.json", "utf8")).toContain(
-      '"dev:testnet": "node --env-file=.env.testnet --run dev"',
+      '"dev:testnet": "pnpm --filter @onestepchess/server exec tsx src/dev-testnet.ts"',
     );
     expect(readFileSync(".gitignore", "utf8")).toContain(".env.*");
   });

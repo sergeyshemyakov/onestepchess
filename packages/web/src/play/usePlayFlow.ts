@@ -275,7 +275,6 @@ export function usePlayFlow(args: {
         }),
       )
       .then((outcome) => {
-        dispatch({ type: "HEADER_READY", header: "" });
         switch (outcome.kind) {
           case "receipt":
             dispatch({ type: "RECEIPT", receipt: outcome.receipt });
@@ -309,7 +308,7 @@ export function usePlayFlow(args: {
               type: "PAYMENT_FAILED",
               envelope: {
                 error: "WALLET_DISCONNECTED",
-                hint: "reconnect the wallet used for this account",
+                hint: `reconnect the wallet used for this account: ${address}`,
                 docs: "",
               },
             });

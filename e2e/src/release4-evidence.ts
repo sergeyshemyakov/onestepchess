@@ -21,7 +21,6 @@ export const testnetReleaseCandidateEvidenceSchema = z
     wallets: z.object({
       pera: z.literal("passed"),
       defly: z.literal("passed"),
-      lute: z.literal("passed"),
     }),
     humanPayment: transactionSchema,
     agentPayment: transactionSchema,

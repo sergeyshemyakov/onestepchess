@@ -10,10 +10,19 @@ import { schema } from "../db/open.js";
 import { newId } from "../ids.js";
 import type { Logger } from "../logger.js";
 import { refundCoverageRequiredMicroUsdc } from "../operations/reconciliation.js";
+import { BONUS_SKIP_ALGO_MICRO } from "./lifecycle.js";
 
-const OPT_IN_SPENDABLE_ALGO_MICRO = 101_000;
 const POLL_MS = 1_000;
 const BACKOFF_BASE_MS = 1_000;
+const ALGO_FUNDING_FEE_MICRO = 1_000;
+
+export function hasAlgoFundingCapacity(
+  treasuryAlgoMicro: number,
+  amountMicro: number,
+  floorMicro: number,
+): boolean {
+  return treasuryAlgoMicro - amountMicro - ALGO_FUNDING_FEE_MICRO >= floorMicro;
+}
 
 export type FundingExecutorDeps = {
   readonly coordinator: Coordinator;
@@ -361,7 +370,17 @@ async function ensureFundingJobs(deps: FundingExecutorDeps): Promise<void> {
       });
       continue;
     }
-    if (account.spendableAlgoMicro >= OPT_IN_SPENDABLE_ALGO_MICRO) {
+    let balances: Awaited<ReturnType<PaymentRail["getBalances"]>>;
+    try {
+      balances = await deps.rail.getBalances(bonus.player);
+    } catch (error) {
+      deps.logger.warn(
+        { err: error, player: bonus.player },
+        "starter-stake balance query unavailable",
+      );
+      continue;
+    }
+    if (balances.algoMicroAlgo >= BONUS_SKIP_ALGO_MICRO) {
       await deps.coordinator.dispatch({
         type: "FundingPendingAlgoSkipped",
         payload: { player: bonus.player },
@@ -398,7 +417,11 @@ async function sendGuard(
   }
   if (
     job.leg === "algo" &&
-    balances.algoMicroAlgo - job.amount < deps.config().TREASURY_MIN_ALGO_MICRO
+    !hasAlgoFundingCapacity(
+      balances.algoMicroAlgo,
+      job.amount,
+      deps.config().TREASURY_MIN_ALGO_MICRO,
+    )
   ) {
     return { ok: false, reason: "algo_floor" };
   }
