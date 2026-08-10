@@ -59,6 +59,7 @@ const configSchema = z
     indexerUrl: httpUrlSchema,
     facilitatorUrl: httpUrlSchema,
     treasuryMnemonic: z.string().min(1),
+    bonusMnemonic: z.string().min(1),
     maxTimeoutSeconds: z.number().int().positive().safe().optional(),
     requestTimeoutMs: z.number().int().positive().safe().optional(),
   })
@@ -175,7 +176,10 @@ export type AvmRailDependencies = {
   readonly fetch?: typeof globalThis.fetch;
 };
 
-type PublicConfig = Omit<z.output<typeof configSchema>, "treasuryMnemonic"> & {
+type PublicConfig = Omit<
+  z.output<typeof configSchema>,
+  "treasuryMnemonic" | "bonusMnemonic"
+> & {
   readonly maxTimeoutSeconds: number;
   readonly requestTimeoutMs: number;
 };
@@ -266,7 +270,7 @@ export function createAvmRail(
 ): PaymentRail {
   const parsed = configSchema.safeParse(input);
   if (!parsed.success) throw contract("Invalid AVM rail configuration");
-  const { treasuryMnemonic, ...configured } = parsed.data;
+  const { treasuryMnemonic, bonusMnemonic, ...configured } = parsed.data;
   let treasuryAddress: string;
   let secretKey: Uint8Array;
   try {
@@ -275,6 +279,18 @@ export function createAvmRail(
     secretKey = account.sk;
   } catch {
     throw contract("Invalid treasury signing key");
+  }
+  let bonusAddress: string;
+  let bonusSecretKey: Uint8Array;
+  try {
+    const account = algosdk.mnemonicToSecretKey(bonusMnemonic);
+    bonusAddress = account.addr.toString();
+    bonusSecretKey = account.sk;
+  } catch {
+    throw contract("Invalid bonus signing key");
+  }
+  if (bonusAddress === treasuryAddress) {
+    throw contract("Bonus account must differ from the treasury account");
   }
   const config: PublicConfig = Object.freeze({
     ...configured,
@@ -289,7 +305,11 @@ export function createAvmRail(
   let feePayer: string | undefined;
 
   function redactDetail(value: string): string {
-    return value.split(treasuryMnemonic).join("[REDACTED]");
+    return value
+      .split(treasuryMnemonic)
+      .join("[REDACTED]")
+      .split(bonusMnemonic)
+      .join("[REDACTED]");
   }
 
   async function request(url: string, init?: RequestInit): Promise<Response> {
@@ -593,6 +613,10 @@ export function createAvmRail(
     return transaction.signTxn(secretKey);
   }
 
+  function signBonus(transaction: algosdk.Transaction): Uint8Array {
+    return transaction.signTxn(bonusSecretKey);
+  }
+
   async function preparePayouts(
     batch: readonly PayoutInstruction[],
   ): Promise<PreparedPayouts> {
@@ -664,7 +688,7 @@ export function createAvmRail(
       fee: TRANSACTION_FEE,
     };
     const common = {
-      sender: treasuryAddress,
+      sender: bonusAddress,
       receiver: instruction.player,
       amount: instruction.amount,
       note: new TextEncoder().encode(note),
@@ -679,7 +703,7 @@ export function createAvmRail(
           });
     return {
       kind: "funding",
-      payloadB64: Buffer.from(signTreasury(transaction)).toString("base64"),
+      payloadB64: Buffer.from(signBonus(transaction)).toString("base64"),
       player: instruction.player,
       leg: instruction.leg,
       txid: transaction.txID(),
@@ -728,7 +752,7 @@ export function createAvmRail(
           signed.msig === undefined &&
           signed.lsig === undefined) ||
         transaction.txID() !== parsedPrepared.data.txid ||
-        transaction.sender.toString() !== treasuryAddress ||
+        transaction.sender.toString() !== bonusAddress ||
         Number(transaction.lastValid) !== parsedPrepared.data.lastValidRound ||
         Buffer.from(transaction.note).toString("utf8") !== expectedNote ||
         !correctTransfer
@@ -825,13 +849,16 @@ export function createAvmRail(
     return { status: "not_found", currentRound: result["last-round"] };
   }
 
-  async function findByNote(note: string): Promise<{
+  async function findByNote(
+    note: string,
+    sender: string,
+  ): Promise<{
     readonly txid: string;
     readonly confirmedRound: number;
   } | null> {
     const expectedNote = Buffer.from(note, "utf8").toString("base64");
     const url = new URL(endpoint(config.indexerUrl, "/v2/transactions"));
-    url.searchParams.set("address", treasuryAddress);
+    url.searchParams.set("address", sender);
     url.searchParams.set("address-role", "sender");
     url.searchParams.set("note-prefix", expectedNote);
     const response = await getJsonResponse(url.toString());
@@ -839,9 +866,7 @@ export function createAvmRail(
     const result = await parseJson(response, noteSearchSchema);
     if (result === null) throw unavailable("Indexer note response malformed");
     const match = result.transactions
-      .filter(
-        (item) => item.sender === treasuryAddress && item.note === expectedNote,
-      )
+      .filter((item) => item.sender === sender && item.note === expectedNote)
       .sort(
         (left, right) =>
           left["confirmed-round"] - right["confirmed-round"] ||
@@ -858,7 +883,7 @@ export function createAvmRail(
   } | null> {
     const note = `osc:payout:${jobId}`;
     if (!isValidNote(note)) throw contract("Invalid payout job id");
-    return findByNote(note);
+    return findByNote(note, treasuryAddress);
   }
 
   async function findFundingByNote(
@@ -871,7 +896,7 @@ export function createAvmRail(
     if (!algosdk.isValidAddress(player) || (leg !== "algo" && leg !== "usdc")) {
       throw contract("Invalid funding note query");
     }
-    return findByNote(`osc:bonus:${leg}:${player}`);
+    return findByNote(`osc:bonus:${leg}:${player}`, bonusAddress);
   }
 
   function assertAddress(address: string): void {
@@ -1001,6 +1026,7 @@ export function createAvmRail(
 
   return Object.freeze({
     treasuryAddress,
+    bonusAddress,
     buildPaymentChallenge,
     decodePayment,
     verify,

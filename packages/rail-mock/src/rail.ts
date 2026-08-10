@@ -38,6 +38,7 @@ import {
 } from "./header.js";
 
 const DEFAULT_TREASURY = "MOCK_TREASURY";
+const DEFAULT_BONUS = "MOCK_BONUS";
 const DEFAULT_USDC_ASSET = "31566704";
 const DEFAULT_MAX_TIMEOUT_SECONDS = 120;
 const DEFAULT_BALANCE = 10_000_000;
@@ -66,7 +67,9 @@ export interface MockRailState {
 class MutableMockRailState implements MockRailState {
   readonly kind = "MockRailState" as const;
   readonly initial: Balances;
+  readonly initialBonus: Balances;
   balances: Balances;
+  bonusBalances: Balances;
   txCounter = 0;
   groupCounter = 0;
   currentRound = INITIAL_ROUND;
@@ -80,16 +83,25 @@ class MutableMockRailState implements MockRailState {
   readonly payoutNotes = new Map<string, Exclude<NoteResult, null>>();
   readonly fundingNotes = new Map<string, Exclude<NoteResult, null>>();
 
-  constructor(initial?: MockRailOptions["initialTreasury"]) {
+  constructor(
+    initial?: MockRailOptions["initialTreasury"],
+    initialBonus?: MockRailOptions["initialBonus"],
+  ) {
     this.initial = {
       usdcMicroUsdc: initial?.usdcMicroUsdc ?? DEFAULT_BALANCE,
       algoMicroAlgo: initial?.algoMicroAlgo ?? DEFAULT_BALANCE,
     };
+    this.initialBonus = {
+      usdcMicroUsdc: initialBonus?.usdcMicroUsdc ?? DEFAULT_BALANCE,
+      algoMicroAlgo: initialBonus?.algoMicroAlgo ?? DEFAULT_BALANCE,
+    };
     this.balances = { ...this.initial };
+    this.bonusBalances = { ...this.initialBonus };
   }
 
   reset(): void {
     this.balances = { ...this.initial };
+    this.bonusBalances = { ...this.initialBonus };
     this.txCounter = 0;
     this.groupCounter = 0;
     this.currentRound = INITIAL_ROUND;
@@ -104,7 +116,12 @@ class MutableMockRailState implements MockRailState {
 
 export type MockRailOptions = {
   readonly treasuryAddress?: string;
+  readonly bonusAddress?: string;
   readonly initialTreasury?: {
+    readonly usdcMicroUsdc?: MicroUsdc;
+    readonly algoMicroAlgo?: number;
+  };
+  readonly initialBonus?: {
     readonly usdcMicroUsdc?: MicroUsdc;
     readonly algoMicroAlgo?: number;
   };
@@ -119,15 +136,18 @@ export interface MockRail extends PaymentRail {
 
 export function createMockRailState(
   initial?: MockRailOptions["initialTreasury"],
+  initialBonus?: MockRailOptions["initialBonus"],
 ): MockRailState {
-  return new MutableMockRailState(initial);
+  return new MutableMockRailState(initial, initialBonus);
 }
 
 function mutableState(
   state: MockRailState | undefined,
   initial: MockRailOptions["initialTreasury"],
+  initialBonus: MockRailOptions["initialBonus"],
 ): MutableMockRailState {
-  if (state === undefined) return new MutableMockRailState(initial);
+  if (state === undefined)
+    return new MutableMockRailState(initial, initialBonus);
   if (!(state instanceof MutableMockRailState)) {
     throw new RailError(
       "CONTRACT",
@@ -157,6 +177,13 @@ export function createMockRail(options: MockRailOptions = {}): MockRail {
   if (treasuryAddress.length === 0) {
     throw new RailError("CONTRACT", "treasuryAddress must not be empty");
   }
+  const bonusAddress = options.bonusAddress ?? DEFAULT_BONUS;
+  if (bonusAddress.length === 0 || bonusAddress === treasuryAddress) {
+    throw new RailError(
+      "CONTRACT",
+      "bonusAddress must be non-empty and differ from treasuryAddress",
+    );
+  }
   if (options.initialTreasury?.usdcMicroUsdc !== undefined) {
     assertFiniteNonNegative(
       options.initialTreasury.usdcMicroUsdc,
@@ -169,8 +196,24 @@ export function createMockRail(options: MockRailOptions = {}): MockRail {
       "initial ALGO balance",
     );
   }
+  if (options.initialBonus?.usdcMicroUsdc !== undefined) {
+    assertFiniteNonNegative(
+      options.initialBonus.usdcMicroUsdc,
+      "initial bonus USDC balance",
+    );
+  }
+  if (options.initialBonus?.algoMicroAlgo !== undefined) {
+    assertFiniteNonNegative(
+      options.initialBonus.algoMicroAlgo,
+      "initial bonus ALGO balance",
+    );
+  }
 
-  const state = mutableState(options.state, options.initialTreasury);
+  const state = mutableState(
+    options.state,
+    options.initialTreasury,
+    options.initialBonus,
+  );
   const sleep = options.sleep ?? (async () => {});
   const control = new MockControlState(
     (round) => {
@@ -281,17 +324,17 @@ export function createMockRail(options: MockRailOptions = {}): MockRail {
         confirmedRound: round,
       },
     );
-    state.balances =
+    state.bonusBalances =
       funding.instruction.leg === "usdc"
         ? {
-            ...state.balances,
+            ...state.bonusBalances,
             usdcMicroUsdc:
-              state.balances.usdcMicroUsdc - funding.instruction.amount,
+              state.bonusBalances.usdcMicroUsdc - funding.instruction.amount,
           }
         : {
-            ...state.balances,
+            ...state.bonusBalances,
             algoMicroAlgo:
-              state.balances.algoMicroAlgo - funding.instruction.amount,
+              state.bonusBalances.algoMicroAlgo - funding.instruction.amount,
           };
   }
 
@@ -313,6 +356,7 @@ export function createMockRail(options: MockRailOptions = {}): MockRail {
 
   const rail: MockRail = {
     treasuryAddress,
+    bonusAddress,
     control,
 
     buildPaymentChallenge(quote: StakeQuote): PaymentChallenge {
@@ -588,7 +632,9 @@ export function createMockRail(options: MockRailOptions = {}): MockRail {
       const base =
         address === treasuryAddress
           ? state.balances
-          : { usdcMicroUsdc: 0, algoMicroAlgo: 0 };
+          : address === bonusAddress
+            ? state.bonusBalances
+            : { usdcMicroUsdc: 0, algoMicroAlgo: 0 };
       return { ...base, ...control.balanceOverrides.get(address) };
     },
 

@@ -9,7 +9,6 @@ import type { Db } from "../db/open.js";
 import { schema } from "../db/open.js";
 import { newId } from "../ids.js";
 import type { Logger } from "../logger.js";
-import { refundCoverageRequiredMicroUsdc } from "../operations/reconciliation.js";
 import { BONUS_SKIP_ALGO_MICRO } from "./lifecycle.js";
 
 const POLL_MS = 1_000;
@@ -17,11 +16,11 @@ const BACKOFF_BASE_MS = 1_000;
 const ALGO_FUNDING_FEE_MICRO = 1_000;
 
 export function hasAlgoFundingCapacity(
-  treasuryAlgoMicro: number,
+  bonusAlgoMicro: number,
   amountMicro: number,
   floorMicro: number,
 ): boolean {
-  return treasuryAlgoMicro - amountMicro - ALGO_FUNDING_FEE_MICRO >= floorMicro;
+  return bonusAlgoMicro - amountMicro - ALGO_FUNDING_FEE_MICRO >= floorMicro;
 }
 
 export type FundingExecutorDeps = {
@@ -210,7 +209,7 @@ export function registerFundingCommands(deps: FundingExecutorDeps): void {
         if (!ledgerExists) {
           appendLedgerEntry(deps.db, {
             ts: ctx.now,
-            account: "treasury",
+            account: "bonus",
             deltaMicrousdc: -job.amount,
             refType: "bonus",
             refId: job.id,
@@ -411,7 +410,7 @@ async function sendGuard(
   }
   let balances: Awaited<ReturnType<PaymentRail["getBalances"]>>;
   try {
-    balances = await deps.rail.getBalances(deps.rail.treasuryAddress);
+    balances = await deps.rail.getBalances(deps.rail.bonusAddress);
   } catch {
     return { ok: false, reason: "balance_dependency" };
   }
@@ -420,17 +419,13 @@ async function sendGuard(
     !hasAlgoFundingCapacity(
       balances.algoMicroAlgo,
       job.amount,
-      deps.config().TREASURY_MIN_ALGO_MICRO,
+      deps.config().BONUS_MIN_ALGO_MICRO,
     )
   ) {
     return { ok: false, reason: "algo_floor" };
   }
-  if (
-    job.leg === "usdc" &&
-    balances.usdcMicroUsdc - job.amount <
-      refundCoverageRequiredMicroUsdc(deps.db)
-  ) {
-    return { ok: false, reason: "refund_coverage" };
+  if (job.leg === "usdc" && balances.usdcMicroUsdc < job.amount) {
+    return { ok: false, reason: "usdc_balance" };
   }
   return { ok: true };
 }

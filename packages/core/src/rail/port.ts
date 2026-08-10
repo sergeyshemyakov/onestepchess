@@ -85,7 +85,7 @@ export type PayoutInstruction = {
 };
 
 export type FundingInstruction = {
-  readonly player: string; // recipient; note 'osc:bonus:{leg}:{player}'
+  readonly player: string; // recipient; note 'osc:bonus:{leg}:{player}'; sender is bonusAddress
   readonly leg: "algo" | "usdc";
   readonly amount: number; // µALGO (algo leg) | µUSDC (usdc leg), > 0
 };
@@ -104,8 +104,9 @@ export type SignedSubmitResult =
       readonly detail?: string;
     };
 
-/** Treasury-signed bytes are safe to persist; the secret key is not. Persist
- * this value and its txids before calling submitPrepared(). */
+/** Server-signed bytes (treasury for payouts, bonus account for funding) are
+ * safe to persist; the secret keys are not. Persist this value and its txids
+ * before calling submitPrepared(). */
 export type PreparedPayouts = {
   readonly kind: "payouts";
   readonly payloadB64: string; // opaque signed atomic group
@@ -132,7 +133,11 @@ export type TxStatus =
     };
 
 export interface PaymentRail {
+  /** Stakes in, payouts out. Never funds welcome bonuses. */
   readonly treasuryAddress: string;
+  /** Dedicated welcome-bonus account — the sender of every funding leg, so
+   * bonus spend can never eat into stake/refund money held by the treasury. */
+  readonly bonusAddress: string;
 
   /** Sync. rail-avm reads the feePayer cache fed by health() and throws
    * RailError('NOT_READY') before the first successful health();

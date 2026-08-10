@@ -22,6 +22,9 @@ export type ReconciliationReport = {
   readonly belowRefundCoverage: boolean;
   readonly algoBelowFloor: boolean;
   readonly aboveTreasuryCap: boolean;
+  readonly bonusUsdcMicroUsdc: number;
+  readonly bonusAlgoMicroAlgo: number;
+  readonly bonusLow: boolean;
 };
 
 export class OperationalState {
@@ -101,6 +104,8 @@ export function registerOperationalCommands(deps: ReconciliationDeps): void {
       payload: {
         readonly usdcMicroUsdc: number;
         readonly algoMicroAlgo: number;
+        readonly bonusUsdcMicroUsdc: number;
+        readonly bonusAlgoMicroAlgo: number;
         readonly source: "boot" | "scheduled" | "admin";
         readonly actor?: string;
       },
@@ -138,20 +143,6 @@ export function registerOperationalCommands(deps: ReconciliationDeps): void {
           .where(eq(schema.payoutJobs.status, "submitted"))
           .get()?.amount,
       );
-      const submittedFunding = scalar(
-        deps.db
-          .select({
-            amount: sql<number>`coalesce(sum(${schema.fundingJobs.amount}), 0)`,
-          })
-          .from(schema.fundingJobs)
-          .where(
-            and(
-              eq(schema.fundingJobs.status, "submitted"),
-              eq(schema.fundingJobs.leg, "usdc"),
-            ),
-          )
-          .get()?.amount,
-      );
       const skewCutoff = ctx.now - CHAIN_BALANCE_SKEW_MS;
       const recentInboundBook = scalar(
         deps.db
@@ -175,15 +166,14 @@ export function registerOperationalCommands(deps: ReconciliationDeps): void {
           .from(schema.ledger)
           .where(
             and(
-              inArray(schema.ledger.refType, ["payout", "bonus"]),
+              eq(schema.ledger.refType, "payout"),
               gt(schema.ledger.ts, skewCutoff),
             ),
           )
           .get()?.amount,
       );
       const totalInboundTolerance = inboundTolerance + recentOutboundBook;
-      const totalOutboundTolerance =
-        outboundTolerance + submittedFunding + recentInboundBook;
+      const totalOutboundTolerance = outboundTolerance + recentInboundBook;
       const book =
         accountBalance(deps.db, "treasury") +
         accountBalance(deps.db, "protocol");
@@ -194,6 +184,9 @@ export function registerOperationalCommands(deps: ReconciliationDeps): void {
       const belowRefundCoverage =
         payload.usdcMicroUsdc < requiredRefundCoverage;
       const cfg = deps.config();
+      const bonusLow =
+        payload.bonusAlgoMicroAlgo < cfg.BONUS_MIN_ALGO_MICRO ||
+        payload.bonusUsdcMicroUsdc < cfg.BONUS_USDC_MICRO;
       const report: ReconciliationReport = {
         lastRunAt: new Date(ctx.now).toISOString(),
         bookMicroUsdc: book,
@@ -205,6 +198,9 @@ export function registerOperationalCommands(deps: ReconciliationDeps): void {
         belowRefundCoverage,
         algoBelowFloor: payload.algoMicroAlgo < cfg.TREASURY_MIN_ALGO_MICRO,
         aboveTreasuryCap: payload.usdcMicroUsdc > cfg.TREASURY_CAP_MICROUSDC,
+        bonusUsdcMicroUsdc: payload.bonusUsdcMicroUsdc,
+        bonusAlgoMicroAlgo: payload.bonusAlgoMicroAlgo,
+        bonusLow,
       };
       updatePauseCause(deps.db, ctx, {
         cause: "reconciliation_dependency",
@@ -289,6 +285,16 @@ export function registerOperationalCommands(deps: ReconciliationDeps): void {
           });
         });
       }
+      // A drained bonus account only defers bonuses (the funding send guard
+      // already skips), so this alerts without adding a pause cause.
+      if (bonusLow) {
+        ctx.afterCommit(() => {
+          void deps.alerts.emit("bonus_account_low", {
+            usdcMicroUsdc: payload.bonusUsdcMicroUsdc,
+            algoMicroAlgo: payload.bonusAlgoMicroAlgo,
+          });
+        });
+      }
       return report;
     },
   );
@@ -356,8 +362,10 @@ export async function runReconciliation(
   actor?: string,
 ): Promise<ReconciliationReport> {
   let balances: Awaited<ReturnType<PaymentRail["getBalances"]>>;
+  let bonusBalances: Awaited<ReturnType<PaymentRail["getBalances"]>>;
   try {
     balances = await deps.rail.getBalances(deps.rail.treasuryAddress);
+    bonusBalances = await deps.rail.getBalances(deps.rail.bonusAddress);
   } catch (error) {
     await deps.coordinator.dispatch({
       type: "ReconciliationUnavailable",
@@ -372,13 +380,21 @@ export async function runReconciliation(
     {
       usdcMicroUsdc: number;
       algoMicroAlgo: number;
+      bonusUsdcMicroUsdc: number;
+      bonusAlgoMicroAlgo: number;
       source: "boot" | "scheduled" | "admin";
       actor?: string;
     },
     ReconciliationReport
   >({
     type: "ReconciliationApplied",
-    payload: { ...balances, source, ...(actor === undefined ? {} : { actor }) },
+    payload: {
+      ...balances,
+      bonusUsdcMicroUsdc: bonusBalances.usdcMicroUsdc,
+      bonusAlgoMicroAlgo: bonusBalances.algoMicroAlgo,
+      source,
+      ...(actor === undefined ? {} : { actor }),
+    },
     refIds: [source],
   });
   if (result.kind !== "ok") throw new Error("reconciliation was deprioritized");

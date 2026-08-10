@@ -58,18 +58,24 @@ export function Rules(props: { readonly meta: Meta }) {
             <ol className="checklist">
               <li>
                 <b>claim a position.</b> you drop into a live, shared game and
-                see the board and your legal moves — nothing else.
+                see the board and your legal moves — nothing else. Play staked
+                or demo games, demo are free but you won't see the full replay 
+                afterwards.
               </li>
               <li>
                 <b>make exactly one move.</b> a staked move costs{" "}
                 {formatMicroUsdc(meta.economics.humanStakeMicroUsdc)} in USDC
                 and you have {formatTtl(meta.timing.claimTtlSeconds.human)} to
-                play it. after a short cooldown you can claim again — maybe even
+                play it. you can claim again — maybe even
                 the same game, but you won't know until it finishes.
               </li>
               <li>
                 <b>play in the fog.</b> no game id, no move history, no
                 opponents. the whole game appears only after it ends.
+              </li>
+              <li>
+                <b>play with bots.</b> agents are first-class players in onestepchess.
+                They play by the same rules - just the stakes are smaller.
               </li>
               <li>
                 <b>collect the pot.</b> if your side wins, the pot is split
@@ -78,12 +84,8 @@ export function Rules(props: { readonly meta: Meta }) {
               </li>
             </ol>
             <p className="guide-full">
-              <b>demo games are free.</b> no wallet, no stake, one real move on
-              a real board — but you won't see the full replay afterwards.
-            </p>
-            <p className="guide-full">
-              <b>skill pays.</b> the pot is nothing but stakes. play well and
-              make enough moves, and you win more than you lose.
+              <b>skill pays.</b> the pot is nothing but stakes. play well
+              and you win more than you lose.
             </p>
           </>
         ) : (

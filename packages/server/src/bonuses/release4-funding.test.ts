@@ -27,6 +27,8 @@ import { registerBonusCommands } from "./lifecycle.js";
 
 const INITIAL_USDC = 10_000_000;
 const INITIAL_ALGO = 10_000_000;
+const INITIAL_BONUS_USDC = 5_000_000;
+const INITIAL_BONUS_ALGO = 5_000_000;
 const databases: OpenedDatabase[] = [];
 
 afterEach(() => {
@@ -50,6 +52,10 @@ function setup(overrides: Record<string, unknown> = {}) {
     initialTreasury: {
       usdcMicroUsdc: INITIAL_USDC,
       algoMicroAlgo: INITIAL_ALGO,
+    },
+    initialBonus: {
+      usdcMicroUsdc: INITIAL_BONUS_USDC,
+      algoMicroAlgo: INITIAL_BONUS_ALGO,
     },
   });
   const logger = createLogger({ level: "silent" });
@@ -417,9 +423,12 @@ describe("Release 4 recoverable starter-stake funding (#99)", () => {
     await runFundingExecutor(applied.deps);
     await runFundingExecutor(applied.deps);
     expect(
+      (await applied.rail.getBalances(applied.rail.bonusAddress)).usdcMicroUsdc,
+    ).toBe(INITIAL_BONUS_USDC - 200_000);
+    expect(
       (await applied.rail.getBalances(applied.rail.treasuryAddress))
         .usdcMicroUsdc,
-    ).toBe(INITIAL_USDC - 200_000);
+    ).toBe(INITIAL_USDC);
     expect(
       applied.database.db
         .select()
@@ -444,9 +453,9 @@ describe("Release 4 recoverable starter-stake funding (#99)", () => {
     unapplied.setNow(unapplied.now() + 1_001);
     await runFundingExecutor(unapplied.deps);
     expect(
-      (await unapplied.rail.getBalances(unapplied.rail.treasuryAddress))
+      (await unapplied.rail.getBalances(unapplied.rail.bonusAddress))
         .usdcMicroUsdc,
-    ).toBe(INITIAL_USDC - 200_000);
+    ).toBe(INITIAL_BONUS_USDC - 200_000);
 
     const noteFallback = setup();
     const third = algosdk.generateAccount();
@@ -480,7 +489,7 @@ describe("Release 4 recoverable starter-stake funding (#99)", () => {
     ).toBe("funded");
   });
 
-  it("bonus_treasury_guards_defer_discretionary_work_without_stranding_submitted_obligations", async () => {
+  it("bonus_account_guards_defer_discretionary_work_without_stranding_submitted_obligations", async () => {
     const stack = setup();
     const pending = algosdk.generateAccount();
     seedBonus(stack, pending, "claimed");
@@ -498,8 +507,8 @@ describe("Release 4 recoverable starter-stake funding (#99)", () => {
     expect(stack.deliveries).toHaveBeenCalledTimes(1);
 
     pause(stack);
-    stack.rail.control.setBalances(stack.rail.treasuryAddress, {
-      algoMicroAlgo: stack.config().TREASURY_MIN_ALGO_MICRO + 249_999,
+    stack.rail.control.setBalances(stack.rail.bonusAddress, {
+      algoMicroAlgo: stack.config().BONUS_MIN_ALGO_MICRO + 249_999,
     });
     await runFundingExecutor(stack.deps);
     expect(
@@ -524,19 +533,19 @@ describe("Release 4 recoverable starter-stake funding (#99)", () => {
         .get()?.status,
     ).toBe("confirmed");
 
-    const coverage = algosdk.generateAccount();
-    seedBonus(stack, coverage, "opted_in");
+    const shortfall = algosdk.generateAccount();
+    seedBonus(stack, shortfall, "opted_in");
     pause(stack);
-    stack.rail.control.setBalances(stack.rail.treasuryAddress, {
+    stack.rail.control.setBalances(stack.rail.bonusAddress, {
       usdcMicroUsdc: 100_000,
-      algoMicroAlgo: INITIAL_ALGO,
+      algoMicroAlgo: INITIAL_BONUS_ALGO,
     });
     await runFundingExecutor(stack.deps);
     expect(
       stack.database.db
         .select()
         .from(schema.fundingJobs)
-        .where(eq(schema.fundingJobs.player, coverage.addr.toString()))
+        .where(eq(schema.fundingJobs.player, shortfall.addr.toString()))
         .get()?.status,
     ).toBe("pending");
   });
@@ -553,13 +562,18 @@ describe("Release 4 recoverable starter-stake funding (#99)", () => {
         usdcTxid: expect.any(String),
       },
     );
-    expect(
-      stack.database.db
-        .select()
-        .from(schema.ledger)
-        .where(eq(schema.ledger.refType, "bonus"))
-        .all(),
-    ).toHaveLength(1);
+    const bonusEntries = stack.database.db
+      .select()
+      .from(schema.ledger)
+      .where(eq(schema.ledger.refType, "bonus"))
+      .all();
+    expect(bonusEntries).toHaveLength(1);
+    // Bonus spend is booked against its own account so the treasury book
+    // keeps mirroring the treasury chain balance.
+    expect(bonusEntries[0]).toMatchObject({
+      account: "bonus",
+      deltaMicrousdc: -200_000,
+    });
     expect(
       stack.database.db
         .select()
@@ -575,7 +589,7 @@ describe("Release 4 recoverable starter-stake funding (#99)", () => {
     ).toHaveLength(0);
   });
 
-  it("reconciliation_tolerates_only_submitted_bonus_usdc_and_detects_real_bonus_drift", async () => {
+  it("reconciliation_excludes_bonus_funding_from_treasury_drift_and_monitors_the_bonus_account", async () => {
     const stack = setup();
     await runReconciliation(stack.reconciliation, "boot");
     const account = algosdk.generateAccount();
@@ -587,7 +601,11 @@ describe("Release 4 recoverable starter-stake funding (#99)", () => {
     );
     expect(preparedReport.outboundToleranceMicroUsdc).toBe(0);
     expect(preparedReport.ok).toBe(true);
+    expect(preparedReport.bonusUsdcMicroUsdc).toBe(INITIAL_BONUS_USDC);
+    expect(preparedReport.bonusLow).toBe(false);
 
+    // The submitted USDC leg leaves the bonus account, so the treasury book
+    // needs no bonus tolerance and stays balanced without one.
     await stack.rail.submitPrepared(job.prepared);
     stack.database.db
       .update(schema.fundingJobs)
@@ -598,8 +616,32 @@ describe("Release 4 recoverable starter-stake funding (#99)", () => {
       stack.reconciliation,
       "admin",
     );
-    expect(submittedReport.outboundToleranceMicroUsdc).toBe(200_000);
+    expect(submittedReport.outboundToleranceMicroUsdc).toBe(0);
     expect(submittedReport.ok).toBe(true);
+    expect(submittedReport.bonusUsdcMicroUsdc).toBe(
+      INITIAL_BONUS_USDC - 200_000,
+    );
+
+    stack.rail.control.setBalances(stack.rail.bonusAddress, {
+      usdcMicroUsdc: 100_000,
+      algoMicroAlgo: INITIAL_BONUS_ALGO,
+    });
+    const lowReport = await runReconciliation(stack.reconciliation, "admin");
+    expect(lowReport.bonusLow).toBe(true);
+    expect(lowReport.ok).toBe(true);
+    expect(
+      JSON.parse(
+        stack.database.db.select().from(schema.systemState).get()
+          ?.pauseCausesJson ?? "[]",
+      ),
+    ).toEqual([]);
+    await Promise.resolve();
+    const deliveredBodies = (
+      stack.deliveries.mock.calls as unknown as [string, { body: string }][]
+    ).map((call) => call[1]?.body ?? "");
+    expect(
+      deliveredBodies.some((body) => body.includes("bonus_account_low")),
+    ).toBe(true);
 
     stack.rail.control.setBalances(stack.rail.treasuryAddress, {
       usdcMicroUsdc: INITIAL_USDC - 300_001,

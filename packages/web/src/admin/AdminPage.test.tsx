@@ -39,6 +39,11 @@ const overviewFixture: AdminOverview = {
     capMicroUsdc: 5_000_000,
     belowRefundCoverage: false,
   },
+  bonusAccount: {
+    usdcMicroUsdc: 800_000,
+    algoMicroAlgo: 1_500_000,
+    minAlgoMicro: 1_000_000,
+  },
   payouts: { pending: 1, prepared: 2, submitted: 3, failed: 0 },
   funding: { pending: 0, prepared: 0, submitted: 0, failed: 0 },
   reconciliation: {

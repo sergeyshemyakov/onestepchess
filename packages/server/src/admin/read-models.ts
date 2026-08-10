@@ -108,6 +108,7 @@ function statusCounts(
 export async function adminOverview(deps: AdminReadDeps) {
   const pause = readPauseState(deps.db);
   const balances = await deps.rail.getBalances(deps.rail.treasuryAddress);
+  const bonusBalances = await deps.rail.getBalances(deps.rail.bonusAddress);
   const cfg = deps.config();
   let active = 0;
   let endspiel = 0;
@@ -138,6 +139,10 @@ export async function adminOverview(deps: AdminReadDeps) {
       ...balances,
       capMicroUsdc: cfg.TREASURY_CAP_MICROUSDC,
       belowRefundCoverage: reconciliation?.belowRefundCoverage ?? false,
+    },
+    bonusAccount: {
+      ...bonusBalances,
+      minAlgoMicro: cfg.BONUS_MIN_ALGO_MICRO,
     },
     payouts,
     funding: fundingGroundTruth(deps.db),

@@ -27,8 +27,11 @@ export function createPaymentRail(
     });
   }
   const mnemonic = options.env.TREASURY_MNEMONIC;
-  if (mnemonic === undefined) {
-    throw new Error("validated AVM profile is missing TREASURY_MNEMONIC");
+  const bonusMnemonic = options.env.BONUS_MNEMONIC;
+  if (mnemonic === undefined || bonusMnemonic === undefined) {
+    throw new Error(
+      "validated AVM profile is missing TREASURY_MNEMONIC or BONUS_MNEMONIC",
+    );
   }
   return createAvmRail(
     {
@@ -38,6 +41,7 @@ export function createPaymentRail(
       indexerUrl: options.config.INDEXER_URL,
       facilitatorUrl: options.config.FACILITATOR_URL,
       treasuryMnemonic: mnemonic,
+      bonusMnemonic,
     },
     options.fetch === undefined ? {} : { fetch: options.fetch },
   );

@@ -54,6 +54,7 @@ const liveEnvironmentSchema = z.object({
   OSC_LIVE_EXPECT_FEE_PAYER: z.string().min(1),
   OSC_LIVE_PAYER_ADDRESS: z.string().min(1),
   OSC_LIVE_TREASURY_MNEMONIC: z.string().min(1),
+  OSC_LIVE_BONUS_MNEMONIC: z.string().min(1),
   OSC_LIVE_PAYER_MNEMONIC: z.string().min(1),
   OSC_LIVE_RESOURCE_URL: z.url(),
   OSC_LIVE_PAYMENT_MICRO_USDC: positiveIntegerString,
@@ -74,6 +75,7 @@ export type Release4LiveConfig = {
   readonly expectedFeePayer: string;
   readonly payerAddress: string;
   readonly treasuryMnemonic: string;
+  readonly bonusMnemonic: string;
   readonly payerMnemonic: string;
   readonly resourceUrl: string;
   readonly paymentMicroUsdc: number;
@@ -162,6 +164,7 @@ export function authorizeRelease4LiveRun(
     expectedFeePayer: env.OSC_LIVE_EXPECT_FEE_PAYER,
     payerAddress: env.OSC_LIVE_PAYER_ADDRESS,
     treasuryMnemonic: env.OSC_LIVE_TREASURY_MNEMONIC,
+    bonusMnemonic: env.OSC_LIVE_BONUS_MNEMONIC,
     payerMnemonic: env.OSC_LIVE_PAYER_MNEMONIC,
     resourceUrl: env.OSC_LIVE_RESOURCE_URL,
     paymentMicroUsdc: env.OSC_LIVE_PAYMENT_MICRO_USDC,

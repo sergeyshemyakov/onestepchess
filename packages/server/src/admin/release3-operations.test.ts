@@ -722,13 +722,14 @@ describe("Release 3 admin reads", () => {
       headers: { ...tokenHeaders(), "If-None-Match": etag },
     });
     expect(unchanged.status).toBe(304);
-    expect(balances).toHaveBeenCalledTimes(1);
+    // One overview computation reads two accounts: treasury and bonus.
+    expect(balances).toHaveBeenCalledTimes(2);
 
     await jsonRequest(stack, "/api/v1/admin/pause", "POST", {});
     await stack.app.request("/api/v1/admin/overview", {
       headers: tokenHeaders(),
     });
-    expect(balances).toHaveBeenCalledTimes(2);
+    expect(balances).toHaveBeenCalledTimes(4);
   });
 });
 

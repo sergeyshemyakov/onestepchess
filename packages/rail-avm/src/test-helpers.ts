@@ -10,6 +10,7 @@ export const CLAIM_URL = "https://osc.example/api/v1/claims/clm_release4/move";
 
 export function accountConfig(caip2 = TESTNET_CAIP2) {
   const treasury = algosdk.generateAccount();
+  const bonus = algosdk.generateAccount();
   const config: AvmRailConfig = {
     caip2,
     usdcAsaId: caip2 === TESTNET_CAIP2 ? 10_458_941 : 31_566_704,
@@ -17,9 +18,10 @@ export function accountConfig(caip2 = TESTNET_CAIP2) {
     indexerUrl: "https://indexer.example",
     facilitatorUrl: "https://facilitator.example",
     treasuryMnemonic: algosdk.secretKeyToMnemonic(treasury.sk),
+    bonusMnemonic: algosdk.secretKeyToMnemonic(bonus.sk),
     requestTimeoutMs: 20,
   };
-  return { config, treasury };
+  return { config, treasury, bonus };
 }
 
 export function json(body: unknown, status = 200): Response {

@@ -32,6 +32,7 @@ import {
 } from "./release4-chain-harness.js";
 
 const treasury = algosdk.generateAccount();
+const bonus = algosdk.generateAccount();
 const feePayer = algosdk.generateAccount();
 const payer = algosdk.generateAccount();
 
@@ -52,6 +53,7 @@ function environment(
     OSC_LIVE_EXPECT_FEE_PAYER: feePayer.addr.toString(),
     OSC_LIVE_PAYER_ADDRESS: payer.addr.toString(),
     OSC_LIVE_TREASURY_MNEMONIC: "treasury-secret",
+    OSC_LIVE_BONUS_MNEMONIC: "bonus-secret",
     OSC_LIVE_PAYER_MNEMONIC: "payer-secret",
     OSC_LIVE_RESOURCE_URL:
       "https://osc.example/api/v1/claims/release4-live-smoke/move",
@@ -408,11 +410,15 @@ it("release4_money_crash_matrix_converges_without_duplicate_move_payout_or_bonus
   rail = createMockRail({ state });
   await expect(rail.submitPrepared(funding)).resolves.toEqual({ ok: true });
 
+  // Stakes and payouts settle against the treasury; the welcome-bonus leg
+  // debits the dedicated bonus account exactly once despite the replay.
   const balances = await rail.getBalances(rail.treasuryAddress);
-  const ledger = [1_000, -800, -200];
+  const treasuryLedger = [1_000, -800];
   expect(balances.usdcMicroUsdc - initialUsdc).toBe(
-    ledger.reduce((sum, amount) => sum + amount, 0),
+    treasuryLedger.reduce((sum, amount) => sum + amount, 0),
   );
+  const bonusBalances = await rail.getBalances(rail.bonusAddress);
+  expect(bonusBalances.usdcMicroUsdc - 10_000_000).toBe(-200);
   expect(await rail.findPayoutByNote("release4-crash-payout")).toMatchObject({
     txid: payout.txids[0]?.txid,
   });
@@ -530,6 +536,7 @@ it("captured_release4_shapes_roundtrip_through_rail_web_and_agent_guards", async
     indexerUrl: "https://indexer.example",
     facilitatorUrl: "https://facilitator.example",
     treasuryMnemonic: algosdk.secretKeyToMnemonic(treasury.sk),
+    bonusMnemonic: algosdk.secretKeyToMnemonic(bonus.sk),
   });
   expect(rail.decodePayment(paymentHeader)).toMatchObject({
     ok: true,

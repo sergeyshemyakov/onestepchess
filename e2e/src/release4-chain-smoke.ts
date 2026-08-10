@@ -95,6 +95,7 @@ async function main(): Promise<void> {
       indexerUrl: config.indexerUrl,
       facilitatorUrl: config.facilitatorUrl,
       treasuryMnemonic: config.treasuryMnemonic,
+      bonusMnemonic: config.bonusMnemonic,
     });
     const meta: Meta = {
       name: "One Step Chess",

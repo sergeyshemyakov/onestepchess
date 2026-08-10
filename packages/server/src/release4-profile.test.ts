@@ -51,11 +51,14 @@ function database(): OpenedDatabase {
   return opened;
 }
 
+const bonusAccount = algosdk.generateAccount();
+
 function avmEnv(account: algosdk.Account) {
   return {
     RAIL: "avm",
     JWT_SECRET: "release-four-jwt-secret-that-is-long-enough",
     TREASURY_MNEMONIC: algosdk.secretKeyToMnemonic(account.sk),
+    BONUS_MNEMONIC: algosdk.secretKeyToMnemonic(bonusAccount.sk),
     CAIP2: TESTNET_CAIP2,
     USDC_ASA: "10458941",
     ALGOD_URL: "https://algod.example",
@@ -197,9 +200,15 @@ describe("Release 4 server profiles and immutable identity (#97)", () => {
       fetch: async () => new Response(null, { status: 503 }),
     });
     expect(rail.treasuryAddress).toBe(account.addr.toString());
+    expect(rail.bonusAddress).toBe(bonusAccount.addr.toString());
     expect(() =>
       loadConfig({
         env: { ...avmEnv(account), TREASURY_MNEMONIC: undefined },
+      }),
+    ).toThrow(ConfigError);
+    expect(() =>
+      loadConfig({
+        env: { ...avmEnv(account), BONUS_MNEMONIC: undefined },
       }),
     ).toThrow(ConfigError);
   });

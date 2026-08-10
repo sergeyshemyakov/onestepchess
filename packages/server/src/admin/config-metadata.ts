@@ -50,6 +50,7 @@ const CONFIG_DESCRIPTIONS = {
   BACKUP_RETENTION_DAYS: "Days completed database backups are retained.",
   TREASURY_CAP_MICROUSDC: "Maximum treasury exposure, in micro-USDC.",
   TREASURY_MIN_ALGO_MICRO: "Minimum treasury gas reserve, in micro-ALGO.",
+  BONUS_MIN_ALGO_MICRO: "Minimum bonus-account gas reserve, in micro-ALGO.",
   ALERT_DEDUPE_SECONDS: "Seconds duplicate operational alerts are suppressed.",
   TURNSTILE_SITE_KEY: "Public Cloudflare Turnstile site key.",
   GUEST_TOKEN_TTL_DAYS: "Days a guest identity token remains valid.",

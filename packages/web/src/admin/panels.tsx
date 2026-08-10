@@ -552,6 +552,14 @@ export function HealthPanel(props: {
           </p>
         </div>
         <div className="admin-subpanel">
+          <h3>BONUS ACCOUNT</h3>
+          <p>
+            {formatMicroUsdc(overview.bonusAccount.usdcMicroUsdc)} ·{" "}
+            {formatMicroAlgo(overview.bonusAccount.algoMicroAlgo)}
+          </p>
+          <p>gas floor {formatMicroAlgo(overview.bonusAccount.minAlgoMicro)}</p>
+        </div>
+        <div className="admin-subpanel">
           <h3>RECONCILIATION</h3>
           <p>{overview.reconciliation.ok ? "balanced" : "DRIFT"}</p>
           <p>

@@ -124,7 +124,7 @@ describe("rail-avm Release 4 prepared treasury and opt-in adapter", () => {
   });
 
   it("avm_prepares_each_funding_leg_with_a_durable_txid_and_exact_bonus_note", async () => {
-    const { config, treasury } = accountConfig();
+    const { config, bonus } = accountConfig();
     const player = algosdk.generateAccount().addr.toString();
     const fetch = vi
       .fn<typeof globalThis.fetch>()
@@ -154,7 +154,7 @@ describe("rail-avm Release 4 prepared treasury and opt-in adapter", () => {
           txid: signed.txn.txID(),
           lastValidRound: 21_000,
         });
-        expect(signed.txn.sender.toString()).toBe(treasury.addr.toString());
+        expect(signed.txn.sender.toString()).toBe(bonus.addr.toString());
         expect(signed.txn.fee).toBe(1_000n);
         expect(Buffer.from(signed.txn.note).toString("utf8")).toBe(
           `osc:bonus:${prepared.leg}:${player}`,
@@ -259,8 +259,8 @@ describe("rail-avm Release 4 prepared treasury and opt-in adapter", () => {
     }
   });
 
-  it("avm_funding_note_lookup_returns_the_oldest_confirmed_treasury_send", async () => {
-    const { config, treasury } = accountConfig();
+  it("avm_funding_note_lookup_returns_the_oldest_confirmed_bonus_account_send", async () => {
+    const { config, bonus } = accountConfig();
     const player = algosdk.generateAccount().addr.toString();
     const other = algosdk.generateAccount().addr.toString();
     const expectedNote = Buffer.from(`osc:bonus:usdc:${player}`).toString(
@@ -278,19 +278,19 @@ describe("rail-avm Release 4 prepared treasury and opt-in adapter", () => {
           },
           {
             id: "WRONG_NOTE",
-            sender: treasury.addr.toString(),
+            sender: bonus.addr.toString(),
             note: Buffer.from("osc:bonus:algo:wrong").toString("base64"),
             "confirmed-round": 2,
           },
           {
             id: "NEWER",
-            sender: treasury.addr.toString(),
+            sender: bonus.addr.toString(),
             note: expectedNote,
             "confirmed-round": 30,
           },
           {
             id: "OLDEST",
-            sender: treasury.addr.toString(),
+            sender: bonus.addr.toString(),
             note: expectedNote,
             "confirmed-round": 20,
           },
@@ -313,9 +313,7 @@ describe("rail-avm Release 4 prepared treasury and opt-in adapter", () => {
       confirmedRound: 20,
     });
     const requested = new URL(String(fetch.mock.calls[1]?.[0]));
-    expect(requested.searchParams.get("address")).toBe(
-      treasury.addr.toString(),
-    );
+    expect(requested.searchParams.get("address")).toBe(bonus.addr.toString());
     expect(requested.searchParams.get("address-role")).toBe("sender");
     expect(requested.searchParams.get("note-prefix")).toBe(expectedNote);
     await expect(rail.findFundingByNote(player, "usdc")).rejects.toMatchObject({
@@ -549,7 +547,7 @@ describe("rail-avm Release 4 prepared treasury and opt-in adapter", () => {
           transactions: [
             {
               id: "NOTE_TX",
-              sender: treasury.addr.toString(),
+              sender: url.searchParams.get("address") ?? "",
               note,
               "confirmed-round": 32,
             },
@@ -692,6 +690,7 @@ describe("rail-avm Release 4 prepared treasury and opt-in adapter", () => {
     expect(Object.keys(rail).sort()).toEqual(
       [
         "treasuryAddress",
+        "bonusAddress",
         "buildPaymentChallenge",
         "decodePayment",
         "verify",

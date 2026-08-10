@@ -85,6 +85,7 @@ export const serverConfigSchema = coreConfigSchema
     BACKUP_RETENTION_DAYS: positiveInt.default(7),
     TREASURY_CAP_MICROUSDC: positiveInt.default(50_000_000),
     TREASURY_MIN_ALGO_MICRO: positiveInt.default(1_000_000),
+    BONUS_MIN_ALGO_MICRO: positiveInt.default(1_000_000),
     ALERT_DEDUPE_SECONDS: positiveInt.default(60),
     TURNSTILE_SITE_KEY: z.string().default(""),
     GUEST_TOKEN_TTL_DAYS: positiveInt.default(30),
@@ -140,6 +141,7 @@ const envSchema = z.object({
     )
     .default([]),
   TREASURY_MNEMONIC: z.string().min(1).optional(),
+  BONUS_MNEMONIC: z.string().min(1).optional(),
   TURNSTILE_SECRET: z.string().min(1).optional(),
   SYSTEM_BANNER: z.string().min(1).optional(),
   ALERT_WEBHOOK_URL: z.url().optional(),
@@ -240,9 +242,9 @@ export function loadConfig(
   const parsedEnv = envResult.data;
 
   if (parsedEnv.RAIL === "avm") {
-    const missing = (["JWT_SECRET", "TREASURY_MNEMONIC"] as const).filter(
-      (key) => parsedEnv[key] === undefined,
-    );
+    const missing = (
+      ["JWT_SECRET", "TREASURY_MNEMONIC", "BONUS_MNEMONIC"] as const
+    ).filter((key) => parsedEnv[key] === undefined);
     if (missing.length > 0) {
       throw new ConfigError(
         missing,
@@ -325,6 +327,7 @@ export function secretValues(env: ServerEnv): readonly string[] {
     env.JWT_SECRET,
     env.ADMIN_TOKEN,
     env.TREASURY_MNEMONIC,
+    env.BONUS_MNEMONIC,
     env.TURNSTILE_SECRET,
   ].filter((value): value is string => value !== undefined && value.length > 0);
 }

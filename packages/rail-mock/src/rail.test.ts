@@ -192,10 +192,10 @@ describe("rail-mock clean path", () => {
   });
 
   it("shared MockRailState preserves txids and balances across rail instances", async () => {
-    const state = createMockRailState({
-      usdcMicroUsdc: 100,
-      algoMicroAlgo: 200,
-    });
+    const state = createMockRailState(
+      { usdcMicroUsdc: 100, algoMicroAlgo: 200 },
+      { usdcMicroUsdc: 60, algoMicroAlgo: 40 },
+    );
     const first = createMockRail({ state });
     const paid = payment(first, "restart", 50);
     const settled = await first.settle(paid.header, paid.challenge.required);
@@ -210,8 +210,14 @@ describe("rail-mock clean path", () => {
     await expect(
       restarted.getBalances(restarted.treasuryAddress),
     ).resolves.toEqual({
-      usdcMicroUsdc: 130,
+      usdcMicroUsdc: 150,
       algoMicroAlgo: 200,
+    });
+    await expect(
+      restarted.getBalances(restarted.bonusAddress),
+    ).resolves.toEqual({
+      usdcMicroUsdc: 40,
+      algoMicroAlgo: 40,
     });
     if (!settled.ok) throw new Error("expected settlement success");
     await expect(

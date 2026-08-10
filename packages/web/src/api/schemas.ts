@@ -360,6 +360,11 @@ export const adminOverviewSchema = z.object({
     capMicroUsdc: nonNegativeIntegerSchema,
     belowRefundCoverage: z.boolean(),
   }),
+  bonusAccount: z.object({
+    usdcMicroUsdc: nonNegativeIntegerSchema,
+    algoMicroAlgo: nonNegativeIntegerSchema,
+    minAlgoMicro: nonNegativeIntegerSchema,
+  }),
   payouts: z.object({
     pending: nonNegativeIntegerSchema,
     prepared: nonNegativeIntegerSchema,
