@@ -313,6 +313,62 @@ export const paymentRequirementsSchema = z.object({
 });
 export type PaymentRequirements = z.infer<typeof paymentRequirementsSchema>;
 
+const bazaarObjectSchema = z
+  .object({
+    type: z.literal("object"),
+    properties: z.record(z.string(), z.unknown()),
+    required: z.array(z.string()),
+    additionalProperties: z.literal(false).optional(),
+  })
+  .passthrough();
+
+const bazaarExtensionSchema = z
+  .object({
+    info: z
+      .object({
+        input: z
+          .object({
+            type: z.literal("http"),
+            method: z.literal("POST"),
+            bodyType: z.literal("json"),
+            body: z.object({ move: z.string() }).passthrough(),
+          })
+          .passthrough(),
+        output: z
+          .object({
+            type: z.literal("json"),
+            example: moveReceiptSchema,
+          })
+          .passthrough(),
+      })
+      .passthrough(),
+    schema: bazaarObjectSchema.superRefine((schema, context) => {
+      if (!schema.required.includes("input")) {
+        context.addIssue({ code: "custom", message: "input is required" });
+      }
+      if (!schema.required.includes("output")) {
+        context.addIssue({ code: "custom", message: "output is required" });
+      }
+      if (!("input" in schema.properties)) {
+        context.addIssue({
+          code: "custom",
+          message: "input schema is missing",
+        });
+      }
+      if (!("output" in schema.properties)) {
+        context.addIssue({
+          code: "custom",
+          message: "output schema is missing",
+        });
+      }
+    }),
+  })
+  .passthrough();
+
+const paymentExtensionsSchema = z
+  .object({ bazaar: bazaarExtensionSchema })
+  .passthrough();
+
 export const paymentRequiredSchema = z.object({
   x402Version: z.literal(2),
   resource: z.object({
@@ -321,6 +377,7 @@ export const paymentRequiredSchema = z.object({
     mimeType: z.string().optional(),
   }),
   accepts: z.array(paymentRequirementsSchema).length(1),
+  extensions: paymentExtensionsSchema,
 });
 export type PaymentRequired = z.infer<typeof paymentRequiredSchema>;
 

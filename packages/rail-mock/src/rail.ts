@@ -16,7 +16,13 @@ import type {
   TxStatus,
   VerifyResult,
 } from "@onestepchess/core";
-import { RailError } from "@onestepchess/core";
+import {
+  MOVE_RESOURCE_DESCRIPTION,
+  MOVE_RESOURCE_MIME_TYPE,
+  moveBazaarExtensions,
+  RailError,
+  X402_GLOBAL_CHALLENGE_TAG,
+} from "@onestepchess/core";
 import algosdk from "algosdk";
 import {
   type AccountInfo,
@@ -366,7 +372,11 @@ export function createMockRail(options: MockRailOptions = {}): MockRail {
       }
       const required: PaymentRequired = {
         x402Version: 2,
-        resource: { url: quote.resource },
+        resource: {
+          url: quote.resource,
+          description: MOVE_RESOURCE_DESCRIPTION,
+          mimeType: MOVE_RESOURCE_MIME_TYPE,
+        },
         accepts: [
           {
             scheme: MOCK_SCHEME,
@@ -375,9 +385,10 @@ export function createMockRail(options: MockRailOptions = {}): MockRail {
             amount: String(quote.amountMicroUsdc),
             payTo: treasuryAddress,
             maxTimeoutSeconds: DEFAULT_MAX_TIMEOUT_SECONDS,
-            extra: {},
+            extra: { tag: X402_GLOBAL_CHALLENGE_TAG },
           },
         ],
+        extensions: moveBazaarExtensions(),
       };
       return { required, header: encodeBase64Json(required) };
     },

@@ -45,7 +45,7 @@ it("release4_agent_artifact_is_immutable_checksummed_and_contains_only_dist_publ
   expect(JSON.parse(readFileSync(result.provenancePath, "utf8"))).toMatchObject(
     {
       package: "@onestepchess/agent-kit",
-      version: "0.2.0",
+      version: "0.2.1",
       sha256: digest,
     },
   );
@@ -73,7 +73,7 @@ it("release4_agent_artifact_is_immutable_checksummed_and_contains_only_dist_publ
   );
   expect(manifest).toMatchObject({
     name: "@onestepchess/agent-kit",
-    version: "0.2.0",
+    version: "0.2.1",
     bin: { "osc-agent": "./dist/cli.js" },
   });
   expect(JSON.stringify(manifest)).not.toContain("workspace:");

@@ -34,6 +34,7 @@ export type PaymentRequired = {
     readonly mimeType?: string;
   };
   readonly accepts: readonly [PaymentRequirements]; // exactly one rail in v1
+  readonly extensions: Readonly<Record<string, unknown>>;
 };
 export type PaymentChallenge = {
   readonly required: PaymentRequired;

@@ -1,4 +1,10 @@
 import { Buffer } from "node:buffer";
+import {
+  MOVE_RESOURCE_DESCRIPTION,
+  MOVE_RESOURCE_MIME_TYPE,
+  moveBazaarExtensions,
+  X402_GLOBAL_CHALLENGE_TAG,
+} from "@onestepchess/core";
 import { describe, expect, it } from "vitest";
 import {
   buildMockHeader,
@@ -176,7 +182,11 @@ describe("rail-mock clean path", () => {
       JSON.parse(Buffer.from(challenge.header, "base64").toString("utf8")),
     ).toEqual({
       x402Version: 2,
-      resource: { url: RESOURCE },
+      resource: {
+        url: RESOURCE,
+        description: MOVE_RESOURCE_DESCRIPTION,
+        mimeType: MOVE_RESOURCE_MIME_TYPE,
+      },
       accepts: [
         {
           scheme: "mock",
@@ -185,9 +195,10 @@ describe("rail-mock clean path", () => {
           amount: "1000",
           payTo: "TREASURY_FIXTURE",
           maxTimeoutSeconds: 120,
-          extra: {},
+          extra: { tag: X402_GLOBAL_CHALLENGE_TAG },
         },
       ],
+      extensions: moveBazaarExtensions(),
     });
   });
 

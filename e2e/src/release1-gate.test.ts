@@ -1,4 +1,8 @@
 import {
+  buildPaymentHeader,
+  decodePaymentRequired,
+} from "@onestepchess/agent-kit";
+import {
   checkDomainInvariants,
   createRng,
   type DomainSnapshot,
@@ -27,7 +31,7 @@ import {
   TimerService,
 } from "@onestepchess/server";
 import algosdk from "algosdk";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const BASE_URL = "https://release1-gate.example";
 const JWT_SECRET = "release-one-gate-jwt-secret-0123456789";
@@ -241,6 +245,7 @@ function synthesizeMockHeader(
       x402Version: 2,
       resource: required.resource,
       accepted,
+      extensions: required.extensions,
       payload: {
         from: identity.address,
         amountMicroUsdc: Number(accepted.amount),
@@ -413,6 +418,118 @@ function assertLedgerConservation(database: OpenedDatabase): void {
 }
 
 describe("Release 1 gate", () => {
+  it("challenge_launch_acceptance_preserves_bazaar_from_authenticated_402_through_receipt", async () => {
+    const stack = await createGateStack();
+    try {
+      const identity = await registerIdentity(stack, 0);
+      const authHeaders = {
+        authorization: `Bearer ${identity.token}`,
+        "x-forwarded-for": identity.ip,
+      };
+      const claimResponse = await postJson(
+        stack,
+        "/api/v1/claims",
+        { demo: false },
+        authHeaders,
+      );
+      expect(claimResponse.status).toBe(201);
+      const { claim } = (await claimResponse.json()) as {
+        readonly claim: ClaimView;
+      };
+      const path = `/api/v1/claims/${claim.claimId}/move`;
+      const challengeResponse = await postJson(
+        stack,
+        path,
+        { move: "e2e4" },
+        authHeaders,
+      );
+      expect(challengeResponse.status).toBe(402);
+      const initialHeader = challengeResponse.headers.get("PAYMENT-REQUIRED");
+      if (initialHeader === null)
+        throw new Error("missing PAYMENT-REQUIRED header");
+      const required = decodePaymentRequired(initialHeader);
+      const requirement = required.accepts[0];
+      if (requirement === undefined)
+        throw new Error("challenge has no payment requirement");
+      expect(required.resource).toMatchObject({
+        description:
+          "Submit one legal move to an active shared One Step Chess game and receive the committed move and Algorand settlement receipt.",
+        mimeType: "application/json",
+      });
+      expect(requirement.extra.tag).toBe("x402-global-challenge");
+      expect(required.extensions).toMatchObject({
+        bazaar: {
+          info: {
+            input: {
+              type: "http",
+              method: "POST",
+              bodyType: "json",
+              body: { move: "e2e4" },
+            },
+            output: { type: "json" },
+          },
+        },
+      });
+
+      const browserHeader = synthesizeMockHeader(
+        JSON.parse(
+          Buffer.from(initialHeader, "base64").toString("utf8"),
+        ) as PaymentRequired,
+        identity,
+        "challenge-browser",
+      );
+      const agentHeader = await buildPaymentHeader({
+        paymentRequired: required,
+        requirement,
+        signer: {
+          address: identity.address,
+          sign: () => {
+            throw new Error("mock payments never sign");
+          },
+        },
+        nonce: () => "challenge-agent",
+      });
+      for (const header of [browserHeader, agentHeader]) {
+        const payload = JSON.parse(
+          Buffer.from(header, "base64").toString("utf8"),
+        );
+        expect(payload.accepted.extra.tag).toBe("x402-global-challenge");
+        expect(payload.extensions).toEqual(required.extensions);
+      }
+
+      const verify = vi.spyOn(stack.rail, "verify");
+      const settle = vi.spyOn(stack.rail, "settle");
+      const moved = await postJson(
+        stack,
+        path,
+        { move: "e2e4" },
+        {
+          ...authHeaders,
+          "PAYMENT-SIGNATURE": browserHeader,
+        },
+      );
+      expect(moved.status).toBe(200);
+      expect(await moved.json()).toMatchObject({
+        status: "moved",
+        move: { uci: "e2e4" },
+        debitMicroUsdc: claim.stakeMicroUsdc,
+        txid: expect.stringMatching(/^mocktx_/),
+      });
+      expect(moved.headers.get("PAYMENT-RESPONSE")).not.toBeNull();
+      expect(verify).toHaveBeenCalledWith(
+        browserHeader,
+        expect.objectContaining({ extensions: required.extensions }),
+      );
+      expect(settle).toHaveBeenCalledWith(
+        browserHeader,
+        expect.objectContaining({ extensions: required.extensions }),
+      );
+    } finally {
+      stack.timers.disarmAll();
+      stack.database.sqlite.close();
+    }
+  });
+
   it("release1-gate: seven-ply checkmate settles and resolves once", async () => {
     const stack = await createGateStack();
     try {

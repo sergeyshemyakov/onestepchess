@@ -1,4 +1,10 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
+import {
+  MOVE_RESOURCE_DESCRIPTION,
+  MOVE_RESOURCE_MIME_TYPE,
+  moveBazaarExtensions,
+  X402_GLOBAL_CHALLENGE_TAG,
+} from "@onestepchess/core";
 import type { Hono } from "hono";
 import { type AppEnv, ERROR_STATUS } from "./app.js";
 import { publicApiRoutes } from "./contracts.js";
@@ -183,6 +189,8 @@ const agentKitExamples = {
     x402Version: 2,
     resource: {
       url: "https://osc.example/api/v1/claims/clm_example/move",
+      description: MOVE_RESOURCE_DESCRIPTION,
+      mimeType: MOVE_RESOURCE_MIME_TYPE,
     },
     accepts: [
       {
@@ -192,9 +200,10 @@ const agentKitExamples = {
         amount: "1000",
         payTo: "MOCK_TREASURY",
         maxTimeoutSeconds: 120,
-        extra: {},
+        extra: { tag: X402_GLOBAL_CHALLENGE_TAG },
       },
     ],
+    extensions: moveBazaarExtensions(),
   },
   errors: Object.fromEntries(
     publishedErrors.map((error) => [

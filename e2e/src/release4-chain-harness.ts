@@ -4,12 +4,15 @@ import {
   TESTNET_CAIP2,
   TESTNET_USDC_ASSET,
 } from "@onestepchess/agent-kit";
-import type {
-  DecodeResult,
-  PaymentChallenge,
-  PaymentRail,
-  PreparedPayouts,
-  TxStatus,
+import {
+  type DecodeResult,
+  MOVE_RESOURCE_DESCRIPTION,
+  MOVE_RESOURCE_MIME_TYPE,
+  type PaymentChallenge,
+  type PaymentRail,
+  type PreparedPayouts,
+  type TxStatus,
+  X402_GLOBAL_CHALLENGE_TAG,
 } from "@onestepchess/core";
 import algosdk from "algosdk";
 import { z } from "zod";
@@ -239,8 +242,12 @@ function assertChallenge(
     requirement.amount !== String(input.paymentMicroUsdc) ||
     requirement.payTo !== input.treasuryAddress ||
     challenge.required.resource.url !== input.resourceUrl ||
+    challenge.required.resource.description !== MOVE_RESOURCE_DESCRIPTION ||
+    challenge.required.resource.mimeType !== MOVE_RESOURCE_MIME_TYPE ||
+    !("bazaar" in challenge.required.extensions) ||
     requirement.extra.feePayer !== input.expectedFeePayer ||
-    requirement.extra.decimals !== 6
+    requirement.extra.decimals !== 6 ||
+    requirement.extra.tag !== X402_GLOBAL_CHALLENGE_TAG
   ) {
     throw new Error("live payment challenge does not match the pinned profile");
   }

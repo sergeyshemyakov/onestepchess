@@ -23,6 +23,9 @@ export const TESTNET_CAIP2 =
   "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=";
 export const MAINNET_USDC_ASSET = "31566704";
 export const TESTNET_USDC_ASSET = "10458941";
+const X402_GLOBAL_CHALLENGE_TAG = "x402-global-challenge";
+const MOVE_RESOURCE_DESCRIPTION =
+  "Submit one legal move to an active shared One Step Chess game and receive the committed move and Algorand settlement receipt.";
 
 const NETWORK_LABELS = new Map<string, "mainnet" | "testnet" | "mock">([
   [MAINNET_CAIP2, "mainnet"],
@@ -149,6 +152,16 @@ export function assertTrustedPayment(input: {
     mismatch("resource", input.resourceUrl, input.paymentRequired.resource.url);
   }
   if (
+    input.paymentRequired.resource.description !== MOVE_RESOURCE_DESCRIPTION ||
+    input.paymentRequired.resource.mimeType !== "application/json"
+  ) {
+    mismatch(
+      "resource metadata",
+      `${MOVE_RESOURCE_DESCRIPTION}; application/json`,
+      `${input.paymentRequired.resource.description ?? "missing"}; ${input.paymentRequired.resource.mimeType ?? "missing"}`,
+    );
+  }
+  if (
     requirement.payTo !== input.meta.network.treasuryAddress ||
     (requirement.network !== "mock:local" &&
       !algosdk.isValidAddress(requirement.payTo))
@@ -173,6 +186,13 @@ export function assertTrustedPayment(input: {
     requirement.network === "mock:local";
   if (!assetAllowed || requirement.asset !== input.meta.network.usdcAssetId) {
     mismatch("asset", input.meta.network.usdcAssetId, requirement.asset);
+  }
+  if (requirement.extra.tag !== X402_GLOBAL_CHALLENGE_TAG) {
+    mismatch(
+      "challenge tag",
+      X402_GLOBAL_CHALLENGE_TAG,
+      String(requirement.extra.tag),
+    );
   }
   if (requirement.scheme === "exact") {
     const feePayer = requirement.extra.feePayer;
@@ -327,6 +347,7 @@ async function buildExactPaymentHeader(input: {
     resource: input.paymentRequired.resource,
     accepted: input.requirement as X402PaymentRequirements,
     payload: result.payload,
+    extensions: input.paymentRequired.extensions,
   };
   return encodePaymentSignatureHeader(payload);
 }
@@ -345,6 +366,7 @@ export async function buildPaymentHeader(input: {
     x402Version: 2,
     resource: input.paymentRequired.resource,
     accepted: input.requirement,
+    extensions: input.paymentRequired.extensions,
     payload: {
       from: input.signer.address,
       amountMicroUsdc: Number(input.requirement.amount),

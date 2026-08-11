@@ -1,4 +1,10 @@
-import type { PaymentChallenge } from "@onestepchess/core";
+import {
+  MOVE_RESOURCE_DESCRIPTION,
+  MOVE_RESOURCE_MIME_TYPE,
+  moveBazaarExtensions,
+  type PaymentChallenge,
+  X402_GLOBAL_CHALLENGE_TAG,
+} from "@onestepchess/core";
 import algosdk from "algosdk";
 import type { AvmRailConfig } from "./rail.js";
 
@@ -85,6 +91,7 @@ export type ExactPaymentPayloadFixture = {
   x402Version: 2;
   resource: { url: string; description?: string; mimeType?: string };
   accepted: PaymentChallenge["required"]["accepts"][0];
+  extensions: Readonly<Record<string, unknown>>;
   payload: { paymentGroup: string[]; paymentIndex: number };
 };
 
@@ -127,7 +134,11 @@ export function exactPaymentFixture(args: {
   algosdk.assignGroupID([feeTransaction, paymentTransaction]);
   const payload: ExactPaymentPayloadFixture = {
     x402Version: 2,
-    resource: { url: args.resource ?? CLAIM_URL },
+    resource: {
+      url: args.resource ?? CLAIM_URL,
+      description: MOVE_RESOURCE_DESCRIPTION,
+      mimeType: MOVE_RESOURCE_MIME_TYPE,
+    },
     accepted: {
       scheme: "exact",
       network: caip2,
@@ -135,8 +146,13 @@ export function exactPaymentFixture(args: {
       amount: String(amount),
       payTo: args.treasury,
       maxTimeoutSeconds: 120,
-      extra: { feePayer: args.feePayer, decimals: 6 },
+      extra: {
+        feePayer: args.feePayer,
+        decimals: 6,
+        tag: X402_GLOBAL_CHALLENGE_TAG,
+      },
     },
+    extensions: moveBazaarExtensions(),
     payload: {
       paymentGroup: [
         Buffer.from(algosdk.encodeUnsignedTransaction(feeTransaction)).toString(

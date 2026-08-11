@@ -188,6 +188,7 @@ async function main(): Promise<void> {
       x402Version: 2,
       resource: required.resource,
       accepted: requirement,
+      extensions: required.extensions,
       payload: {
         from: human2.address,
         amountMicroUsdc: Number(requirement.amount),
