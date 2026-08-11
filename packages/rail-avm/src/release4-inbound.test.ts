@@ -1,4 +1,10 @@
-import type { RailError } from "@onestepchess/core";
+import {
+  MOVE_RESOURCE_DESCRIPTION,
+  MOVE_RESOURCE_MIME_TYPE,
+  moveBazaarExtensions,
+  type RailError,
+  X402_GLOBAL_CHALLENGE_TAG,
+} from "@onestepchess/core";
 import algosdk from "algosdk";
 import { describe, expect, it, vi } from "vitest";
 import { createAvmRail } from "./index.js";
@@ -89,7 +95,7 @@ describe("rail-avm Release 4 inbound and query adapter", () => {
     ).toEqual(rotated);
   });
 
-  it("avm_exact_challenge_decode_verify_and_settle_match_release4_fixtures", async () => {
+  it("challenge_identity_wire_tag_survives_payment_required_and_payment_signature", async () => {
     const { config, treasury } = accountConfig();
     const payer = algosdk.generateAccount();
     const feePayer = algosdk.generateAccount().addr.toString();
@@ -121,9 +127,17 @@ describe("rail-avm Release 4 inbound and query adapter", () => {
     expect(
       JSON.parse(Buffer.from(challenge.header, "base64").toString("utf8")),
     ).toEqual(challenge.required);
+    expect(
+      JSON.parse(Buffer.from(challenge.header, "base64").toString("utf8"))
+        .accepts[0].extra.tag,
+    ).toBe(X402_GLOBAL_CHALLENGE_TAG);
     expect(challenge.required).toEqual({
       x402Version: 2,
-      resource: { url: CLAIM_URL },
+      resource: {
+        url: CLAIM_URL,
+        description: MOVE_RESOURCE_DESCRIPTION,
+        mimeType: MOVE_RESOURCE_MIME_TYPE,
+      },
       accepts: [
         {
           scheme: "exact",
@@ -132,9 +146,14 @@ describe("rail-avm Release 4 inbound and query adapter", () => {
           amount: "1000",
           payTo: treasury.addr.toString(),
           maxTimeoutSeconds: 120,
-          extra: { feePayer, decimals: 6 },
+          extra: {
+            feePayer,
+            decimals: 6,
+            tag: X402_GLOBAL_CHALLENGE_TAG,
+          },
         },
       ],
+      extensions: moveBazaarExtensions(),
     });
 
     const payment = exactPaymentFixture({
@@ -143,6 +162,11 @@ describe("rail-avm Release 4 inbound and query adapter", () => {
       treasury: treasury.addr.toString(),
     });
     const decoded = rail.decodePayment(payment.header);
+    expect(
+      JSON.parse(Buffer.from(payment.header, "base64").toString("utf8"))
+        .accepted.extra.tag,
+    ).toBe(X402_GLOBAL_CHALLENGE_TAG);
+    expect(payment.payload.extensions).toEqual(challenge.required.extensions);
     expect(decoded).toEqual({
       ok: true,
       payment: {
@@ -181,6 +205,9 @@ describe("rail-avm Release 4 inbound and query adapter", () => {
         paymentPayload: payment.payload,
         paymentRequirements: challenge.required.accepts[0],
       });
+      expect(body.paymentPayload.extensions).toEqual(
+        challenge.required.extensions,
+      );
     }
   });
 

@@ -10,6 +10,12 @@ import {
   TESTNET_USDC_ASSET,
 } from "@onestepchess/agent-kit";
 import {
+  MOVE_RESOURCE_DESCRIPTION,
+  MOVE_RESOURCE_MIME_TYPE,
+  moveBazaarExtensions,
+  X402_GLOBAL_CHALLENGE_TAG,
+} from "@onestepchess/core";
+import {
   createAvmRail,
   mapSettleFailure,
   mapVerifyFailure,
@@ -71,7 +77,11 @@ function harnessFixture(input: Release4ChainHarnessInput) {
   const challenge = {
     required: {
       x402Version: 2 as const,
-      resource: { url: input.resourceUrl },
+      resource: {
+        url: input.resourceUrl,
+        description: MOVE_RESOURCE_DESCRIPTION,
+        mimeType: MOVE_RESOURCE_MIME_TYPE,
+      },
       accepts: [
         {
           scheme: "exact",
@@ -83,9 +93,11 @@ function harnessFixture(input: Release4ChainHarnessInput) {
           extra: {
             feePayer: input.expectedFeePayer,
             decimals: 6,
+            tag: X402_GLOBAL_CHALLENGE_TAG,
           },
         },
       ] as const,
+      extensions: moveBazaarExtensions(),
     },
     header: "fixture-required",
   };
@@ -431,7 +443,11 @@ it("captured_release4_shapes_roundtrip_through_rail_web_and_agent_guards", async
   const resourceUrl = "https://osc.example/api/v1/claims/release4-fixture/move";
   const required = paymentRequiredSchema.parse({
     x402Version: 2,
-    resource: { url: resourceUrl },
+    resource: {
+      url: resourceUrl,
+      description: MOVE_RESOURCE_DESCRIPTION,
+      mimeType: MOVE_RESOURCE_MIME_TYPE,
+    },
     accepts: [
       {
         scheme: "exact",
@@ -440,9 +456,14 @@ it("captured_release4_shapes_roundtrip_through_rail_web_and_agent_guards", async
         amount: "1000",
         payTo: treasury.addr.toString(),
         maxTimeoutSeconds: 120,
-        extra: { feePayer: feePayer.addr.toString(), decimals: 6 },
+        extra: {
+          feePayer: feePayer.addr.toString(),
+          decimals: 6,
+          tag: X402_GLOBAL_CHALLENGE_TAG,
+        },
       },
     ],
+    extensions: moveBazaarExtensions(),
   });
   const requiredHeader = Buffer.from(JSON.stringify(required)).toString(
     "base64",

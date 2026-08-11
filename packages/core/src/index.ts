@@ -12,6 +12,7 @@ export * from "./matchmaking/ranking.js";
 export * from "./matchmaking/terms.js";
 export * from "./payout/golden.js";
 export * from "./payout/resolve.js";
+export * from "./rail/discovery.js";
 export * from "./rail/port.js";
 export * from "./rng.js";
 export * from "./types.js";

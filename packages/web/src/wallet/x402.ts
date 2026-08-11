@@ -16,6 +16,10 @@ import type {
 import { paymentRequiredSchema } from "../api/schemas.js";
 import type { ConnectedWallet } from "./provider.js";
 
+const X402_GLOBAL_CHALLENGE_TAG = "x402-global-challenge";
+const MOVE_RESOURCE_DESCRIPTION =
+  "Submit one legal move to an active shared One Step Chess game and receive the committed move and Algorand settlement receipt.";
+
 // §5.6 — the explicit x402 client. The mock branch (rail spec §5.4) is a
 // pinned wire contract implemented from the spec: it synthesizes the V2
 // payload and never loads wallet code or signs anything. `exact` is real
@@ -101,6 +105,12 @@ export function validateChallenge(
       reason: "challenge resource is not this claim's move URL",
     };
   }
+  if (
+    required.resource.description !== MOVE_RESOURCE_DESCRIPTION ||
+    required.resource.mimeType !== "application/json"
+  ) {
+    return { ok: false, reason: "challenge resource metadata is invalid" };
+  }
   if (requirement.amount !== String(args.stakeMicroUsdc)) {
     return {
       ok: false,
@@ -121,6 +131,9 @@ export function validateChallenge(
       ok: false,
       reason: "challenge network is not the runtime network",
     };
+  }
+  if (requirement.extra?.tag !== X402_GLOBAL_CHALLENGE_TAG) {
+    return { ok: false, reason: "challenge tag is invalid" };
   }
   if (requirement.scheme === "exact") {
     const feePayer = requirement.extra?.feePayer;
@@ -268,6 +281,7 @@ async function buildExactHeader(input: {
     resource: input.required.resource,
     accepted: input.requirement as X402PaymentRequirements,
     payload: built.payload,
+    extensions: input.required.extensions,
   };
   return encodePaymentSignatureHeader(payload);
 }
@@ -347,6 +361,7 @@ export function synthesizeMockHeader(args: {
     x402Version: 2,
     resource: args.required.resource,
     accepted: args.requirement,
+    extensions: args.required.extensions,
     payload: {
       from: args.from,
       amountMicroUsdc: Number(args.requirement.amount),

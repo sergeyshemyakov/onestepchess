@@ -5,6 +5,7 @@ import {
   BudgetGuard,
   buildPaymentHeader,
   createOscClient,
+  decodePaymentRequired,
   type Meta,
   type PaymentRequired,
   type Signer,
@@ -17,6 +18,8 @@ const payer = algosdk.generateAccount();
 const treasury = algosdk.generateAccount();
 const feePayer = algosdk.generateAccount();
 const moveUrl = "https://osc.example/api/v1/claims/clm_pay/move";
+const MOVE_DESCRIPTION =
+  "Submit one legal move to an active shared One Step Chess game and receive the committed move and Algorand settlement receipt.";
 const claim = {
   claimId: "clm_pay",
   yourSide: "white" as const,
@@ -36,6 +39,28 @@ const receipt = {
   fenAfterYourMove:
     "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
 };
+
+function paymentExtensions() {
+  return {
+    bazaar: {
+      info: {
+        input: {
+          type: "http" as const,
+          method: "POST" as const,
+          bodyType: "json" as const,
+          body: { move: "e2e4" },
+        },
+        output: { type: "json" as const, example: receipt },
+      },
+      schema: {
+        type: "object" as const,
+        properties: { input: {}, output: {} },
+        required: ["input", "output"],
+        additionalProperties: false as const,
+      },
+    },
+  };
+}
 const mockMeta: Meta = {
   name: "One Step Chess",
   network: {
@@ -79,7 +104,11 @@ function paymentRequired(
 ): PaymentRequired {
   return {
     x402Version: 2,
-    resource: { url: moveUrl },
+    resource: {
+      url: moveUrl,
+      description: MOVE_DESCRIPTION,
+      mimeType: "application/json",
+    },
     accepts: [
       {
         scheme: "mock",
@@ -88,10 +117,11 @@ function paymentRequired(
         amount: "1000",
         payTo: treasury.addr.toString(),
         maxTimeoutSeconds: 120,
-        extra: {},
+        extra: { tag: "x402-global-challenge" },
         ...changes,
       },
     ],
+    extensions: paymentExtensions(),
   };
 }
 
@@ -396,6 +426,7 @@ describe("agent-kit payments and budgets", () => {
       x402Version: 2,
       resource: required.resource,
       accepted: required.accepts[0],
+      extensions: required.extensions,
       payload: {
         from: payer.addr.toString(),
         amountMicroUsdc: 1000,
@@ -406,6 +437,45 @@ describe("agent-kit payments and budgets", () => {
     });
     expect(`mockpay_${decoded.payload.nonce}`).toBe("mockpay_fixture-nonce");
     expect(signing).not.toHaveBeenCalled();
+  });
+
+  it("agent_bazaar_metadata_is_rejected_when_malformed_and_preserved_when_valid", async () => {
+    const valid = paymentRequired();
+    const extended = structuredClone(valid) as unknown as {
+      extensions: {
+        bazaar: {
+          futureBazaarField?: string;
+          info: { input: { futureInputField?: string } };
+        };
+      };
+    };
+    extended.extensions.bazaar.futureBazaarField = "preserve-me";
+    extended.extensions.bazaar.info.input.futureInputField = "preserve-me-too";
+    const decoded = decodePaymentRequired(b64(extended));
+    expect(decoded.extensions).toMatchObject({
+      bazaar: {
+        futureBazaarField: "preserve-me",
+        info: { input: { futureInputField: "preserve-me-too" } },
+      },
+    });
+
+    const header = await buildPaymentHeader({
+      paymentRequired: decoded,
+      requirement: decoded.accepts[0],
+      signer: accountSigner(),
+      nonce: () => "bazaar-preservation",
+    });
+    expect(
+      JSON.parse(Buffer.from(header, "base64").toString("utf8")).extensions,
+    ).toEqual(decoded.extensions);
+
+    const malformed = structuredClone(valid) as unknown as {
+      extensions: { bazaar: { info: { input: { method: string } } } };
+    };
+    malformed.extensions.bazaar.info.input.method = "GET";
+    expect(() => decodePaymentRequired(b64(malformed))).toThrowError(
+      expect.objectContaining({ code: "NETWORK_MISMATCH" }),
+    );
   });
 
   it("agent_budget_and_payment_cache_survive_every_exact_retry_branch_without_double_reservation_or_resign", async () => {
@@ -537,7 +607,11 @@ describe("agent-kit payments and budgets", () => {
     };
     const required: PaymentRequired = {
       x402Version: 2,
-      resource: { url: moveUrl },
+      resource: {
+        url: moveUrl,
+        description: MOVE_DESCRIPTION,
+        mimeType: "application/json",
+      },
       accepts: [
         {
           scheme: "exact",
@@ -546,9 +620,14 @@ describe("agent-kit payments and budgets", () => {
           amount: "1000",
           payTo: treasury.addr.toString(),
           maxTimeoutSeconds: 120,
-          extra: { feePayer: feePayer.addr.toString(), decimals: 6 },
+          extra: {
+            feePayer: feePayer.addr.toString(),
+            decimals: 6,
+            tag: "x402-global-challenge",
+          },
         },
       ],
+      extensions: paymentExtensions(),
     };
     const suggested = {
       fee: 1000,

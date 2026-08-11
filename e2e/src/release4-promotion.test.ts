@@ -295,7 +295,7 @@ function releaseNotes() {
       packages: [
         {
           name: "@onestepchess/agent-kit",
-          version: "0.2.0",
+          version: "0.2.1",
           sha256: shaA,
         },
       ],

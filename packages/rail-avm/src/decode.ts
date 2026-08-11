@@ -20,6 +20,7 @@ const exactPaymentPayloadSchema = z.object({
     mimeType: z.string().optional(),
   }),
   accepted: requirementsSchema,
+  extensions: z.record(z.string(), z.unknown()),
   payload: z.object({
     paymentGroup: z.array(z.string()).min(1).max(16),
     paymentIndex: z.number().int().nonnegative(),

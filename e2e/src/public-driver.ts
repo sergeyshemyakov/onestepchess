@@ -244,6 +244,7 @@ export function createPublicHumanDriver(
           x402Version: 2,
           resource: paymentRequired.resource,
           accepted,
+          extensions: paymentRequired.extensions,
           payload: {
             from: address,
             amountMicroUsdc: Number(accepted.amount),

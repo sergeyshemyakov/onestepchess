@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { isDeepStrictEqual } from "node:util";
 import type {
   DecodeResult,
   PaymentChallenge,
@@ -20,8 +21,9 @@ type MockPayload = {
 
 type MockPaymentSignature = {
   readonly x402Version: 2;
-  readonly resource: { readonly url: string };
+  readonly resource: PaymentRequired["resource"];
   readonly accepted: PaymentRequirements;
+  readonly extensions: Readonly<Record<string, unknown>>;
   readonly payload: MockPayload;
 };
 
@@ -54,11 +56,14 @@ function parseMockSignature(value: unknown): MockPaymentSignature | null {
   if (!isRecord(value) || value.x402Version !== 2) {
     return null;
   }
-  const { resource, accepted, payload } = value;
+  const { resource, accepted, extensions, payload } = value;
   if (
     !isRecord(resource) ||
     !isNonEmptyString(resource.url) ||
+    !isNonEmptyString(resource.description) ||
+    resource.mimeType !== "application/json" ||
     !isPaymentRequirements(accepted) ||
+    !isRecord(extensions) ||
     !isRecord(payload) ||
     !isNonEmptyString(payload.from) ||
     !Number.isSafeInteger(payload.amountMicroUsdc) ||
@@ -123,6 +128,9 @@ export function matchesMockPaymentRequirement(
     const accepted = required.accepts[0];
     return (
       signature.resource.url === required.resource.url &&
+      signature.resource.description === required.resource.description &&
+      signature.resource.mimeType === required.resource.mimeType &&
+      isDeepStrictEqual(signature.extensions, required.extensions) &&
       signature.accepted.scheme === accepted.scheme &&
       signature.accepted.network === accepted.network &&
       signature.accepted.asset === accepted.asset &&
@@ -162,6 +170,7 @@ export function buildMockHeader(input: {
     x402Version: 2,
     resource: input.challenge.required.resource,
     accepted,
+    extensions: input.challenge.required.extensions,
     payload: {
       from: input.from,
       amountMicroUsdc,

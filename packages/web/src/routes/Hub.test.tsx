@@ -27,6 +27,59 @@ import { resetHeaderCacheForTests } from "../wallet/x402.js";
 import { Hub } from "./Hub.jsx";
 import { playCtaState } from "./hubCta.js";
 
+function mockChallenge(amount: string): string {
+  return btoa(
+    JSON.stringify({
+      x402Version: 2,
+      resource: {
+        url: "http://localhost:3000/api/v1/claims/clm_test1/move",
+        description:
+          "Submit one legal move to an active shared One Step Chess game and receive the committed move and Algorand settlement receipt.",
+        mimeType: "application/json",
+      },
+      accepts: [
+        {
+          scheme: "mock",
+          network: "mock:local",
+          asset: "31566704",
+          amount,
+          payTo: "TREASURY",
+          maxTimeoutSeconds: 120,
+          extra: { tag: "x402-global-challenge" },
+        },
+      ],
+      extensions: {
+        bazaar: {
+          info: {
+            input: {
+              type: "http",
+              method: "POST",
+              bodyType: "json",
+              body: { move: "e2e4" },
+            },
+            output: {
+              type: "json",
+              example: {
+                status: "moved",
+                move: { uci: "e2e4", san: "e4" },
+                debitMicroUsdc: 10_000,
+                txid: "mocktx_9",
+                explorerUrl: "https://explorer.example/tx/mocktx_9",
+                fenAfterYourMove: "after",
+              },
+            },
+          },
+          schema: {
+            type: "object",
+            properties: { input: {}, output: {} },
+            required: ["input", "output"],
+          },
+        },
+      },
+    }),
+  );
+}
+
 afterEach(() => {
   cleanup();
   sessionStorage.clear();
@@ -197,21 +250,7 @@ describe("I7 leak tests (#31)", () => {
       txid: "mocktx_9",
       explorerUrl: "https://explorer.example/tx/mocktx_9",
     };
-    const challenge = btoa(
-      JSON.stringify({
-        x402Version: 2,
-        resource: { url: "http://localhost:3000/api/v1/claims/clm_test1/move" },
-        accepts: [
-          {
-            scheme: "mock",
-            network: "mock:local",
-            asset: "31566704",
-            amount: "10000",
-            payTo: "TREASURY",
-          },
-        ],
-      }),
-    );
+    const challenge = mockChallenge("10000");
     const script: PostMoveResult[] = [
       {
         kind: "payment_required",
@@ -371,21 +410,7 @@ describe("edge states (#31, F-W10 rows)", () => {
 });
 
 describe("payment edge-state matrix (#32, F-W10 rows)", () => {
-  const challenge = btoa(
-    JSON.stringify({
-      x402Version: 2,
-      resource: { url: "http://localhost:3000/api/v1/claims/clm_test1/move" },
-      accepts: [
-        {
-          scheme: "mock",
-          network: "mock:local",
-          asset: "31566704",
-          amount: "10000",
-          payTo: "TREASURY",
-        },
-      ],
-    }),
-  );
+  const challenge = mockChallenge("10000");
   const paymentRequired: PostMoveResult = {
     kind: "payment_required",
     challengeHeader: challenge,

@@ -29,6 +29,48 @@ const meta = {
 } as Meta;
 
 const MAINNET_CAIP2 = "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=";
+const MOVE_DESCRIPTION =
+  "Submit one legal move to an active shared One Step Chess game and receive the committed move and Algorand settlement receipt.";
+
+function paymentResource(url: string) {
+  return {
+    url,
+    description: MOVE_DESCRIPTION,
+    mimeType: "application/json" as const,
+  };
+}
+
+function paymentExtensions() {
+  return {
+    bazaar: {
+      info: {
+        input: {
+          type: "http" as const,
+          method: "POST" as const,
+          bodyType: "json" as const,
+          body: { move: "e2e4" },
+        },
+        output: {
+          type: "json" as const,
+          example: {
+            status: "moved" as const,
+            move: { uci: "e2e4", san: "e4" },
+            debitMicroUsdc: 1_000,
+            txid: "TXID",
+            explorerUrl: "https://explorer.example/tx/TXID",
+            fenAfterYourMove: "after",
+          },
+        },
+      },
+      schema: {
+        type: "object" as const,
+        properties: { input: {}, output: {} },
+        required: ["input", "output"],
+        additionalProperties: false as const,
+      },
+    },
+  };
+}
 
 const requirement = {
   scheme: "mock",
@@ -37,7 +79,7 @@ const requirement = {
   amount: "1000",
   payTo: "TREASURY",
   maxTimeoutSeconds: 120,
-  extra: {},
+  extra: { tag: "x402-global-challenge" },
 };
 
 function challengeB64(
@@ -47,8 +89,11 @@ function challengeB64(
   return btoa(
     JSON.stringify({
       x402Version: 2,
-      resource: { url: "http://localhost:3000/api/v1/claims/clm_1/move" },
+      resource: paymentResource(
+        "http://localhost:3000/api/v1/claims/clm_1/move",
+      ),
       accepts: [{ ...requirement, ...req }],
+      extensions: paymentExtensions(),
       ...overrides,
     }),
   );
@@ -98,8 +143,11 @@ describe("challenge validation matrix (#32)", () => {
     const bad = btoa(
       JSON.stringify({
         x402Version: 2,
-        resource: { url: "http://localhost:3000/api/v1/claims/other/move" },
+        resource: paymentResource(
+          "http://localhost:3000/api/v1/claims/other/move",
+        ),
         accepts: [requirement],
+        extensions: paymentExtensions(),
       }),
     );
     expect(validateChallenge(bad, validArgs)).toMatchObject({
@@ -112,8 +160,11 @@ describe("challenge validation matrix (#32)", () => {
     const bad = btoa(
       JSON.stringify({
         x402Version: 2,
-        resource: { url: "http://localhost:3000/api/v1/claims/clm_1/move" },
+        resource: paymentResource(
+          "http://localhost:3000/api/v1/claims/clm_1/move",
+        ),
         accepts: [requirement, requirement],
+        extensions: paymentExtensions(),
       }),
     );
     expect(validateChallenge(bad, validArgs)).toMatchObject({
@@ -129,6 +180,35 @@ describe("challenge validation matrix (#32)", () => {
       ok: false,
       reason: expect.stringContaining("V2"),
     });
+  });
+
+  it("browser_bazaar_metadata_is_rejected_when_malformed_and_preserved_when_valid", () => {
+    const extended = paymentExtensions();
+    const bazaar = extended.bazaar as typeof extended.bazaar & {
+      futureBazaarField?: string;
+    };
+    bazaar.futureBazaarField = "preserve-me";
+    const valid = challengeB64({ extensions: extended });
+    const parsed = validateChallenge(valid, validArgs);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) throw new Error(parsed.reason);
+    const signed = JSON.parse(
+      atob(
+        synthesizeMockHeader({
+          required: parsed.required,
+          requirement: parsed.requirement,
+          from: "PLAYER",
+        }),
+      ),
+    );
+    expect(signed.extensions).toEqual(parsed.required.extensions);
+    expect(signed.extensions.bazaar.futureBazaarField).toBe("preserve-me");
+
+    const malformed = paymentExtensions();
+    (malformed.bazaar.info.input as { method: string }).method = "GET";
+    expect(
+      validateChallenge(challengeB64({ extensions: malformed }), validArgs).ok,
+    ).toBe(false);
   });
 });
 
@@ -149,13 +229,18 @@ it("t1_fixtures_are_consumed_by_web_payment_guards", () => {
     amount: "1000",
     payTo: address,
     maxTimeoutSeconds: 120,
-    extra: { feePayer: address, decimals: 6 },
+    extra: {
+      feePayer: address,
+      decimals: 6,
+      tag: "x402-global-challenge",
+    },
   };
   const fixture = btoa(
     JSON.stringify({
       x402Version: 2,
-      resource: { url: "https://osc.example/api/v1/claims/clm_1/move" },
+      resource: paymentResource("https://osc.example/api/v1/claims/clm_1/move"),
       accepts: [fixtureRequirement],
+      extensions: paymentExtensions(),
     }),
   );
   const args = { ...validArgs, meta: exactMeta };
@@ -169,8 +254,11 @@ it("t1_fixtures_are_consumed_by_web_payment_guards", () => {
     const mutated = btoa(
       JSON.stringify({
         x402Version: 2,
-        resource: { url: "https://osc.example/api/v1/claims/clm_1/move" },
+        resource: paymentResource(
+          "https://osc.example/api/v1/claims/clm_1/move",
+        ),
         accepts: [{ ...fixtureRequirement, ...mutation }],
+        extensions: paymentExtensions(),
       }),
     );
     expect(validateChallenge(mutated, args).ok).toBe(false);
@@ -243,8 +331,11 @@ describe("mock branch (#32)", () => {
     const args = {
       required: {
         x402Version: 2 as const,
-        resource: { url: "http://localhost:3000/api/v1/claims/clm_1/move" },
+        resource: paymentResource(
+          "http://localhost:3000/api/v1/claims/clm_1/move",
+        ),
         accepts: [requirement],
+        extensions: paymentExtensions(),
       },
       requirement,
       from: "PLAYER",
@@ -268,6 +359,7 @@ describe("mock branch (#32)", () => {
               feePayer:
                 "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ",
               decimals: 6,
+              tag: "x402-global-challenge",
             },
           },
         ),
@@ -361,7 +453,11 @@ function exactRequirement(
     amount: "1000",
     payTo: treasury.addr.toString(),
     maxTimeoutSeconds: 120,
-    extra: { feePayer: feePayer.addr.toString(), decimals: 6 },
+    extra: {
+      feePayer: feePayer.addr.toString(),
+      decimals: 6,
+      tag: "x402-global-challenge",
+    },
     ...overrides,
   };
 }
@@ -373,8 +469,9 @@ function exactChallenge(
   return btoa(
     JSON.stringify({
       x402Version: 2,
-      resource: { url: "https://osc.example/api/v1/claims/clm_1/move" },
+      resource: paymentResource("https://osc.example/api/v1/claims/clm_1/move"),
       accepts: [exactRequirement(requirementOverrides)],
+      extensions: paymentExtensions(),
       ...requiredOverrides,
     }),
   );
@@ -682,7 +779,11 @@ it("web_exact_payment_rebuilds_at_most_once_after_validity_or_fee_payer_expiry",
     paymentRequired(exactChallenge()),
     invalid(
       exactChallenge({
-        extra: { feePayer: rotatedFeePayer, decimals: 6 },
+        extra: {
+          feePayer: rotatedFeePayer,
+          decimals: 6,
+          tag: "x402-global-challenge",
+        },
       }),
     ),
     invalid(exactChallenge()),

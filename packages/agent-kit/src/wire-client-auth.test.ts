@@ -249,6 +249,9 @@ describe("agent-kit wire client and authentication", () => {
       x402Version: 2 as const,
       resource: {
         url: "https://osc.example/api/v1/claims/clm_fixture/move",
+        description:
+          "Submit one legal move to an active shared One Step Chess game and receive the committed move and Algorand settlement receipt.",
+        mimeType: "application/json",
       },
       accepts: [
         {
@@ -258,9 +261,28 @@ describe("agent-kit wire client and authentication", () => {
           amount: "1000",
           payTo: treasury.addr.toString(),
           maxTimeoutSeconds: 120,
-          extra: {},
+          extra: { tag: "x402-global-challenge" },
         },
       ],
+      extensions: {
+        bazaar: {
+          info: {
+            input: {
+              type: "http",
+              method: "POST",
+              bodyType: "json",
+              body: { move: "e2e4" },
+            },
+            output: { type: "json", example: receipt },
+          },
+          schema: {
+            type: "object",
+            properties: { input: {}, output: {} },
+            required: ["input", "output"],
+            additionalProperties: false,
+          },
+        },
+      },
     };
     const fixtures = [
       [claimViewSchema, claim],
