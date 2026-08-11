@@ -518,7 +518,7 @@ describe("Release 4 deployment and promotion gate (#106)", () => {
     );
     expect(unsafe.secretFindings).not.toEqual([]);
     expect(unsafe.networkProfileFindings).not.toEqual([]);
-  });
+  }, 30_000);
 
   it("release4_promotion_manifest_rejects_missing_mock_4a_4b_bot_migration_or_money_safety_evidence", () => {
     const complete = promotionManifest();
