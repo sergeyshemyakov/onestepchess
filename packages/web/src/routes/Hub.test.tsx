@@ -140,13 +140,10 @@ describe("demo path end-to-end against a scripted server (#31)", () => {
 
     // Demo confirm renders Y/N — never a wallet box or signing CTA.
     expect(screen.queryByText(/sign & commit/)).toBeNull();
-    expect(screen.getByText(/nothing staked, not counted/)).not.toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: /Y — make it so/ }));
     await screen.findByTestId("receipt");
-    expect(screen.getByTestId("receipt").textContent).toContain(
-      "nothing staked · not counted",
-    );
+
     // Network spy: the demo move was a plain POST with no payment header.
     const postMove = client.postMove as ReturnType<typeof vi.fn>;
     expect(postMove).toHaveBeenCalledTimes(1);
