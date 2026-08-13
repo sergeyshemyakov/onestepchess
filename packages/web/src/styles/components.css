@@ -85,6 +85,11 @@ a.btn {
   cursor: pointer;
   padding: 14px 30px 12px;
   min-width: 340px;
+  text-decoration: none;
+  transition:
+    background 0.18s ease,
+    box-shadow 0.18s ease,
+    border-color 0.18s ease;
 }
 .ctas .bigplay,
 .hub-actions .bigplay {
@@ -145,6 +150,21 @@ a.btn {
   .bigplay.pulse {
     animation: none;
     background: var(--faint);
+  }
+}
+/* Gentler than .pulse: breathes the primary CTA's existing glow instead of
+ * flashing the background, so it draws the eye without nagging. */
+.bigplay.pulse-soft {
+  animation: pulseglow-soft 2.2s ease-in-out infinite;
+}
+@keyframes pulseglow-soft {
+  50% {
+    box-shadow: 0 0 26px color-mix(in oklab, var(--ph) 34%, transparent);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bigplay.pulse-soft {
+    animation: none;
   }
 }
 
@@ -1618,17 +1638,37 @@ body.fx .admin-shell svg.pc {
 .ctas {
   display: grid;
   grid-auto-rows: 1fr;
-  gap: 12px;
-  margin-top: 16px;
+  gap: 16px;
+  margin-top: 20px;
+  max-width: 470px;
 }
 .ctas .bigplay {
   width: 100%;
   min-width: 0;
+  padding: 15px 22px 13px;
+  gap: 4px;
+  justify-content: center;
+}
+.ctas .bp-title {
+  font-size: 27px;
+}
+.ctas .bigplay:hover {
+  border-color: var(--ph-hi);
+}
+.ctas .bigplay:active {
+  transform: translateY(1px);
 }
 @media (max-width: 768px) {
   .landsplit {
     grid-template-columns: 1fr;
     padding: 16px 14px 4px;
+  }
+  /* Rows stay auto on phones: a wrapped title would stretch every button. */
+  .ctas {
+    grid-auto-rows: auto;
+  }
+  .ctas .bp-title {
+    font-size: 23px;
   }
 }
 .tabrow {

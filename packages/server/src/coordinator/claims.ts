@@ -240,6 +240,9 @@ function moveClaim(
   );
 }
 
+/** How soon a blocked expiry re-checks whether its in-flight intent resolved. */
+const CLAIM_EXPIRY_RETRY_MS = 5_000;
+
 function expireClaimIfDue(
   deps: ClaimDeps,
   ctx: import("./queue.js").CommandContext,
@@ -261,7 +264,22 @@ function expireClaimIfDue(
       ),
     )
     .get();
-  if (!claimExpiryDue(claim, intent !== undefined, ctx.now)) return false;
+  if (!claimExpiryDue(claim, intent !== undefined, ctx.now)) {
+    // A claim past its deadline with an in-flight intent must wait for
+    // payment recovery, but the deadline timer has already fired — without a
+    // retry the claim would stay open forever once the intent resolves.
+    if (
+      claim.status === "open" &&
+      ctx.now >= claim.deadline &&
+      intent !== undefined
+    ) {
+      const retryAt = ctx.now + CLAIM_EXPIRY_RETRY_MS;
+      ctx.afterCommit(() => {
+        deps.timers.arm("claimDeadline", claim.id, retryAt);
+      });
+    }
+    return false;
+  }
   deps.db
     .update(schema.claims)
     .set({ status: "expired" })
@@ -497,23 +515,27 @@ export function registerClaimCommands(deps: ClaimDeps): void {
         deps.views.quota.get(payload.player)?.[
           payload.demo ? "demo" : "staked"
         ] ?? [];
+      // Staked human claims are uncapped (playtest feedback) — a per-player
+      // quotaOverride remains the admin tool to restrict a specific player.
       const limit = payload.demo
         ? config.QUOTA_DEMO
         : (player?.quotaOverride ??
-          (payload.kind === "agent" ? config.QUOTA_AGENT : config.QUOTA_HUMAN));
-      const quota = rollingWindowCheck({
-        eventTimestamps: timestamps,
-        limit,
-        windowSeconds: 3600,
-        now: ctx.now,
-      });
-      if (!quota.ok)
-        return {
-          claim: null,
-          created: false,
-          retryAfterSeconds: quota.retryAfterSeconds,
-          quota: true,
-        };
+          (payload.kind === "agent" ? config.QUOTA_AGENT : null));
+      if (limit !== null) {
+        const quota = rollingWindowCheck({
+          eventTimestamps: timestamps,
+          limit,
+          windowSeconds: 3600,
+          now: ctx.now,
+        });
+        if (!quota.ok)
+          return {
+            claim: null,
+            created: false,
+            retryAfterSeconds: quota.retryAfterSeconds,
+            quota: true,
+          };
+      }
       const games = [...deps.views.games.values()].map((game) => ({
         ...game,
         hasOpenClaim: deps.views.openClaimByGame.has(game.id),
@@ -532,7 +554,11 @@ export function registerClaimCommands(deps: ClaimDeps): void {
         payload.kind === "agent" &&
         !agentMayClaim(
           game,
-          humanBoardCapacity(games, config.HUMAN_BOARD_RESERVE_PERCENT),
+          humanBoardCapacity(
+            games,
+            config.HUMAN_BOARD_RESERVE_PERCENT,
+            ctx.now,
+          ),
         )
       ) {
         return { claim: null, created: false, retryAfterSeconds: 1 };
@@ -750,15 +776,17 @@ export function registerClaimCommands(deps: ClaimDeps): void {
       // move (F15 step 4) — after moveClaim has written this move's stake entry,
       // so the count includes it. Same transaction; never touches payouts (I11).
       const cfg = deps.config();
-      maybeAwardReferral(
-        deps.db,
-        ctx.now,
-        {
-          referralQualifyMoves: cfg.REFERRAL_QUALIFY_MOVES,
-          referralPoints: cfg.REFERRAL_POINTS,
-        },
-        payload.player,
-      );
+      if (cfg.POINTS_ENABLED) {
+        maybeAwardReferral(
+          deps.db,
+          ctx.now,
+          {
+            referralQualifyMoves: cfg.REFERRAL_QUALIFY_MOVES,
+            referralPoints: cfg.REFERRAL_POINTS,
+          },
+          payload.player,
+        );
+      }
       if (deps.publicStats !== undefined) {
         // Public stats (F16): every settled staked move; human ones also count
         // toward humanMoves. The player-row kind is authoritative.

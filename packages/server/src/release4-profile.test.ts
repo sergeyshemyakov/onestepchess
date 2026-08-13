@@ -404,12 +404,13 @@ describe("Release 4 server profiles and immutable identity (#97)", () => {
         .all(),
     ).toHaveLength(1);
 
+    // A status-query outage no longer aborts the sweep: the intent is left
+    // settling and the sweep asks to be re-run instead of throwing, so one
+    // unrecoverable intent cannot block recovery of the others.
     const outage = recoveryStack(2_000);
     await outage.seed();
     outage.rail.control.failQueries(["status"]);
-    await expect(recoverSettlingIntents(outage)).rejects.toThrow(
-      /unavailable/i,
-    );
+    expect(await recoverSettlingIntents(outage)).toBe(outage.now() + 1_000);
     expect(outage.db.select().from(schema.paymentIntents).get()?.status).toBe(
       "settling",
     );

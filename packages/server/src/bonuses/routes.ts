@@ -6,7 +6,10 @@ import type { Coordinator } from "../coordinator/queue.js";
 import type { Db } from "../db/open.js";
 import { schema } from "../db/open.js";
 import { type AppEnv, AppError } from "../http/app.js";
-import { bonusOptInBodySchema } from "../http/contracts.js";
+import {
+  bonusOptInBodySchema,
+  bonusSweepBodySchema,
+} from "../http/contracts.js";
 import { clientIp } from "../http/middleware/client-ip.js";
 import { type SessionAuthDeps, sessionAuth } from "../http/routes/auth.js";
 import { parseJsonBody } from "../http/validation.js";
@@ -16,6 +19,7 @@ import {
   hasSufficientBalancesForStarterStake,
 } from "./lifecycle.js";
 import { isSafeBonusOptIn } from "./optin.js";
+import { isSafeBonusSweep } from "./sweep.js";
 
 export type BonusRouteDeps = SessionAuthDeps & {
   readonly coordinator: Coordinator;
@@ -182,5 +186,101 @@ export function registerBonusRoutes(
       });
     }
     return c.json({ status: "watching" as const }, 202);
+  });
+
+  // A returned welcome bonus sweeps the wallet, so the sweep pair is limited
+  // to players with a starter stake on record — any status: the ALGO leg can
+  // arrive before the USDC opt-in completes.
+  const sweepEligible = (player: string): void => {
+    const row = deps.db
+      .select({ status: schema.bonuses.status })
+      .from(schema.bonuses)
+      .where(eq(schema.bonuses.player, player))
+      .get();
+    if (row === undefined) {
+      throw new AppError("BONUS_NOT_ELIGIBLE", {
+        hint: "only wallets with a starter stake can return one",
+      });
+    }
+  };
+
+  app.get("/api/v1/my/bonus/sweep-txns", auth, async (c) => {
+    const session = c.get("session");
+    if (session.kind !== "human") {
+      throw new AppError("BONUS_NOT_ELIGIBLE", {
+        hint: "starter stakes are available to eligible humans only",
+      });
+    }
+    sweepEligible(session.address);
+    try {
+      return c.json(await deps.rail.buildSweepTxns(session.address));
+    } catch {
+      throw new AppError("DEPENDENCY_UNAVAILABLE", {
+        hint: "unable to build the bonus-return transactions; retry shortly",
+        retryAfterSeconds: 5,
+      });
+    }
+  });
+
+  app.post("/api/v1/my/bonus/sweep", auth, async (c) => {
+    const session = c.get("session");
+    if (session.kind !== "human") {
+      throw new AppError("BONUS_NOT_ELIGIBLE", {
+        hint: "starter stakes are available to eligible humans only",
+      });
+    }
+    sweepEligible(session.address);
+    const body = await parseJsonBody(
+      bonusSweepBodySchema,
+      c.req,
+      "signedTxnsB64 is required",
+    );
+    const legs = body.signedTxnsB64.map((signed) => ({
+      signed,
+      verdict: isSafeBonusSweep(
+        signed,
+        session.address,
+        deps.rail.bonusAddress,
+        deps.config(),
+      ),
+    }));
+    if (
+      legs.some(({ verdict }) => !verdict.ok) ||
+      new Set(legs.map(({ verdict }) => (verdict.ok ? verdict.leg : "")))
+        .size !== legs.length
+    ) {
+      throw new AppError("SWEEP_INVALID", {
+        hint: "signed transactions are not the exact requested bonus return",
+      });
+    }
+    // USDC first: its flat fee is budgeted by the ALGO leg's amount, so the
+    // reverse order could strand the asset transfer without fee cover.
+    const rank = (verdict: (typeof legs)[number]["verdict"]): number =>
+      verdict.ok && verdict.leg === "usdc" ? 0 : 1;
+    legs.sort((left, right) => rank(left.verdict) - rank(right.verdict));
+    const txids: { leg: "algo" | "usdc"; txid: string }[] = [];
+    for (const { signed, verdict } of legs) {
+      if (!verdict.ok) continue;
+      const result = await deps.rail.submitSignedTransaction(signed);
+      if (!result.ok) {
+        const partial =
+          txids.length === 0
+            ? ""
+            : " — the other leg was already submitted; refetch the quote before retrying";
+        if (result.reason === "rejected") {
+          throw new AppError("SWEEP_INVALID", {
+            hint: `${
+              result.detail?.slice(0, 400) ?? "algod rejected the bonus return"
+            }${partial}`,
+          });
+        }
+        throw new AppError("DEPENDENCY_UNAVAILABLE", {
+          hint: `unable to relay the bonus return; retry shortly${partial}`,
+          retryAfterSeconds: 5,
+        });
+      }
+      txids.push({ leg: verdict.leg, txid: result.txid });
+    }
+    return c.json({ status: "submitted" as const, txids });
   });
 }

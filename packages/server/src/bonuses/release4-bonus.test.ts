@@ -730,3 +730,166 @@ describe("Release 4 starter-stake claim and opt-in (#98)", () => {
     expect(bonusEvents[0]?.player).toBe(human.addr.toString());
   });
 });
+
+describe("welcome-bonus return sweep", () => {
+  function seedSweepBalances(stack: Stack, account: algosdk.Account): void {
+    stack.rail.control.balanceOverrides.set(account.addr.toString(), {
+      usdcMicroUsdc: 180_000,
+      algoMicroAlgo: 350_000,
+    });
+    stack.rail.control.accountOverrides.set(account.addr.toString(), {
+      exists: true,
+      optedInUsdc: true,
+      spendableAlgoMicro: 250_000,
+    });
+  }
+
+  function signQuoteTxn(
+    account: algosdk.Account,
+    unsignedTxnB64: string,
+  ): string {
+    const transaction = algosdk.decodeUnsignedTransaction(
+      new Uint8Array(Buffer.from(unsignedTxnB64, "base64")),
+    );
+    return Buffer.from(transaction.signTxn(account.sk)).toString("base64");
+  }
+
+  it("returns the full USDC holding and fee-net ALGO to the bonus account", async () => {
+    const stack = setup();
+    const human = algosdk.generateAccount();
+    seedPlayer(stack, human);
+    seedClaimedBonus(stack, human);
+    seedSweepBalances(stack, human);
+
+    const quoteResponse = await stack.app.request(
+      "/api/v1/my/bonus/sweep-txns",
+      {
+        headers: authorization(stack, human),
+      },
+    );
+    expect(quoteResponse.status).toBe(200);
+    const quote = (await quoteResponse.json()) as {
+      receiver: string;
+      txns: { leg: string; unsignedTxnB64: string; amount: number }[];
+    };
+    expect(quote.receiver).toBe(stack.rail.bonusAddress);
+    expect(quote.txns.map(({ leg, amount }) => ({ leg, amount }))).toEqual([
+      { leg: "usdc", amount: 180_000 },
+      { leg: "algo", amount: 248_000 },
+    ]);
+
+    const bonusBefore = await stack.rail.getBalances(stack.rail.bonusAddress);
+    const submitResponse = await stack.app.request("/api/v1/my/bonus/sweep", {
+      method: "POST",
+      headers: {
+        ...authorization(stack, human),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        signedTxnsB64: quote.txns.map((txn) =>
+          signQuoteTxn(human, txn.unsignedTxnB64),
+        ),
+      }),
+    });
+    expect(submitResponse.status).toBe(200);
+    const submitted = (await submitResponse.json()) as {
+      status: string;
+      txids: { leg: string; txid: string }[];
+    };
+    expect(submitted.status).toBe("submitted");
+    expect(submitted.txids.map(({ leg }) => leg)).toEqual(["usdc", "algo"]);
+    const bonusAfter = await stack.rail.getBalances(stack.rail.bonusAddress);
+    expect(bonusAfter.usdcMicroUsdc - bonusBefore.usdcMicroUsdc).toBe(180_000);
+    expect(bonusAfter.algoMicroAlgo - bonusBefore.algoMicroAlgo).toBe(248_000);
+  });
+
+  it("requires a starter stake on record for both sweep routes", async () => {
+    const stack = setup();
+    const human = algosdk.generateAccount();
+    seedPlayer(stack, human);
+    seedSweepBalances(stack, human);
+    const quoteResponse = await stack.app.request(
+      "/api/v1/my/bonus/sweep-txns",
+      {
+        headers: authorization(stack, human),
+      },
+    );
+    expect(quoteResponse.status).toBe(403);
+    const submitResponse = await stack.app.request("/api/v1/my/bonus/sweep", {
+      method: "POST",
+      headers: {
+        ...authorization(stack, human),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ signedTxnsB64: ["QUJD"] }),
+    });
+    expect(submitResponse.status).toBe(403);
+  });
+
+  it("rejects transactions that are not the exact requested return", async () => {
+    const stack = setup();
+    const human = algosdk.generateAccount();
+    const mallory = algosdk.generateAccount();
+    seedPlayer(stack, human);
+    seedClaimedBonus(stack, human);
+    seedSweepBalances(stack, human);
+    const quoteResponse = await stack.app.request(
+      "/api/v1/my/bonus/sweep-txns",
+      {
+        headers: authorization(stack, human),
+      },
+    );
+    const quote = (await quoteResponse.json()) as {
+      txns: { leg: string; unsignedTxnB64: string; amount: number }[];
+    };
+    const usdcLeg = quote.txns[0]?.unsignedTxnB64 ?? "";
+
+    // A payment to anywhere but the bonus account fails the relay guard.
+    const drain = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
+      sender: human.addr,
+      receiver: mallory.addr,
+      amount: 100_000,
+      note: new TextEncoder().encode(`osc:sweep:algo:${human.addr.toString()}`),
+      suggestedParams: {
+        flatFee: true,
+        fee: 1_000,
+        minFee: 1_000,
+        firstValid: 10_000,
+        lastValid: 11_000,
+        genesisID: "mainnet-v1.0",
+        genesisHash: new Uint8Array(Buffer.from(MAINNET_HASH, "base64")),
+      },
+    });
+    const drainResponse = await stack.app.request("/api/v1/my/bonus/sweep", {
+      method: "POST",
+      headers: {
+        ...authorization(stack, human),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        signedTxnsB64: [
+          Buffer.from(drain.signTxn(human.sk)).toString("base64"),
+        ],
+      }),
+    });
+    expect(drainResponse.status).toBe(400);
+    expect(((await drainResponse.json()) as { error: string }).error).toBe(
+      "SWEEP_INVALID",
+    );
+
+    // The same leg twice is not a valid return either.
+    const duplicated = signQuoteTxn(human, usdcLeg);
+    const duplicateResponse = await stack.app.request(
+      "/api/v1/my/bonus/sweep",
+      {
+        method: "POST",
+        headers: {
+          ...authorization(stack, human),
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ signedTxnsB64: [duplicated, duplicated] }),
+      },
+    );
+    expect(duplicateResponse.status).toBe(400);
+  });
+});

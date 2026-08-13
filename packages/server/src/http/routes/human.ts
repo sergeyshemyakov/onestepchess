@@ -97,8 +97,10 @@ function quotaView(
   deps: HumanRouteDeps,
   player: string,
   demo: boolean,
-  limit: number,
+  limit: number | null,
 ) {
+  // limit === null means uncapped — staked human claims have no hourly quota.
+  if (limit === null) return { limit: null, remaining: null, resetsAt: null };
   const now = deps.now();
   const rows = deps.db
     .select({ createdAt: schema.claims.createdAt })
@@ -161,9 +163,7 @@ export function registerHumanRoutes(
         .get()?.value ?? 0;
     const stakedLimit =
       player.quotaOverride ??
-      (player.kind === "agent"
-        ? deps.config().QUOTA_AGENT
-        : deps.config().QUOTA_HUMAN);
+      (player.kind === "agent" ? deps.config().QUOTA_AGENT : null);
     const balances =
       include === "balances" ? await deps.rail.getBalances(address) : undefined;
     // Points and referral fields are humans-only (F15) — absent for agents.

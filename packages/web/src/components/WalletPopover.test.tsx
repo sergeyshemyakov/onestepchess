@@ -88,10 +88,9 @@ it("wallet_popover_fetches_balances_only_when_open", async () => {
     );
   });
 
-  // -- Points and referral counters from the same profile fetch.
-  expect(screen.getByTestId("popover-points").textContent).toContain(
-    "points: 120",
-  );
+  // -- Points never render pre-release (the profile still carries them);
+  //    referral counters come from the same profile fetch.
+  expect(screen.queryByTestId("popover-points")).toBeNull();
   expect(screen.getByTestId("popover-invite").textContent).toContain(
     "2 joined · 1 qualified",
   );

@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { type ApiClient, ApiError } from "../api/client.js";
 import type { PlayerView, ProfileView } from "../api/schemas.js";
 import { copyText } from "../lib/clipboard.js";
 import { formatMicroAlgo, formatMicroUsdc } from "../lib/format.js";
+import { ReturnBonusSheet } from "./ReturnBonusSheet.jsx";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 
 /** F-W9 wallet popover. Balances are fetched only while it is open — the
@@ -19,6 +20,7 @@ export function WalletPopover(props: {
   const [profile, setProfile] = useState<ProfileView | null>(null);
   const [copiedWhat, setCopiedWhat] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
+  const [returning, setReturning] = useState(false);
   const [nickname, setNickname] = useState(props.player.nickname ?? "");
   const [renameError, setRenameError] = useState<{
     readonly hint: string;
@@ -28,7 +30,7 @@ export function WalletPopover(props: {
   useDialogFocusTrap(dialogRef, props.onClose);
   const { client } = props;
 
-  useEffect(() => {
+  const fetchProfile = useCallback(() => {
     let cancelled = false;
     client
       .getProfile({ balances: true })
@@ -42,6 +44,8 @@ export function WalletPopover(props: {
       cancelled = true;
     };
   }, [client]);
+
+  useEffect(() => fetchProfile(), [fetchProfile]);
 
   const saveNickname = (value: string) => {
     setRenameError(null);
@@ -98,7 +102,26 @@ export function WalletPopover(props: {
             {formatMicroAlgo(profile.balances.algoMicroAlgo)}
           </span>
         )}
+        {profile?.bonus !== undefined ? (
+          <button
+            type="button"
+            className="btn mini"
+            title="return remaining welcome bonus"
+            data-testid="return-bonus-button"
+            onClick={() => setReturning(true)}
+          >
+            return bonus
+          </button>
+        ) : null}
       </div>
+      {returning ? (
+        <ReturnBonusSheet
+          client={client}
+          address={props.player.address}
+          onClose={() => setReturning(false)}
+          onReturned={() => fetchProfile()}
+        />
+      ) : null}
 
       <div className="poprow">
         <Link to="/start">need USDC? setup guide ▸</Link>
@@ -167,12 +190,6 @@ export function WalletPopover(props: {
           </>
         )}
       </div>
-
-      {profile?.points !== undefined ? (
-        <div className="poprow" data-testid="popover-points">
-          points: {profile.points}
-        </div>
-      ) : null}
 
       {profile?.refCode !== undefined && profile.refCode !== null ? (
         <div className="poprow" data-testid="popover-invite">

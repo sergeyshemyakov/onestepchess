@@ -366,7 +366,7 @@ export async function main(): Promise<void> {
   };
   const runRecovery = async (): Promise<void> => {
     try {
-      const nextRecoveryAt = await recoverSettlingIntents(claimDeps);
+      const nextRecoveryAt = await recoverSettlingIntents(claimDeps, logger);
       if (nextRecoveryAt !== null) scheduleRecovery(nextRecoveryAt);
     } catch (error) {
       logger.error({ err: error }, "payment recovery failed; retrying");
@@ -408,10 +408,14 @@ export async function main(): Promise<void> {
   }
   // Deterministic, idempotent points backfill of pre-incentive history (F15
   // step 6); a no-op once every terminal game already has its award rows.
-  backfillPoints(db, now, {
-    pointsMove: config.POINTS_MOVE,
-    pointsWin: config.POINTS_WIN,
-  });
+  // Gated with the award sites: enabling POINTS_ENABLED later backfills the
+  // disabled stretch on the next boot.
+  if (config.POINTS_ENABLED) {
+    backfillPoints(db, now, {
+      pointsMove: config.POINTS_MOVE,
+      pointsWin: config.POINTS_WIN,
+    });
+  }
   // Public-stats counters are cumulative in memory, seeded from SQL at boot so
   // a restart converges to ground truth (F16 step 4).
   publicStats.rebuild(db);
@@ -546,6 +550,7 @@ export async function main(): Promise<void> {
     mode,
     turnstile,
     metrics,
+    scheduleRecovery,
   });
   const humanDeps = {
     db,

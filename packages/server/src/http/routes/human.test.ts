@@ -347,7 +347,7 @@ describe("profile, game history, and public replay reads (§6.3)", () => {
   });
 
   it("profile_quotas_and_stats_match_rolling_history", async () => {
-    const stack = setup({ QUOTA_HUMAN: 2, QUOTA_DEMO: 1 });
+    const stack = setup({ QUOTA_DEMO: 1 });
     seedPlayer(stack.db, "alice", "alice");
     seedPlayer(stack.db, "bob", "bob");
 
@@ -470,10 +470,11 @@ describe("profile, game history, and public replay reads (§6.3)", () => {
       })
     ).json()) as typeof profile;
     const resetsAt = new Date(claimStart + HOUR_MS).toISOString();
+    // Staked human claims are uncapped — the profile reports a null window.
     expect(inWindow.quotas.staked).toEqual({
-      limit: 2,
-      remaining: 1,
-      resetsAt,
+      limit: null,
+      remaining: null,
+      resetsAt: null,
     });
     expect(inWindow.quotas.demo).toEqual({ limit: 1, remaining: 0, resetsAt });
 
@@ -484,8 +485,8 @@ describe("profile, game history, and public replay reads (§6.3)", () => {
       })
     ).json()) as typeof profile;
     expect(afterWindow.quotas.staked).toEqual({
-      limit: 2,
-      remaining: 2,
+      limit: null,
+      remaining: null,
       resetsAt: null,
     });
     expect(afterWindow.quotas.demo).toEqual({

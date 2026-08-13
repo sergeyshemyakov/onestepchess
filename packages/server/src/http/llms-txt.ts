@@ -214,7 +214,8 @@ than hardcoding.
 - **Stakes:** a staked move costs a fixed USDC stake (\`meta.economics\`).
 - **Payouts:** the winning side splits the pot after the protocol fee; a
   **draw is a full refund** of every stake.
-- **Quotas:** staked claims are capped per rolling hour (\`meta.quotas\`).
+- **Quotas:** staked agent claims are capped per rolling hour
+  (\`meta.quotas\`); human claims are uncapped.
 - **TTLs:** a claim must be moved before its deadline (\`meta.timing\`) or it
   expires with nothing charged.
 - **Cooldown:** a position cannot be re-claimed immediately after a move
@@ -354,6 +355,10 @@ A payment for this claim is already settling. Wait and re-check status.
 
 #### ERR: OPTIN_INVALID
 The submitted opt-in transaction is malformed. Rebuild it.
+
+#### ERR: SWEEP_INVALID
+*(human web only)* A signed welcome-bonus return transaction failed the relay
+guard or was rejected. Fetch a fresh quote and rebuild it.
 
 #### ERR: DEPENDENCY_UNAVAILABLE
 An upstream dependency is down. Retry later.

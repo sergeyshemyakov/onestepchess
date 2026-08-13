@@ -673,6 +673,15 @@ describe("rail-avm Release 4 prepared treasury and opt-in adapter", () => {
     expect(await rail.buildOptInTxn(recipients[0] ?? "")).toEqual(
       expect.any(String),
     );
+    // 500k balance − 100k min-balance = 400k spendable; USDC leg holds the
+    // full 123 and the ALGO leg is net of both flat fees.
+    expect(await rail.buildSweepTxns(recipients[0] ?? "")).toEqual({
+      receiver: rail.bonusAddress,
+      txns: [
+        { leg: "usdc", unsignedTxnB64: expect.any(String), amount: 123 },
+        { leg: "algo", unsignedTxnB64: expect.any(String), amount: 398_000 },
+      ],
+    });
 
     submissionKind = "signed";
     const signed = signedClientTransaction(payer);
@@ -703,6 +712,7 @@ describe("rail-avm Release 4 prepared treasury and opt-in adapter", () => {
         "findPayoutByNote",
         "findFundingByNote",
         "buildOptInTxn",
+        "buildSweepTxns",
         "submitSignedTransaction",
         "getBalances",
         "getAccountInfo",

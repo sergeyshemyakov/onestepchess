@@ -681,7 +681,7 @@ describe("resolution — game_resolved events (I7/I9, §6.4)", () => {
 
 describe("resolution — points (F15 step 1, I11)", () => {
   it("awards move+win to staked humans and nothing to agents at resolution", async () => {
-    const stack = setup();
+    const stack = setup({ config: { POINTS_ENABLED: true } });
     seedGame(stack.db, stack.now(), {
       gameId: "gm_pts",
       name: "points-game",
@@ -725,6 +725,43 @@ describe("resolution — points (F15 step 1, I11)", () => {
       .filter((a) => a.player === "human_w")
       .reduce((s, a) => s + a.amount, 0);
     expect(awardSum).toBe(25);
+  });
+
+  it("awards nothing when POINTS_ENABLED is off (the default)", async () => {
+    const stack = setup();
+    seedGame(stack.db, stack.now(), {
+      gameId: "gm_pts_off",
+      name: "points-off-game",
+      status: "finished",
+      result: "white",
+      termination: "checkmate",
+      entries: [
+        {
+          entryId: "e1",
+          player: "human_w",
+          side: "white",
+          kind: "human",
+          amountMicroUsdc: 10_000,
+        },
+        {
+          entryId: "e2",
+          player: "human_b",
+          side: "black",
+          kind: "human",
+          amountMicroUsdc: 10_000,
+        },
+      ],
+    });
+
+    await dispatchFinish(stack, "gm_pts_off");
+
+    expect(stack.db.select().from(schema.pointAwards).all()).toHaveLength(0);
+    const points = stack.db
+      .select({ points: schema.players.points })
+      .from(schema.players)
+      .where(eq(schema.players.address, "human_w"))
+      .get()?.points;
+    expect(points).toBe(0);
   });
 
   it("points_and_referrals_never_enter_resolution_or_payouts", async () => {
@@ -774,7 +811,7 @@ describe("resolution — points (F15 step 1, I11)", () => {
         .reduce((s, r) => s + r.deltaMicrousdc, 0),
     });
 
-    const base = setup();
+    const base = setup({ config: { POINTS_ENABLED: true } });
     seedFixed(base);
     await dispatchFinish(base, "gm_i11");
     const baseShape = payoutShape(base);
@@ -782,7 +819,12 @@ describe("resolution — points (F15 step 1, I11)", () => {
     // A wildly different incentive configuration — nothing here may move a
     // single unit of the payout math (I11).
     const tweaked = setup({
-      config: { POINTS_MOVE: 999, POINTS_WIN: 999, REFERRAL_POINTS: 999 },
+      config: {
+        POINTS_ENABLED: true,
+        POINTS_MOVE: 999,
+        POINTS_WIN: 999,
+        REFERRAL_POINTS: 999,
+      },
     });
     seedFixed(tweaked);
     await dispatchFinish(tweaked, "gm_i11");

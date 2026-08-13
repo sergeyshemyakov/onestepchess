@@ -59,7 +59,7 @@ export function registerDiscoveryRoutes(
         nextGameNudgeSeconds: config.NEXT_GAME_NUDGE_SECONDS,
       },
       quotas: {
-        human: config.QUOTA_HUMAN,
+        human: null,
         agent: config.QUOTA_AGENT,
         demo: config.QUOTA_DEMO,
         windowMinutes: 60,
@@ -85,7 +85,7 @@ export function registerDiscoveryRoutes(
         ? { stats: deps.publicStats.snapshot() }
         : {}),
       rules:
-        "One move at a time. Your position and legal moves are private until the game resolves.",
+        "real game, one move at a time. play in the fog against bots and humans",
       docs: {
         llms: `${deps.publicBaseUrl}/llms.txt`,
         openapi: `${deps.publicBaseUrl}/api/v1/openapi.json`,

@@ -8,9 +8,13 @@ import {
 } from "./http.js";
 import {
   type BonusClaimResponse,
+  type BonusSweepQuote,
+  type BonusSweepReceipt,
   bonusClaimResponseSchema,
   bonusOptInResponseSchema,
   bonusOptInTxnResponseSchema,
+  bonusSweepQuoteSchema,
+  bonusSweepResponseSchema,
   type ChallengeResponse,
   type ClaimStatus,
   type ClaimView,
@@ -202,6 +206,22 @@ export function createApiClient(options: ApiClientOptions = {}) {
           body: { signedTxnB64 },
         }),
         bonusOptInResponseSchema,
+      );
+    },
+
+    async getBonusSweepTxns(): Promise<BonusSweepQuote> {
+      return json(await request("/my/bonus/sweep-txns"), bonusSweepQuoteSchema);
+    },
+
+    async submitBonusSweep(
+      signedTxnsB64: readonly string[],
+    ): Promise<BonusSweepReceipt> {
+      return json(
+        await request("/my/bonus/sweep", {
+          method: "POST",
+          body: { signedTxnsB64: [...signedTxnsB64] },
+        }),
+        bonusSweepResponseSchema,
       );
     },
 

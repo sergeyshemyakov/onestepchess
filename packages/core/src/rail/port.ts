@@ -125,6 +125,19 @@ export type PreparedFunding = {
 };
 export type PreparedSubmission = PreparedPayouts | PreparedFunding;
 
+export type SweepTxn = {
+  readonly leg: "algo" | "usdc";
+  readonly unsignedTxnB64: string; // base64 msgpack, guarded params (§6.4)
+  readonly amount: number; // µALGO (algo leg) | µUSDC (usdc leg), > 0
+};
+/** A welcome-bonus return quote: the player signs these and the server relays
+ * them. `txns` is empty when nothing can be returned (no funds, or the
+ * spendable ALGO cannot even cover the flat fees). */
+export type SweepQuote = {
+  readonly receiver: string; // bonusAddress — the only allowed destination
+  readonly txns: readonly SweepTxn[];
+};
+
 export type TxStatus =
   | { readonly status: "confirmed"; readonly confirmedRound: number }
   | { readonly status: "pending" }
@@ -183,6 +196,13 @@ export interface PaymentRail {
   /** (2026-07-14, server F14) Relay of a client-signed opt-in transaction;
    * this flow has no browser-to-algod call. In-band failures like the dance ops. */
   submitSignedTransaction(signedTxnB64: string): Promise<SignedSubmitResult>;
+
+  /** (2026-08-12, welcome-bonus return) Unsigned transactions that sweep the
+   * player's full USDC holding plus all spendable ALGO (amount − min-balance,
+   * net of the flat fees) back to `bonusAddress`. Never closes the USDC
+   * opt-in — a returning player can be re-funded without a new opt-in. The
+   * player signs; relay goes through submitSignedTransaction, USDC leg first. */
+  buildSweepTxns(address: string): Promise<SweepQuote>;
 
   getBalances(address: string): Promise<{
     readonly usdcMicroUsdc: MicroUsdc;

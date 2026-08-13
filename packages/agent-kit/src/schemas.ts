@@ -189,9 +189,10 @@ const playerSchema = z.object({
   createdAt: isoTimestampSchema,
 });
 
+// A null limit/remaining means the window is uncapped (staked human claims).
 const quotaSchema = z.object({
-  limit: nonNegativeIntegerSchema,
-  remaining: nonNegativeIntegerSchema,
+  limit: nonNegativeIntegerSchema.nullable(),
+  remaining: nonNegativeIntegerSchema.nullable(),
   resetsAt: isoTimestampSchema.nullable(),
 });
 
@@ -245,7 +246,7 @@ export const metaSchema = z.object({
     nextGameNudgeSeconds: nonNegativeIntegerSchema,
   }),
   quotas: z.object({
-    human: nonNegativeIntegerSchema,
+    human: nonNegativeIntegerSchema.nullable(),
     agent: nonNegativeIntegerSchema,
     demo: nonNegativeIntegerSchema,
     windowMinutes: positiveIntegerSchema,

@@ -60,6 +60,10 @@ export const bonusOptInBodySchema = z
   .object({ signedTxnB64: z.string().min(1) })
   .strict();
 
+export const bonusSweepBodySchema = z
+  .object({ signedTxnsB64: z.array(z.string().min(1)).min(1).max(2) })
+  .strict();
+
 export const gamesQuerySchema = z
   .object({
     status: z.enum(["ongoing", "finished"]),
@@ -149,9 +153,10 @@ const verifyResponse = z.object({
   linkedGuestClaims: z.number().int().nonnegative().optional(),
 });
 
+// A null limit/remaining means the window is uncapped (staked human claims).
 const quota = z.object({
-  limit: z.number().int().nonnegative(),
-  remaining: z.number().int().nonnegative(),
+  limit: z.number().int().nonnegative().nullable(),
+  remaining: z.number().int().nonnegative().nullable(),
   resetsAt: isoTimestamp.nullable(),
 });
 
@@ -199,6 +204,24 @@ const bonusClaimResponse = z.object({
 
 const bonusOptInTxnResponse = z.object({ unsignedTxnB64: z.string().min(1) });
 const bonusOptInResponse = z.object({ status: z.literal("watching") });
+
+const sweepLeg = z.enum(["usdc", "algo"]);
+const bonusSweepTxnsResponse = z.object({
+  receiver: z.string().min(1),
+  txns: z
+    .array(
+      z.object({
+        leg: sweepLeg,
+        unsignedTxnB64: z.string().min(1),
+        amount: z.number().int().positive(),
+      }),
+    )
+    .max(2),
+});
+const bonusSweepResponse = z.object({
+  status: z.literal("submitted"),
+  txids: z.array(z.object({ leg: sweepLeg, txid: z.string().min(1) })).max(2),
+});
 
 const ongoingGameCard = z.object({
   yourMove: legalMove,
@@ -322,7 +345,7 @@ const metaResponse = z.object({
     nextGameNudgeSeconds: z.number().int().positive(),
   }),
   quotas: z.object({
-    human: z.number().int().nonnegative(),
+    human: z.number().int().nonnegative().nullable(),
     agent: z.number().int().nonnegative(),
     demo: z.number().int().nonnegative(),
     windowMinutes: z.number().int().positive(),
@@ -516,6 +539,35 @@ export const publicApiRoutes = [
   }),
   createRoute({
     method: "get",
+    path: "/api/v1/my/bonus/sweep-txns",
+    tags: ["human"],
+    summary: "Build the exact welcome-bonus return transactions",
+    security: bearerOrCookie,
+    responses: {
+      200: json("Unsigned bonus-return transactions", bonusSweepTxnsResponse),
+      403: json("No starter stake on record", errorEnvelope),
+      503: json("Algod unavailable", errorEnvelope),
+    },
+  }),
+  createRoute({
+    method: "post",
+    path: "/api/v1/my/bonus/sweep",
+    tags: ["human"],
+    summary: "Validate and relay the signed welcome-bonus return",
+    security: bearerOrCookie,
+    request: {
+      body: {
+        content: { "application/json": { schema: bonusSweepBodySchema } },
+      },
+    },
+    responses: {
+      200: json("Bonus return submitted", bonusSweepResponse),
+      400: json("Malformed, unsafe, or rejected return", errorEnvelope),
+      403: json("No starter stake on record", errorEnvelope),
+    },
+  }),
+  createRoute({
+    method: "get",
     path: "/api/v1/my/games",
     tags: ["human"],
     summary: "The player's ongoing or finished game cards",
@@ -644,6 +696,7 @@ export const publicApiSchemas = {
   moveBody: moveBodySchema,
   renameBody: renameBodySchema,
   bonusOptInBody: bonusOptInBodySchema,
+  bonusSweepBody: bonusSweepBodySchema,
   gamesQuery: gamesQuerySchema,
   cardQuery: cardQuerySchema,
   challengeResponse,

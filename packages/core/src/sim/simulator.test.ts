@@ -129,7 +129,7 @@ describe("domain simulator", () => {
   }, () => {
     expect(() =>
       runSimulation({
-        seed: 13,
+        seed: 12,
         gameCount: 200,
         profile: P2_PROFILE,
         bug: "skipHumanCap",

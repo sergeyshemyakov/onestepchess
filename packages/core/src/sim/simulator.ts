@@ -606,21 +606,25 @@ export function runSimulation(options: SimOptions): SimReport {
     }
     const demo =
       actor.kind === "guest" ? true : actor.kind === "human" && rng() < 0.25;
+    // Staked human claims are uncapped — only demo and agent claims count
+    // against a rolling-hour quota.
     const quotaLimit = demo
       ? cfg.QUOTA_DEMO
       : actor.kind === "human"
-        ? cfg.QUOTA_HUMAN
+        ? null
         : cfg.QUOTA_AGENT;
     const times = demo ? actor.demoTimes : actor.stakedTimes;
-    const quota = rollingWindowCheck({
-      eventTimestamps: times,
-      limit: quotaLimit,
-      windowSeconds: 3_600,
-      now,
-    });
-    if (!quota.ok) {
-      record(`quota ${actor.id} retry=${quota.retryAfterSeconds}`);
-      return;
+    if (quotaLimit !== null) {
+      const quota = rollingWindowCheck({
+        eventTimestamps: times,
+        limit: quotaLimit,
+        windowSeconds: 3_600,
+        now,
+      });
+      if (!quota.ok) {
+        record(`quota ${actor.id} retry=${quota.retryAfterSeconds}`);
+        return;
+      }
     }
     const game = gamesById.get(pick.id);
     if (game === undefined) {

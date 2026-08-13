@@ -143,7 +143,7 @@ export function Landing(props: {
             <div className="ctas">
               <button
                 type="button"
-                className="bigplay"
+                className="bigplay primary pulse-soft"
                 onClick={() => setConnecting(true)}
               >
                 <span className="bp-title">▸ I HAVE AN ALGORAND WALLET</span>
@@ -152,7 +152,7 @@ export function Landing(props: {
                 </span>
               </button>
               <Link className="bigplay" to="/start">
-                <span className="bp-title">I DON'T HAVE ONE YET →</span>
+                <span className="bp-title">I DON'T HAVE AN ALGORAND WALLET</span>
                 <span className="bp-sub">set up a wallet, USDC and gas</span>
               </Link>
               {guestDemo === null ? (
@@ -163,7 +163,7 @@ export function Landing(props: {
                 >
                   <span className="bp-title">PLAY A DEMO GAME</span>
                   <span className="bp-sub">
-                    $0 · no wallet needed · you make one real move
+                    no wallet needed · you make one real move
                   </span>
                 </button>
               ) : (

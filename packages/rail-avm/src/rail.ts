@@ -12,6 +12,8 @@ import type {
   SettleResult,
   SignedSubmitResult,
   StakeQuote,
+  SweepQuote,
+  SweepTxn,
   TxStatus,
   VerifyResult,
 } from "@onestepchess/core";
@@ -994,6 +996,64 @@ export function createAvmRail(
     );
   }
 
+  async function buildSweepTxns(address: string): Promise<SweepQuote> {
+    assertAddress(address);
+    const account = await loadAccount(address);
+    if (account === null) return { receiver: bonusAddress, txns: [] };
+    const holding = account.assets?.find(
+      (asset) => asset["asset-id"] === config.usdcAsaId,
+    );
+    const usdcAmount = holding?.amount ?? 0;
+    const spendable = Math.max(account.amount - account["min-balance"], 0);
+    // Every leg's flat fee comes out of the same spendable ALGO, so the ALGO
+    // amount is net of all fees; a leg is dropped when it cannot pay its own.
+    const usdcLeg = usdcAmount > 0 && spendable >= TRANSACTION_FEE;
+    const algoAmount = spendable - TRANSACTION_FEE * ((usdcLeg ? 1 : 0) + 1);
+    const algoLeg = algoAmount > 0;
+    if (!usdcLeg && !algoLeg) return { receiver: bonusAddress, txns: [] };
+    const suggestedParams = {
+      ...(await loadSuggestedParams()),
+      flatFee: true,
+      fee: TRANSACTION_FEE,
+    };
+    const txns: SweepTxn[] = [];
+    if (usdcLeg) {
+      const transaction =
+        algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+          sender: address,
+          receiver: bonusAddress,
+          amount: usdcAmount,
+          assetIndex: config.usdcAsaId,
+          note: new TextEncoder().encode(`osc:sweep:usdc:${address}`),
+          suggestedParams,
+        });
+      txns.push({
+        leg: "usdc",
+        unsignedTxnB64: Buffer.from(
+          algosdk.encodeUnsignedTransaction(transaction),
+        ).toString("base64"),
+        amount: usdcAmount,
+      });
+    }
+    if (algoLeg) {
+      const transaction = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
+        sender: address,
+        receiver: bonusAddress,
+        amount: algoAmount,
+        note: new TextEncoder().encode(`osc:sweep:algo:${address}`),
+        suggestedParams,
+      });
+      txns.push({
+        leg: "algo",
+        unsignedTxnB64: Buffer.from(
+          algosdk.encodeUnsignedTransaction(transaction),
+        ).toString("base64"),
+        amount: algoAmount,
+      });
+    }
+    return { receiver: bonusAddress, txns };
+  }
+
   async function submitSignedTransaction(
     signedTxnB64: string,
   ): Promise<SignedSubmitResult> {
@@ -1056,6 +1116,7 @@ export function createAvmRail(
     findPayoutByNote,
     findFundingByNote,
     buildOptInTxn,
+    buildSweepTxns,
     submitSignedTransaction,
     getBalances,
     getAccountInfo,

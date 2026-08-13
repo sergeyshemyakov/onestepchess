@@ -201,7 +201,11 @@ describe("Release 2 live human surfaces", () => {
       expect(screen.queryByText(/board is yours/)).toBeNull(),
     );
     source().emit("game_available", {});
-    await screen.findByText("a board may be available — PLAY to check");
+    await waitFor(() =>
+      expect(
+        screen.queryByText("a board may be available — PLAY to check"),
+      ).toBeNull(),
+    );
 
     source().emit("system_banner", {
       mode: "paused",

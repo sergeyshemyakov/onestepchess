@@ -38,7 +38,7 @@ export const metaFixture: Meta = {
     cooldownPlies: 4,
     nextGameNudgeSeconds: 20,
   },
-  quotas: { human: 10, agent: 60, demo: 10, windowMinutes: 60 },
+  quotas: { human: null, agent: 60, demo: 10, windowMinutes: 60 },
   status: { mode: "running", banner: null },
   turnstileSiteKey: "",
   banners: { tower: true, championship: true },
@@ -91,7 +91,7 @@ export function profileFixture(
     },
     netPnlMicroUsdc: 0,
     quotas: {
-      staked: { limit: 10, remaining: 8, resetsAt: null },
+      staked: { limit: null, remaining: null, resetsAt: null },
       demo: { limit: 10, remaining: 10, resetsAt: null },
     },
     deprioritizedUntil: null,

@@ -5,6 +5,7 @@ import {
   moveBazaarExtensions,
   X402_GLOBAL_CHALLENGE_TAG,
 } from "@onestepchess/core";
+import algosdk from "algosdk";
 import { describe, expect, it } from "vitest";
 import {
   buildMockHeader,
@@ -281,5 +282,86 @@ describe("rail-mock clean path", () => {
     expect(() =>
       rail.buildPaymentChallenge({ amountMicroUsdc: 1, resource: RESOURCE }),
     ).not.toThrow();
+  });
+});
+
+describe("rail-mock welcome-bonus sweep", () => {
+  const player = algosdk.encodeAddress(new Uint8Array(32).fill(3));
+
+  it("builds a full-USDC leg and a fee-net ALGO leg to the bonus address", async () => {
+    const rail = createMockRail();
+    rail.control.balanceOverrides.set(player, {
+      usdcMicroUsdc: 150_000,
+      algoMicroAlgo: 300_000,
+    });
+    rail.control.accountOverrides.set(player, {
+      exists: true,
+      optedInUsdc: true,
+      spendableAlgoMicro: 200_000,
+    });
+    const quote = await rail.buildSweepTxns(player);
+    expect(quote.receiver).toBe(rail.bonusAddress);
+    expect(quote.txns.map(({ leg, amount }) => ({ leg, amount }))).toEqual([
+      { leg: "usdc", amount: 150_000 },
+      { leg: "algo", amount: 198_000 },
+    ]);
+    for (const txn of quote.txns) {
+      const decoded = algosdk.decodeUnsignedTransaction(
+        new Uint8Array(Buffer.from(txn.unsignedTxnB64, "base64")),
+      );
+      expect(decoded.sender.toString()).toBe(player);
+      expect(decoded.fee).toBe(1_000n);
+    }
+  });
+
+  it("quotes nothing when the account cannot cover a flat fee", async () => {
+    const rail = createMockRail();
+    rail.control.balanceOverrides.set(player, {
+      usdcMicroUsdc: 150_000,
+      algoMicroAlgo: 100_500,
+    });
+    rail.control.accountOverrides.set(player, {
+      exists: true,
+      optedInUsdc: true,
+      spendableAlgoMicro: 500,
+    });
+    await expect(rail.buildSweepTxns(player)).resolves.toEqual({
+      receiver: rail.bonusAddress,
+      txns: [],
+    });
+  });
+
+  it("relaying signed sweep legs credits the bonus account and debits the player", async () => {
+    const rail = createMockRail();
+    rail.control.balanceOverrides.set(player, {
+      usdcMicroUsdc: 150_000,
+      algoMicroAlgo: 300_000,
+    });
+    rail.control.accountOverrides.set(player, {
+      exists: true,
+      optedInUsdc: true,
+      spendableAlgoMicro: 200_000,
+    });
+    const quote = await rail.buildSweepTxns(player);
+    const key = algosdk.generateAccount();
+    const bonusBefore = await rail.getBalances(rail.bonusAddress);
+    for (const txn of quote.txns) {
+      const decoded = algosdk.decodeUnsignedTransaction(
+        new Uint8Array(Buffer.from(txn.unsignedTxnB64, "base64")),
+      );
+      // The mock relay only decodes — any Ed25519 signature works here.
+      const signed = decoded.signTxn(key.sk);
+      const result = await rail.submitSignedTransaction(
+        Buffer.from(signed).toString("base64"),
+      );
+      expect(result.ok).toBe(true);
+    }
+    const bonusAfter = await rail.getBalances(rail.bonusAddress);
+    expect(bonusAfter.usdcMicroUsdc - bonusBefore.usdcMicroUsdc).toBe(150_000);
+    expect(bonusAfter.algoMicroAlgo - bonusBefore.algoMicroAlgo).toBe(198_000);
+    await expect(rail.getBalances(player)).resolves.toEqual({
+      usdcMicroUsdc: 0,
+      algoMicroAlgo: 101_000,
+    });
   });
 });

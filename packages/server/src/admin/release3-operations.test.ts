@@ -585,7 +585,7 @@ describe("Release 3 admin reads", () => {
     });
     expect(await player.json()).toMatchObject({
       address: "alice",
-      quota: { staked: { limit: 12 } },
+      quota: { staked: { limit: null } },
     });
   });
 

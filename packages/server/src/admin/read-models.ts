@@ -612,8 +612,9 @@ export function adminPlayer(deps: AdminReadDeps, address: string) {
     .all();
   const quota = (
     claims: readonly (typeof schema.claims.$inferSelect)[],
-    limit: number,
+    limit: number | null,
   ) => {
+    if (limit === null) return { limit: null, remaining: null, resetsAt: null };
     const inWindow = claims
       .map((claim) => claim.createdAt)
       .filter((at) => at > now - HOUR_MS)
@@ -638,9 +639,7 @@ export function adminPlayer(deps: AdminReadDeps, address: string) {
     .map((claim) => claimSummary(claim, player.nickname));
   const stakedLimit =
     player.quotaOverride ??
-    (player.kind === "agent"
-      ? deps.config().QUOTA_AGENT
-      : deps.config().QUOTA_HUMAN);
+    (player.kind === "agent" ? deps.config().QUOTA_AGENT : null);
   return {
     address: player.address,
     nickname: player.nickname,

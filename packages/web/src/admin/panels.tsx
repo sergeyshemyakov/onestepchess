@@ -662,8 +662,9 @@ function PlayerDossier(props: {
         <Metric label="win rate">{pct(props.player.stats.winratePct)}</Metric>
         <Metric label="abandoned">{props.player.abandonCount}</Metric>
         <Metric label="staked quota">
-          {props.player.quota.staked.remaining} /{" "}
-          {props.player.quota.staked.limit}
+          {props.player.quota.staked.limit === null
+            ? "unlimited"
+            : `${props.player.quota.staked.remaining} / ${props.player.quota.staked.limit}`}
         </Metric>
         <Metric label="demo quota">
           {props.player.quota.demo.remaining} / {props.player.quota.demo.limit}

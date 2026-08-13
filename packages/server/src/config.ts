@@ -95,6 +95,7 @@ export const serverConfigSchema = coreConfigSchema
     BONUS_DAILY_CAP: positiveInt.default(50),
     BONUS_MAX_ATTEMPTS: positiveInt.default(10),
     BONUS_WATCH_INTERVAL_SECONDS: positiveInt.default(60),
+    POINTS_ENABLED: z.boolean().default(false),
     POINTS_MOVE: nonnegativeInt.default(10),
     POINTS_WIN: nonnegativeInt.default(15),
     REFERRAL_QUALIFY_MOVES: positiveInt.default(3),

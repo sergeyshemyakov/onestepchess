@@ -18,7 +18,6 @@ const CONFIG_DESCRIPTIONS = {
   CLAIM_TTL_HUMAN: "Seconds a human has to submit a claimed move.",
   CLAIM_TTL_AGENT: "Seconds an agent has to submit a claimed move.",
   CLAIM_TTL_ENDSPIEL: "Seconds an agent has to submit an endspiel move.",
-  QUOTA_HUMAN: "Staked human claims allowed per rolling hour.",
   QUOTA_AGENT: "Agent claims allowed per rolling hour.",
   QUOTA_DEMO: "Demo claims allowed per rolling hour.",
   GUEST_CLAIM_ALLOWANCE: "Lifetime demo claims allowed before login.",
@@ -60,6 +59,8 @@ const CONFIG_DESCRIPTIONS = {
   BONUS_DAILY_CAP: "Starter-stake claims allowed per UTC day.",
   BONUS_MAX_ATTEMPTS: "Maximum attempts for each starter-stake transfer.",
   BONUS_WATCH_INTERVAL_SECONDS: "Seconds between starter-stake funding checks.",
+  POINTS_ENABLED:
+    "Whether players earn points (move, win, and referral awards).",
   POINTS_MOVE: "Points awarded for a settled staked move.",
   POINTS_WIN: "Extra points awarded for a win.",
   REFERRAL_QUALIFY_MOVES: "Staked moves needed to qualify a referral.",
@@ -98,7 +99,6 @@ const GAME_RULE_KEYS = new Set<keyof ServerConfig>([
 ]);
 
 const NEW_CLAIM_KEYS = new Set<keyof ServerConfig>([
-  "QUOTA_HUMAN",
   "QUOTA_AGENT",
   "QUOTA_DEMO",
   "GUEST_CLAIM_ALLOWANCE",

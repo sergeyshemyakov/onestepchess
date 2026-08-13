@@ -9,68 +9,86 @@ const RECOVERY_POLL_MS = 1_000;
 
 export async function recoverSettlingIntents(
   deps: ClaimDeps,
+  logger?: { error(obj: object, msg: string): void },
 ): Promise<number | null> {
   const now = deps.now();
   let nextRecoveryAt: number | null = null;
+  const schedule = (at: number): void => {
+    nextRecoveryAt =
+      nextRecoveryAt === null ? at : Math.min(nextRecoveryAt, at);
+  };
+  // `verified` intents are swept too: a crash or a thrown verify/settle call
+  // can strand an intent before it ever reaches `settling`, and any
+  // unresolved in-flight intent blocks its claim's expiry indefinitely.
   const intents = deps.db
     .select()
     .from(schema.paymentIntents)
-    .where(eq(schema.paymentIntents.status, "settling"))
+    .where(inArray(schema.paymentIntents.status, ["verified", "settling"]))
     .all();
   for (const intent of intents) {
-    const status = await deps.rail.getTransactionStatus(intent.clientTxid);
-    if (status.status === "confirmed") {
-      const claim = deps.db
-        .select()
-        .from(schema.claims)
-        .where(eq(schema.claims.id, intent.claimId))
-        .get();
-      if (claim === undefined || claim.status !== "open") continue;
-      const normalized = legalMove(deps, claim, intent.moveUci);
-      if (!normalized.ok)
-        throw new Error(`stored move no longer legal for ${intent.id}`);
-      const response = deps.rail.encodePaymentResponse(
-        intent.settleTxid ?? intent.clientTxid,
+    // One unrecoverable intent must not abort the sweep for the rest of the
+    // intents or the overdue-claim expiry below.
+    try {
+      const status = await deps.rail.getTransactionStatus(intent.clientTxid);
+      if (status.status === "confirmed") {
+        const claim = deps.db
+          .select()
+          .from(schema.claims)
+          .where(eq(schema.claims.id, intent.claimId))
+          .get();
+        if (claim === undefined || claim.status !== "open") continue;
+        const normalized = legalMove(deps, claim, intent.moveUci);
+        if (!normalized.ok)
+          throw new Error(`stored move no longer legal for ${intent.id}`);
+        const response = deps.rail.encodePaymentResponse(
+          intent.settleTxid ?? intent.clientTxid,
+        );
+        await deps.coordinator.dispatch({
+          type: "MoveSettled",
+          payload: {
+            claimId: claim.id,
+            player: claim.player,
+            move: normalized.move,
+            clientTxid: intent.clientTxid,
+            txid: intent.settleTxid ?? intent.clientTxid,
+            response,
+          },
+        });
+        continue;
+      }
+      const boundary =
+        intent.updatedAt +
+        deps.config().PAYMENT_RECOVERY_TIMEOUT_SECONDS * 1_000;
+      const beyondValidity =
+        status.status === "not_found" &&
+        (intent.lastValidRound === null
+          ? now >= boundary
+          : status.currentRound > intent.lastValidRound);
+      if (beyondValidity) {
+        await deps.coordinator.dispatch({
+          type: "IntentFailed",
+          payload: {
+            clientTxid: intent.clientTxid,
+            failureCode:
+              intent.lastValidRound === null
+                ? "recovery_timeout"
+                : "validity_expired",
+          },
+        });
+        continue;
+      }
+      schedule(
+        status.status === "not_found" && intent.lastValidRound === null
+          ? Math.min(boundary, now + RECOVERY_POLL_MS)
+          : now + RECOVERY_POLL_MS,
       );
-      await deps.coordinator.dispatch({
-        type: "MoveSettled",
-        payload: {
-          claimId: claim.id,
-          player: claim.player,
-          move: normalized.move,
-          clientTxid: intent.clientTxid,
-          txid: intent.settleTxid ?? intent.clientTxid,
-          response,
-        },
-      });
-      continue;
+    } catch (error) {
+      logger?.error(
+        { err: error, intentId: intent.id },
+        "payment intent recovery failed; will retry",
+      );
+      schedule(now + RECOVERY_POLL_MS);
     }
-    const boundary =
-      intent.updatedAt + deps.config().PAYMENT_RECOVERY_TIMEOUT_SECONDS * 1_000;
-    const beyondValidity =
-      status.status === "not_found" &&
-      (intent.lastValidRound === null
-        ? now >= boundary
-        : status.currentRound > intent.lastValidRound);
-    if (beyondValidity) {
-      await deps.coordinator.dispatch({
-        type: "IntentFailed",
-        payload: {
-          clientTxid: intent.clientTxid,
-          failureCode:
-            intent.lastValidRound === null
-              ? "recovery_timeout"
-              : "validity_expired",
-        },
-      });
-      continue;
-    }
-    const candidate =
-      status.status === "not_found" && intent.lastValidRound === null
-        ? Math.min(boundary, now + RECOVERY_POLL_MS)
-        : now + RECOVERY_POLL_MS;
-    nextRecoveryAt =
-      nextRecoveryAt === null ? candidate : Math.min(nextRecoveryAt, candidate);
   }
   const overdue = deps.db
     .select()

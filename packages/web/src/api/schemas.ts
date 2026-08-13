@@ -51,7 +51,7 @@ export const metaSchema = z.object({
     nextGameNudgeSeconds: z.number(),
   }),
   quotas: z.object({
-    human: z.number(),
+    human: z.number().nullable(),
     agent: z.number(),
     demo: z.number(),
     windowMinutes: z.number(),
@@ -101,9 +101,10 @@ export const bonusStatusSchema = z.enum([
 ]);
 export type BonusStatus = z.infer<typeof bonusStatusSchema>;
 
+/** A null limit/remaining means the window is uncapped (staked human claims). */
 const quotaWindowSchema = z.object({
-  limit: nonNegativeIntegerSchema,
-  remaining: nonNegativeIntegerSchema,
+  limit: nonNegativeIntegerSchema.nullable(),
+  remaining: nonNegativeIntegerSchema.nullable(),
   resetsAt: isoTimestampSchema.nullable(),
 });
 
@@ -164,6 +165,25 @@ export const bonusOptInTxnResponseSchema = z.object({
 export const bonusOptInResponseSchema = z.object({
   status: z.literal("watching"),
 });
+
+const sweepLegSchema = z.enum(["usdc", "algo"]);
+export const bonusSweepQuoteSchema = z.object({
+  receiver: z.string().min(1),
+  txns: z.array(
+    z.object({
+      leg: sweepLegSchema,
+      unsignedTxnB64: z.string().min(1),
+      amount: z.number().int().positive(),
+    }),
+  ),
+});
+export type BonusSweepQuote = z.infer<typeof bonusSweepQuoteSchema>;
+
+export const bonusSweepResponseSchema = z.object({
+  status: z.literal("submitted"),
+  txids: z.array(z.object({ leg: sweepLegSchema, txid: z.string().min(1) })),
+});
+export type BonusSweepReceipt = z.infer<typeof bonusSweepResponseSchema>;
 
 export const gameResultSchema = z.enum(["white", "black", "draw", "aborted"]);
 export type GameResult = z.infer<typeof gameResultSchema>;

@@ -1,7 +1,7 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import type { Meta, Move } from "../api/schemas.js";
 import { obtainTurnstileToken } from "../auth/turnstile.js";
-import { Board, type BoardFx } from "../board/Board.jsx";
+import { Board } from "../board/Board.jsx";
 import { BoardLoop } from "../board/BoardLoop.jsx";
 import {
   enPassantCaptures,
@@ -143,26 +143,11 @@ export function PlayView(props: {
   const { state, send, checkExpiry } = props.flow;
   const { meta } = props;
   const [promotion, setPromotion] = useState<readonly Move[] | null>(null);
-  const [fx, setFx] = useState<BoardFx | null>(null);
   const [coach] = useState(() => !coachMarksSeen());
 
   useEffect(() => {
     if (state.phase === "FOCUS" && coach) markCoachMarksSeen();
   }, [state.phase, coach]);
-
-  // The committed move plays with the scanline type-in FX behind the
-  // settle morph.
-  useEffect(() => {
-    if (state.phase !== "RECEIPT" || state.receipt === undefined) return;
-    const { from, to } = parseUci(state.receipt.move.uci);
-    setFx({
-      kind: "type",
-      from,
-      to,
-      capture: state.receipt.move.san.includes("x"),
-      seq: Date.now(),
-    });
-  }, [state.phase, state.receipt]);
 
   const claim = state.claim;
   const selectable = useMemo(
@@ -228,12 +213,9 @@ export function PlayView(props: {
     if (move !== undefined) send({ type: "MOVE_CHOSEN", move });
   };
 
-  const focusVisible =
-    state.phase === "FOCUS" ||
-    state.phase === "CONFIRM" ||
-    state.phase === "SIGNING" ||
-    state.phase === "SETTLING" ||
-    state.phase === "RECEIPT";
+  // Once the move is committed (signing onward) the modal owns the screen —
+  // the background board would leak the position below the morph.
+  const focusVisible = state.phase === "FOCUS" || state.phase === "CONFIRM";
   const morphVisible =
     state.phase === "RECEIPT"
       ? state.chosenMove === undefined || claim !== undefined
@@ -344,7 +326,6 @@ export function PlayView(props: {
                 epTargets={epTargets}
                 onSquareTap={onSquareTap}
                 coords
-                fx={fx}
               />
             </div>
           </div>
@@ -477,11 +458,7 @@ function ConfirmMorph(props: {
 
         {state.phase === "CONFIRM" && claim !== undefined ? (
           <>
-            <p className="sub">
-              {demo
-                ? "demo — the move is final, nothing is staked."
-                : `${claim.yourSide.toUpperCase()} · stakes ${formatMicroUsdc(claim.stakeMicroUsdc)} USDC — signing = committing. no undo.`}
-            </p>
+            
             {state.error !== null && state.error !== undefined ? (
               <p className="formerr" role="alert">
                 {state.error.hint}
@@ -497,7 +474,7 @@ function ConfirmMorph(props: {
               <div className="walletbox">
                 <h4>DEMO MOVE</h4>
                 <p className="sub">
-                  nothing staked, not counted — the move is still final.
+                  nothing staked — the move still will count.
                 </p>
                 <div className="modal-actions pair">
                   <button
@@ -591,7 +568,7 @@ function Receipt(props: {
         ) : demo ? (
           <>
             &gt; demo move committed :: {receipt.move.san}
-            {"\n"}&gt; nothing staked · not counted
+            {"\n"}&gt; nothing staked
           </>
         ) : (
           <>

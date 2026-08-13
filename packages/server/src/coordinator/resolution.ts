@@ -217,7 +217,7 @@ export function resolveTerminalGame(
   // in the same transaction, entirely downstream of the payout math above so
   // it can never influence jobs or ledger rows (I11).
   const config = deps.config?.();
-  if (config !== undefined) {
+  if (config?.POINTS_ENABLED === true) {
     awardResolutionPoints(db, ctx.now, game.result as GameResult, stakeRows, {
       pointsMove: config.POINTS_MOVE,
       pointsWin: config.POINTS_WIN,

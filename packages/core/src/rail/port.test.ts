@@ -15,6 +15,8 @@ import type {
   SettleResult,
   SignedSubmitResult,
   StakeQuote,
+  SweepQuote,
+  SweepTxn,
   TxStatus,
   VerifyFailure,
   VerifyResult,
@@ -47,6 +49,8 @@ type PublicRailTypes = [
   PreparedPayouts,
   PreparedFunding,
   PreparedSubmission,
+  SweepTxn,
+  SweepQuote,
   TxStatus,
   PaymentRail,
 ];

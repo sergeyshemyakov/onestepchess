@@ -27,7 +27,6 @@ const coreConfigObject = z
     CLAIM_TTL_HUMAN: positiveInteger.default(600),
     CLAIM_TTL_AGENT: positiveInteger.default(90),
     CLAIM_TTL_ENDSPIEL: positiveInteger.default(30),
-    QUOTA_HUMAN: positiveInteger.default(12),
     QUOTA_AGENT: positiveInteger.default(120),
     QUOTA_DEMO: positiveInteger.default(12),
     GUEST_CLAIM_ALLOWANCE: positiveInteger.default(1),

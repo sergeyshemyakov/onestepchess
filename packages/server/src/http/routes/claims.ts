@@ -36,6 +36,10 @@ export type ClaimRouteDeps = ClaimDeps &
       recordMoveSettled(latencyMs: number): void;
       recordFacilitatorError(): void;
     };
+    // The recovery loop only re-arms itself while intents are in flight; any
+    // path that leaves an intent unresolved must kick it or the intent (and
+    // its claim) can stay stuck until the next boot.
+    readonly scheduleRecovery?: (dueAt: number) => void;
   };
 
 function claimView(deps: ClaimRouteDeps, claim: ClaimRecord, ascii: boolean) {
@@ -246,6 +250,7 @@ async function submitPaidMove(
     };
   }
   if (existing?.status === "verified" || existing?.status === "settling") {
+    deps.scheduleRecovery?.(deps.now());
     return { kind: "pending", claimId: claim.id };
   }
   if (existing?.status === "failed") {
@@ -360,6 +365,7 @@ async function submitPaidMove(
     };
   }
   if (!opened.created) {
+    deps.scheduleRecovery?.(deps.now());
     return { kind: "pending", claimId: claim.id };
   }
 
@@ -369,6 +375,7 @@ async function submitPaidMove(
     verification = await deps.rail.verify(signature, required.required);
   } catch (error) {
     deps.metrics?.recordFacilitatorError();
+    deps.scheduleRecovery?.(deps.now());
     throw error;
   }
   if (!verification.ok) {
@@ -392,11 +399,13 @@ async function submitPaidMove(
     settled = await deps.rail.settle(signature, required.required);
   } catch (error) {
     deps.metrics?.recordFacilitatorError();
+    deps.scheduleRecovery?.(deps.now());
     throw error;
   }
   if (!settled.ok) {
     deps.metrics?.recordFacilitatorError();
     if (settled.reason === "unavailable") {
+      deps.scheduleRecovery?.(deps.now());
       return { kind: "pending", claimId: claim.id };
     }
     await deps.coordinator.dispatch({

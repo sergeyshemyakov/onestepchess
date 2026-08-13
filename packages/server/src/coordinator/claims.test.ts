@@ -171,8 +171,8 @@ describe("claim issuance (F3/F5)", () => {
     ).toEqual({ n: 1 });
   });
 
-  it("uses independent demo quota and exact rolling-window retry-after", async () => {
-    const stack = setup({ GAME_POOL_TARGET: 2, QUOTA_HUMAN: 1, QUOTA_DEMO: 1 });
+  it("leaves staked human claims unquoted while demo keeps exact rolling-window retry-after", async () => {
+    const stack = setup({ GAME_POOL_TARGET: 2, QUOTA_DEMO: 1 });
     await player(stack, "alice");
     const first = await claim(stack, "alice");
     stack.database.sqlite
@@ -182,14 +182,53 @@ describe("claim issuance (F3/F5)", () => {
       type: "ExpireClaim",
       payload: { claimId: first.claim?.id },
     });
-    const blocked = await claim(stack, "alice");
+    const second = await claim(stack, "alice");
+    expect(second.created).toBe(true);
+    stack.database.sqlite
+      .prepare("UPDATE claims SET deadline = ? WHERE id = ?")
+      .run(Date.now(), second.claim?.id);
+    await stack.coordinator.dispatch({
+      type: "ExpireClaim",
+      payload: { claimId: second.claim?.id },
+    });
+
     const demo = await claim(stack, "alice", true);
+    expect(demo.created).toBe(true);
+    stack.database.sqlite
+      .prepare("UPDATE claims SET deadline = ? WHERE id = ?")
+      .run(Date.now(), demo.claim?.id);
+    await stack.coordinator.dispatch({
+      type: "ExpireClaim",
+      payload: { claimId: demo.claim?.id },
+    });
+    const demoBlocked = await claim(stack, "alice", true);
+    expect(demoBlocked).toMatchObject({
+      claim: null,
+      quota: true,
+      retryAfterSeconds: 3600,
+    });
+  });
+
+  it("quotaOverride still caps a specific human's staked claims", async () => {
+    const stack = setup({ GAME_POOL_TARGET: 2 });
+    await player(stack, "alice");
+    stack.database.sqlite
+      .prepare("UPDATE players SET quota_override = 1 WHERE address = ?")
+      .run("alice");
+    const first = await claim(stack, "alice");
+    stack.database.sqlite
+      .prepare("UPDATE claims SET deadline = ? WHERE id = ?")
+      .run(Date.now(), first.claim?.id);
+    await stack.coordinator.dispatch({
+      type: "ExpireClaim",
+      payload: { claimId: first.claim?.id },
+    });
+    const blocked = await claim(stack, "alice");
     expect(blocked).toMatchObject({
       claim: null,
       quota: true,
       retryAfterSeconds: 3600,
     });
-    expect(demo.created).toBe(true);
   });
 
   it("agent_claim_terms_use_agent_and_endspiel_quota_ttl_and_stake", async () => {
@@ -363,7 +402,7 @@ describe("claim issuance (F3/F5)", () => {
 
 describe("referral award through the settled move path (F15 step 4)", () => {
   it("credits the referrer once when the referred human's qualifying move settles", async () => {
-    const stack = setup({ GAME_POOL_TARGET: 4 });
+    const stack = setup({ GAME_POOL_TARGET: 4, POINTS_ENABLED: true });
     const now = Date.now();
     stack.database.sqlite
       .prepare(
@@ -449,5 +488,70 @@ describe("referral award through the settled move path (F15 step 4)", () => {
         )
         .get(),
     ).toEqual({ n: 1 });
+  });
+
+  it("never credits a referral while POINTS_ENABLED is off (the default)", async () => {
+    const stack = setup({ GAME_POOL_TARGET: 4 });
+    const now = Date.now();
+    stack.database.sqlite
+      .prepare(
+        "INSERT INTO players(address, kind, nickname, created_at, banned) VALUES ('referrer', 'human', 'referrer', ?, false)",
+      )
+      .run(now);
+    stack.database.sqlite
+      .prepare(
+        "INSERT INTO players(address, kind, nickname, created_at, banned, referred_by) VALUES ('referee', 'human', 'referee', ?, false, 'referrer')",
+      )
+      .run(now);
+    await stack.coordinator.dispatch({ type: "PoolTick", payload: {} });
+    await stack.coordinator.onIdle();
+    stack.database.sqlite
+      .prepare(
+        "INSERT INTO games(id, name, status, fen, rules_json, ply, last_ply_at, created_at, result, finished_at) VALUES ('gm_prior', 'prior', 'finished', 'fen', '{}', 2, ?, ?, 'white', ?)",
+      )
+      .run(now, now, now);
+    for (const n of [1, 2]) {
+      stack.database.sqlite
+        .prepare(
+          "INSERT INTO claims(id, game_id, player, side, demo, stake_microusdc, status, created_at, deadline, moved_ply) VALUES (?, 'gm_prior', 'referee', 'white', false, 1000, 'moved', ?, ?, ?)",
+        )
+        .run(`clm_prior_${n}`, now, now, n);
+      stack.database.sqlite
+        .prepare(
+          "INSERT INTO stake_entries(id, game_id, claim_id, player, side, kind, amount, pay_txid, ply, created_at) VALUES (?, 'gm_prior', ?, 'referee', 'white', 'human', 1000, ?, ?, ?)",
+        )
+        .run(`se_prior_${n}`, `clm_prior_${n}`, `tx_prior_${n}`, n, now);
+    }
+    const game = stack.database.sqlite
+      .prepare("SELECT id FROM games WHERE status = 'active'")
+      .get() as { id: string } | undefined;
+    if (game === undefined) throw new Error("expected an active pool game");
+    stack.database.sqlite
+      .prepare(
+        "INSERT INTO claims(id, game_id, player, side, demo, stake_microusdc, status, created_at, deadline) VALUES ('clm_live_1', ?, 'referee', 'white', false, 1000, 'open', ?, ?)",
+      )
+      .run(game.id, now, now + 60_000);
+    await stack.coordinator.dispatch({
+      type: "MoveSettled",
+      payload: {
+        claimId: "clm_live_1",
+        player: "referee",
+        move: { uci: "e2e4", san: "e4" },
+        clientTxid: "ct_tx_live_1",
+        txid: "tx_live_1",
+        response: "resp",
+      },
+    });
+
+    expect(
+      stack.database.sqlite
+        .prepare("SELECT points, ref_qualified FROM players WHERE address = ?")
+        .get("referrer"),
+    ).toEqual({ points: 0, ref_qualified: 0 });
+    expect(
+      stack.database.sqlite
+        .prepare("SELECT count(*) AS n FROM point_awards")
+        .get(),
+    ).toEqual({ n: 0 });
   });
 });

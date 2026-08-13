@@ -13,6 +13,8 @@ import type {
   SettleResult,
   SignedSubmitResult,
   StakeQuote,
+  SweepQuote,
+  SweepTxn,
   TxStatus,
   VerifyResult,
 } from "@onestepchess/core";
@@ -44,7 +46,10 @@ import {
 } from "./header.js";
 
 const DEFAULT_TREASURY = "MOCK_TREASURY";
-const DEFAULT_BONUS = "MOCK_BONUS";
+// A real (deterministic) Algorand address: sweep transactions are genuine
+// algosdk payloads whose receiver must pass address validation, exactly like
+// the opt-in flow builds a genuine self-transfer.
+const DEFAULT_BONUS = algosdk.encodeAddress(new Uint8Array(32).fill(9));
 const DEFAULT_USDC_ASSET = "31566704";
 const DEFAULT_MAX_TIMEOUT_SECONDS = 120;
 const DEFAULT_BALANCE = 10_000_000;
@@ -587,10 +592,86 @@ export function createMockRail(options: MockRailOptions = {}): MockRail {
       ).toString("base64");
     },
 
+    async buildSweepTxns(address: string): Promise<SweepQuote> {
+      requireQuery("account");
+      if (!algosdk.isValidAddress(address))
+        throw new RailError("CONTRACT", "Sweep address must be valid");
+      const balances = {
+        usdcMicroUsdc: 0,
+        algoMicroAlgo: 0,
+        ...control.balanceOverrides.get(address),
+      };
+      const account = {
+        spendableAlgoMicro: 0,
+        ...control.accountOverrides.get(address),
+      };
+      const fee = 1_000;
+      const usdcAmount = balances.usdcMicroUsdc;
+      const spendable = account.spendableAlgoMicro;
+      const usdcLeg = usdcAmount > 0 && spendable >= fee;
+      const algoAmount = spendable - fee * ((usdcLeg ? 1 : 0) + 1);
+      const algoLeg = algoAmount > 0;
+      if (!usdcLeg && !algoLeg) return { receiver: bonusAddress, txns: [] };
+      const suggestedParams = {
+        flatFee: true,
+        fee,
+        minFee: fee,
+        firstValid: state.currentRound,
+        lastValid: state.currentRound + 1_000,
+        genesisID: "mainnet-v1.0",
+        genesisHash: new Uint8Array(
+          Buffer.from(MAINNET_GENESIS_HASH, "base64"),
+        ),
+      };
+      const txns: SweepTxn[] = [];
+      if (usdcLeg) {
+        const transaction =
+          algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+            sender: address,
+            receiver: bonusAddress,
+            amount: usdcAmount,
+            assetIndex: Number(DEFAULT_USDC_ASSET),
+            note: new TextEncoder().encode(`osc:sweep:usdc:${address}`),
+            suggestedParams,
+          });
+        txns.push({
+          leg: "usdc",
+          unsignedTxnB64: Buffer.from(
+            algosdk.encodeUnsignedTransaction(transaction),
+          ).toString("base64"),
+          amount: usdcAmount,
+        });
+      }
+      if (algoLeg) {
+        const transaction = algosdk.makePaymentTxnWithSuggestedParamsFromObject(
+          {
+            sender: address,
+            receiver: bonusAddress,
+            amount: algoAmount,
+            note: new TextEncoder().encode(`osc:sweep:algo:${address}`),
+            suggestedParams,
+          },
+        );
+        txns.push({
+          leg: "algo",
+          unsignedTxnB64: Buffer.from(
+            algosdk.encodeUnsignedTransaction(transaction),
+          ).toString("base64"),
+          amount: algoAmount,
+        });
+      }
+      return { receiver: bonusAddress, txns };
+    },
+
     async submitSignedTransaction(
       signedTxnB64: string,
     ): Promise<SignedSubmitResult> {
       let optInAddress: string | null = null;
+      let sweep: {
+        readonly sender: string;
+        readonly leg: "algo" | "usdc";
+        readonly amount: number;
+      } | null = null;
       try {
         const decoded = algosdk.decodeSignedTransaction(
           new Uint8Array(Buffer.from(signedTxnB64, "base64")),
@@ -603,6 +684,26 @@ export function createMockRail(options: MockRailOptions = {}): MockRail {
           transfer.receiver.toString() === decoded.txn.sender.toString()
         ) {
           optInAddress = decoded.txn.sender.toString();
+        } else if (
+          decoded.txn.type === "axfer" &&
+          transfer !== undefined &&
+          transfer.receiver.toString() === bonusAddress
+        ) {
+          sweep = {
+            sender: decoded.txn.sender.toString(),
+            leg: "usdc",
+            amount: Number(transfer.amount),
+          };
+        } else if (
+          decoded.txn.type === "pay" &&
+          decoded.txn.payment !== undefined &&
+          decoded.txn.payment.receiver.toString() === bonusAddress
+        ) {
+          sweep = {
+            sender: decoded.txn.sender.toString(),
+            leg: "algo",
+            amount: Number(decoded.txn.payment.amount),
+          };
         }
       } catch {
         // The mock relay remains an opaque submit port for fault-injection
@@ -617,6 +718,40 @@ export function createMockRail(options: MockRailOptions = {}): MockRail {
           optedInUsdc: true,
         });
       };
+      // Sweeps behave like a chain observer too: credit the bonus account and
+      // debit the sender's overridden balances so the dev/e2e loop sees funds
+      // actually move.
+      const applySweep = (): void => {
+        if (sweep === null) return;
+        state.bonusBalances =
+          sweep.leg === "usdc"
+            ? {
+                ...state.bonusBalances,
+                usdcMicroUsdc: state.bonusBalances.usdcMicroUsdc + sweep.amount,
+              }
+            : {
+                ...state.bonusBalances,
+                algoMicroAlgo: state.bonusBalances.algoMicroAlgo + sweep.amount,
+              };
+        const override = control.balanceOverrides.get(sweep.sender);
+        if (override !== undefined) {
+          const clamp = (value: number): number => (value > 0 ? value : 0);
+          control.balanceOverrides.set(sweep.sender, {
+            ...override,
+            ...(sweep.leg === "usdc"
+              ? {
+                  usdcMicroUsdc: clamp(
+                    (override.usdcMicroUsdc ?? 0) - sweep.amount,
+                  ),
+                }
+              : {
+                  algoMicroAlgo: clamp(
+                    (override.algoMicroAlgo ?? 0) - sweep.amount - 1_000,
+                  ),
+                }),
+          });
+        }
+      };
       const value = await takeScripted(control.signedQueue);
       if (value !== undefined) {
         if (!value.ok) {
@@ -624,6 +759,7 @@ export function createMockRail(options: MockRailOptions = {}): MockRail {
             const issued = allocateTx();
             confirm(issued.txid, issued.round);
             applyOptIn();
+            applySweep();
           }
           return {
             ok: false,
@@ -635,6 +771,7 @@ export function createMockRail(options: MockRailOptions = {}): MockRail {
       const issued = allocateTx();
       confirm(issued.txid, issued.round);
       applyOptIn();
+      applySweep();
       return { ok: true, txid: issued.txid };
     },
 

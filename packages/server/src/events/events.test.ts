@@ -41,7 +41,6 @@ function setup(overrides: Record<string, unknown> = {}) {
     SSE_HEARTBEAT_SECONDS: 10,
     SSE_MAX_CONNECTIONS_PER_PLAYER: 2,
     EVENTS_RETENTION_DAYS: 1,
-    QUOTA_HUMAN: 1,
     QUOTA_DEMO: 2,
     QUOTA_AGENT: 5,
     ...overrides,
@@ -414,6 +413,13 @@ describe("resumable SSE and live human events", () => {
     const addresses = ["human-staked", "human-demo", "agent-one", "agent-two"];
     seedPlayer(stack, "human-staked");
     seedPlayer(stack, "human-demo");
+    // Staked human claims are uncapped by default; a quotaOverride of 1
+    // recreates the "staked quota exhausted, demo-only" priority case.
+    stack.database.db
+      .update(schema.players)
+      .set({ quotaOverride: 1 })
+      .where(eq(schema.players.address, "human-demo"))
+      .run();
     seedPlayer(stack, "agent-one", "agent");
     seedPlayer(stack, "agent-two", "agent");
     const rulesJson = JSON.stringify(gameRulesSchema.parse(stack.config));

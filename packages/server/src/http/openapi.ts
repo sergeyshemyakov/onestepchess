@@ -49,7 +49,7 @@ const agentKitExamples = {
       cooldownPlies: 5,
       nextGameNudgeSeconds: 20,
     },
-    quotas: { human: 6, agent: 120, demo: 3, windowMinutes: 60 },
+    quotas: { human: null, agent: 120, demo: 3, windowMinutes: 60 },
     pool: { target: 64, active: 63, endspiel: 1 },
     status: { mode: "running", banner: "mock staging — no real USDC" },
     turnstileSiteKey: "",

@@ -270,9 +270,6 @@ export function LiveProvider(props: {
     });
     on("game_available", () => {
       setPlayPulse((pulse) => pulse + 1);
-      if (pathRef.current !== "/") {
-        push("a board may be available — PLAY to check");
-      }
     });
     on("game_resolved", (payload) => {
       const notice = resolutionNotice(payload);

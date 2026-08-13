@@ -43,8 +43,10 @@ export function registerNudgeCommands(deps: NudgeDeps): void {
       [...deps.views.games.values()].map((game) => ({
         status: game.status,
         hasOpenClaim: deps.views.openClaimByGame.has(game.id),
+        minNextClaimAt: game.minNextClaimAt,
       })),
       config.HUMAN_BOARD_RESERVE_PERCENT,
+      ctx.now,
     );
     const agentClaimable =
       endspielClaimable +
@@ -86,8 +88,11 @@ export function registerNudgeCommands(deps: NudgeDeps): void {
 
       if (player.kind === "human") {
         if (activeClaimable === 0) continue;
-        const stakedLimit = player.quotaOverride ?? config.QUOTA_HUMAN;
+        // Staked human claims are uncapped unless an admin quotaOverride
+        // restricts this player.
+        const stakedLimit = player.quotaOverride;
         const hasStakedQuota =
+          stakedLimit === null ||
           deps.views.claimsInWindow(address, false, ctx.now) < stakedLimit;
         const hasDemoQuota =
           deps.views.claimsInWindow(address, true, ctx.now) < config.QUOTA_DEMO;
