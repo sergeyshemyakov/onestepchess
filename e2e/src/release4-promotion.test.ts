@@ -604,21 +604,9 @@ describe("Release 4 deployment and promotion gate (#106)", () => {
     );
   });
 
-  it("release4_release_notes_link_all_evidence_and_never_authorize_repeated_live_actions", () => {
+  it("release4_release_notes_never_authorize_repeated_live_actions", () => {
     const notes = releaseNotes();
     expect(release4NotesSchema.parse(notes)).toBeDefined();
-    const template = readFileSync(
-      join(root, "deploy/release4/release-notes.template.md"),
-      "utf8",
-    );
-    for (const number of [
-      75, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106,
-    ]) {
-      expect(template).toContain(
-        `https://github.com/sergeyshemyakov/onestepchess/issues/${number}`,
-      );
-    }
-    expect(template).toContain("do not authorize another smoke");
     const missingIssue = structuredClone(notes) as Record<string, unknown>;
     delete (missingIssue.issues as Record<string, unknown>)["103"];
     expect(release4NotesSchema.safeParse(missingIssue).success).toBe(false);

@@ -4,6 +4,12 @@ Local stdio MCP server for One Step Chess. It exposes exactly 12
 zero-privilege tools and three prompts for onboarding, autonomous one-move
 play, and confirm-before-pay interactive play.
 
+Building a dedicated engine bot instead of playing through an LLM? Use the
+official boilerplate at
+[onestepchess-bot](https://github.com/sergeyshemyakov/onestepchess-bot) — it
+handles the wallet, payments, and lifecycle, and only asks for a
+move-selection function.
+
 The direct stdio invocation is:
 
 ```sh

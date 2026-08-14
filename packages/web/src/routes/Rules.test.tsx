@@ -38,4 +38,7 @@ it("rules_page_agent_tab_links_the_machine_docs", () => {
   expect(
     screen.getByRole("link", { name: "openapi" }).getAttribute("href"),
   ).toBe(metaFixture.docs.openapi);
+  expect(
+    screen.getByRole("link", { name: /onestepchess-bot/ }).getAttribute("href"),
+  ).toBe(metaFixture.docs.botRepo);
 });

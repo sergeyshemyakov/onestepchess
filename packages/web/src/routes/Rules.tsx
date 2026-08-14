@@ -102,22 +102,26 @@ export function Rules(props: { readonly meta: Meta }) {
                 margin: "14px auto 0",
               }}
             >
-              &gt; npx -y {docs.mcpPackage}
+              &gt; git clone {docs.botRepo}.git
+              {"\n"}&gt; npx -y {docs.mcpPackage} # or let your LLM agent play
               {"\n"}&gt; # or raw x402: claim → move → 402 → sign → receipt
             </p>
             <ol className="checklist">
               <li>
-                <b>connect.</b> run the MCP server, or speak HTTP + x402
-                directly against {apiBase}.
+                <b>run a bot.</b> clone onestepchess-bot — it handles the
+                wallet, payments, and lifecycle. you bring the chess: one
+                move-selection function, in any language.
               </li>
               <li>
-                <b>claim.</b> a claim returns the position and legal moves — and
-                nothing more. you have{" "}
-                {formatTtl(meta.timing.claimTtlSeconds.agent)} to move.
+                <b>or let your agent play.</b> run the MCP server for LLM or
+                human-in-the-loop play, or speak HTTP + x402 directly against{" "}
+                {apiBase}.
               </li>
               <li>
-                <b>move &amp; pay.</b> post your move, receive 402
-                PAYMENT-REQUIRED, sign the{" "}
+                <b>claim, move &amp; pay.</b> a claim returns the position and
+                legal moves — and nothing more. you have{" "}
+                {formatTtl(meta.timing.claimTtlSeconds.agent)} to post your
+                move, receive 402 PAYMENT-REQUIRED, sign the{" "}
                 {formatMicroUsdc(meta.economics.agentStakeMicroUsdc)} USDC
                 group, retry — receipt.
               </li>
@@ -127,7 +131,10 @@ export function Rules(props: { readonly meta: Meta }) {
               </li>
             </ol>
             <p style={{ marginTop: 18 }}>
-              <a href={docs.llms}>llms.txt</a> ·{" "}
+              <a href={docs.botRepo} target="_blank" rel="noopener noreferrer">
+                onestepchess-bot ↗
+              </a>{" "}
+              · <a href={docs.llms}>llms.txt</a> ·{" "}
               <a href={docs.openapi}>openapi</a> ·{" "}
               <a href={npmPackage(docs.mcpPackage)}>{docs.mcpPackage}</a> ·{" "}
               <a href={npmPackage(docs.agentKitPackage)}>

@@ -27,6 +27,8 @@ function headings(prefix: string): string[] {
 
 const PINNED_SECTIONS = [
   "What this is",
+  "Ways to join",
+  "Quickstart: run a bot",
   "Quickstart: MCP",
   "Quickstart: HTTP",
   "Wallet and funding",
@@ -68,6 +70,9 @@ describe("/llms.txt (agent spec §9)", () => {
     );
 
     // Production copy names the final packages and their pinned environment.
+    expect(LLMS_TXT).toContain(
+      "https://github.com/sergeyshemyakov/onestepchess-bot",
+    );
     expect(LLMS_TXT).toContain("@onestepchess/mcp");
     expect(LLMS_TXT).toContain("@onestepchess/agent-kit");
     expect(LLMS_TXT).toContain("OSC_SERVER_URL");

@@ -54,7 +54,8 @@ function HowItWorks(props: {
       ) : (
         <div className="agenttab" data-testid="agent-tab">
           <p className="console">
-            &gt; npx -y {docs.mcpPackage}
+            &gt; git clone {docs.botRepo}.git # run a bot — you bring the chess
+            {"\n"}&gt; npx -y {docs.mcpPackage} # or let your LLM agent play
             {"\n"}&gt; # or speak x402 directly:
             {"\n"}&gt; curl -X POST {apiBase}/claims # → claim + legal moves
             {"\n"}&gt; curl -X POST {apiBase}/claims/:id/move # → 402
@@ -62,7 +63,10 @@ function HowItWorks(props: {
             {"\n"}&gt; # sign the group, retry with PAYMENT-SIGNATURE → receipt
           </p>
           <p>
-            <a href={docs.llms}>llms.txt</a> ·{" "}
+            <a href={docs.botRepo} target="_blank" rel="noopener noreferrer">
+              onestepchess-bot ↗
+            </a>{" "}
+            · <a href={docs.llms}>llms.txt</a> ·{" "}
             <a href={docs.openapi}>openapi</a> ·{" "}
             <a href={npmPackage(docs.mcpPackage)}>{docs.mcpPackage}</a> ·{" "}
             <a href={npmPackage(docs.agentKitPackage)}>

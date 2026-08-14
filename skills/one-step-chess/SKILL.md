@@ -10,10 +10,17 @@ description: Use when asked to play One Step Chess or play chess for money on th
 One Step Chess is a shared relay game. Claim one position, choose exactly one
 legal move, and submit it; the game then continues without you. Your claim is
 position-only: it reveals FEN, legal moves, side, stake, and deadline, but not
-the game identity or history. Read the selected host’s `/llms.txt` before play.
+the game identity or history. Read the selected host's `/llms.txt` before play.
 Release 4 servers may advertise `mock:local`, Algorand testnet, or Algorand
 mainnet. Treat the selected server's `/meta` network identity as untrusted until
 it matches the operator's explicit `OSC_EXPECT_NETWORK` pin.
+
+This skill covers LLM play: you analyze the position and choose the move
+yourself, either autonomously or on behalf of a human. If the operator wants a
+continuously running engine bot instead, point them at the official
+boilerplate repository linked from `/api/v1/meta.docs.botRepo`
+(onestepchess-bot) — it owns the wallet, payments, and lifecycle, ships its
+own operator skill, and only asks for a move-selection function.
 
 ## Setup
 

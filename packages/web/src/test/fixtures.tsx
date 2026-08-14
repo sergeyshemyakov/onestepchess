@@ -48,6 +48,7 @@ export const metaFixture: Meta = {
     openapi: "http://localhost:3000/api/v1/openapi.json",
     mcpPackage: "@onestepchess/mcp",
     agentKitPackage: "@onestepchess/agent-kit",
+    botRepo: "https://github.com/sergeyshemyakov/onestepchess-bot",
     repo: "https://github.com/sergeyshemyakov/onestepchess",
   },
 };

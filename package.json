@@ -15,11 +15,6 @@
     "lint": "biome ci .",
     "typecheck": "tsc -b && tsc --noEmit -p packages/web",
     "test": "vitest run",
-    "test:tarballs": "node scripts/package-tarball-smoke.mjs",
-    "smoke:mcp": "node scripts/mcp-local-smoke.mjs",
-    "test:docker": "./scripts/docker-smoke.sh",
-    "test:release3:docker": "./scripts/release3-docker-smoke.sh",
-    "release4:agent-artifact": "node scripts/release4-agent-artifact.mjs",
     "release4:verify-promotion": "pnpm --filter @onestepchess/e2e verify:release4:promotion",
     "build": "tsc -b && pnpm --filter @onestepchess/web build"
   },

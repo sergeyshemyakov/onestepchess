@@ -80,6 +80,7 @@ export const metaSchema = z.object({
     openapi: z.string(),
     mcpPackage: z.string(),
     agentKitPackage: z.string(),
+    botRepo: z.string(),
     repo: z.string(),
   }),
 });

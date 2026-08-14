@@ -41,4 +41,12 @@ e2e/evidence/
 .specify
 
 # WIP specifications
-docs
+docs/
+
+.pnpm-store/
+artifacts/
+
+# Dev/release tooling pruned from the public repo (kept locally only)
+/scripts/
+/deploy/release4/
+/e2e/src/release4-artifact.test.ts

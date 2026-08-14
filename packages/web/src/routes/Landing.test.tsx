@@ -169,6 +169,9 @@ it("web_agent_tab_uses_meta_docs_and_index_has_discovery_hooks", async () => {
   ).toBeNull();
   expect(screen.queryByRole("button", { name: /PLAY A DEMO GAME/ })).toBeNull();
   expect(
+    agentTab.querySelector(`a[href="${metaFixture.docs.botRepo}"]`),
+  ).not.toBeNull();
+  expect(
     agentTab.querySelector(`a[href="${metaFixture.docs.llms}"]`),
   ).not.toBeNull();
   expect(

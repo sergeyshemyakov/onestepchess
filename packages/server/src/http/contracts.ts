@@ -379,6 +379,7 @@ const metaResponse = z.object({
     openapi: z.url(),
     mcpPackage: z.literal("@onestepchess/mcp"),
     agentKitPackage: z.literal("@onestepchess/agent-kit"),
+    botRepo: z.url(),
     repo: z.url(),
   }),
 });

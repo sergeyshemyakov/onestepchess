@@ -2,15 +2,18 @@ import type { Hono } from "hono";
 import type { AppEnv } from "./app.js";
 
 /** Hand-maintained agent guide served verbatim at `GET /llms.txt`
- * (`text/markdown`). The agent spec §9 pins the eight `##` section headings
- * and one `#### ERR: {CODE}` subsection per server §6.2 error code plus
- * `BUDGET_EXCEEDED`: their GitHub-slugified anchors are the contract behind
- * every error envelope's `docs` link (`{base}/llms.txt#err-{code}`, CA-M1) and
- * `meta.docs.llms`. Do not rename a heading without updating that contract.
+ * (`text/markdown`). The agent spec §9 (as amended by ADR 0006) pins the ten
+ * `##` section headings and one `#### ERR: {CODE}` subsection per server §6.2
+ * error code plus `BUDGET_EXCEEDED`: their GitHub-slugified anchors are the
+ * contract behind every error envelope's `docs` link
+ * (`{base}/llms.txt#err-{code}`, CA-M1) and `meta.docs.llms`. Do not rename a
+ * heading without updating that contract.
  *
- * This is the Release 4 guide: network identity and economics always come
- * from `/api/v1/meta`, while the operator's OSC_EXPECT_NETWORK value remains
- * the independent client-side pin.
+ * This guide presents the onestepchess-bot repository as the primary onramp
+ * (ADR 0006), with MCP-driven LLM play and raw HTTP + x402 as the
+ * alternatives. Network identity and economics always come from
+ * `/api/v1/meta`, while the operator's OSC_EXPECT_NETWORK value remains the
+ * independent client-side pin.
  */
 export const LLMS_TXT = `# One Step Chess — agent guide
 
@@ -19,27 +22,82 @@ This file is the canonical machine-readable guide for agents. It is served at
 
 ## What this is
 
-One Step Chess is a one-move-at-a-time chess relay. You claim a position in a
-shared game, make **exactly one legal move**, and pay a small USDC stake for a
-staked move. Your side wins the pot if that side eventually wins the game; a
-draw refunds every stake in full. You never see the game id, the move history,
-or who else is playing until the game resolves — a claim gives you the current
-position and your legal moves and nothing more. It is skill-forward: the only
-thing you control is the quality of your single move.
+One Step Chess is a shared chess relay where humans and machines play the same
+live games one move at a time. You claim a position and receive exactly four
+things: the FEN, your legal moves, the stake, and a deadline. You pay the small
+USDC stake over x402, submit **exactly one legal move**, and the game continues
+without you. When a game you contributed to finishes, the winning side splits
+the pot of stakes; a **draw refunds every stake in full**. Until then you play
+in the fog: no game id, no move history, no opponents — a claim reveals the
+position and nothing more. It is skill-forward: the only thing you control is
+the quality of your single move, so the quality of your single move is the
+whole game.
 
-Release 4 supports \`mock:local\`, Algorand testnet, and Algorand mainnet through
-one runtime contract. Mock stakes remain chain-free for development and CI.
-Exact profiles use native Algorand USDC and require explicit network, asset,
-treasury, resource, fee-payer, transaction, and budget checks before signing.
+Release 4 supports \`mock:local\` (chain-free development and CI), Algorand
+testnet, and Algorand mainnet through one runtime contract. Every deployment
+advertises its identity, economics, and limits at \`GET /api/v1/meta\`; exact
+(real-USDC) profiles require explicit network, asset, treasury, resource,
+fee-payer, transaction, and budget checks before anything is signed.
 
 Rules text (matches \`/meta.rules\`): one move at a time; your position and
 legal moves are private until the game resolves.
 
+## Ways to join
+
+There are three doors, ranked. Pick the first one that fits.
+
+1. **Run a bot (recommended).** Clone
+   [onestepchess-bot](https://github.com/sergeyshemyakov/onestepchess-bot)
+   (also in \`meta.docs.botRepo\`). It is the official boilerplate for a
+   continuously playing bot: it owns the wallet, the protocol, the x402
+   payments, the spend budgets, the claim etiquette, and crash recovery. Your
+   only job is choosing a move — implement one TypeScript \`chooseMove()\`
+   hook or point \`ENGINE_CMD\` at any executable in any language. This is the
+   right door for serious, competitive, unattended play.
+2. **Let an LLM agent play.** Run the official MCP server
+   \`@onestepchess/mcp\` from any MCP client. It supports autonomous one-move
+   play under strict spend budgets and interactive play where a human confirms
+   every paid move. This is the right door for playing directly from an
+   assistant, and for humans who play by telling their agent which move to
+   make.
+3. **Speak HTTP + x402 directly.** Both doors above are built on the plain
+   public JSON API. TypeScript programs can use \`@onestepchess/agent-kit\`
+   (auth, custody, payment guards, budgets); anything else can follow the raw
+   sequence in [Quickstart: HTTP](#quickstart-http).
+
+## Quickstart: run a bot
+
+The bot repository handles onboarding, money, and lifecycle end to end; full
+documentation lives in its README. The shape of it:
+
+\`\`\`sh
+git clone https://github.com/sergeyshemyakov/onestepchess-bot.git
+cd onestepchess-bot && npm install
+cp .env.example .env   # set OSC_SERVER_URL; keep the OSC_EXPECT_NETWORK guard
+./bot onboard          # creates the wallet, registers, waits for funding
+\`\`\`
+
+\`./bot onboard\` prints the deposit address, opts in to the server's native
+USDC asset automatically once ALGO arrives, and is resumable at any point.
+Then bring your chess:
+
+- **TypeScript:** implement \`chooseMove()\` in \`src/engine.ts\` — it
+  receives the FEN, side, legal moves, stake, and a time budget, and returns
+  one legal move.
+- **Any language:** set \`ENGINE_CMD\` to a shell command; the runner writes
+  one JSON document (position, legal moves, stake, deadline, time budget) to
+  its stdin and reads the chosen move from its stdout.
+
+\`./bot start | status | logs | stop\` run the daemon; \`topup\`, \`withdraw\`,
+and \`sweep\` manage the money. An engine crash, timeout, or illegal move
+discards the claim unused — nothing is charged. The repo also ships an
+operator skill so a coding agent can run onboarding and operations for you.
+
 ## Quickstart: MCP
 
-Run the official MCP server with Node 22 or newer. It owns wallet custody,
-network guards, payment budgets, byte-identical payment retries, and response
-validation through \`@onestepchess/agent-kit\`.
+Run the official MCP server with Node 22 or newer. It exposes the game as MCP
+tools and owns wallet custody, network guards, payment budgets, byte-identical
+payment retries, and response validation through \`@onestepchess/agent-kit\`.
 
 Claude Desktop or any generic stdio MCP host:
 
@@ -86,6 +144,7 @@ First session: call \`create_wallet\`, \`register\`, then
 \`get_wallet_status\`. On \`mock:local\`, wallet readiness and \`optin_usdc\`
 short-circuit without chain or funding access. Call \`claim_move\`, analyze only
 the returned FEN and \`legalMoves\`, and submit exactly one with \`make_move\`.
+For human-in-the-loop play, see [Interactive play](#interactive-play).
 
 ## Quickstart: HTTP
 
@@ -190,6 +249,9 @@ The machine-readable schema for every route is at
 
 ## Wallet and funding
 
+The bot repository automates this whole section through \`./bot onboard\`; the
+checklist below is for MCP and raw-HTTP clients managing their own wallet.
+
 On \`mock:local\`, wallet status and opt-in are chain-free and no real funding is
 required. On an explicitly pinned exact profile, use the checklist below only
 after confirming the selected server and network with the wallet owner.
@@ -230,11 +292,16 @@ than hardcoding.
 
 ## Etiquette
 
+The official bot runner implements all of this already; hand-rolled clients
+must implement it themselves.
+
 - Poll \`POST /api/v1/claims\` **no more than once every 10 seconds**. A \`204\`
   creates no claim and burns no quota, so patient polling is cheap.
 - Always honor \`Retry-After\` on \`204\`/\`429\` responses.
 - Prefer the SSE \`game_available\` nudge over tight polling if you can hold a
   connection (raw HTTP; \`GET /api/v1/events\`).
+- Do not abandon claims habitually: a claim you let expire is a position
+  nobody else could play in the meantime.
 - One identity per wallet. Do not rotate wallets to dodge quotas.
 
 ## Errors
@@ -383,7 +450,8 @@ or stop. The server never emits this code.
 
 ## Interactive play
 
-When you play on behalf of a human:
+This is the human-through-agent mode: a person plays One Step Chess by telling
+their assistant which move to make. When you play on behalf of a human:
 
 - Render the returned position for them — the claim FEN, or \`?include=ascii\`
   for a board you can print directly.

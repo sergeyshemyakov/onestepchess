@@ -5,6 +5,11 @@ Chess API. It includes agent authentication, local wallet custody, safe x402
 payment handling, process-session budgets, wallet readiness, board formatters,
 and the `osc-agent` onboarding CLI.
 
+Want a ready-made bot instead of a client library? Use the official
+boilerplate at
+[onestepchess-bot](https://github.com/sergeyshemyakov/onestepchess-bot), which
+builds on this package and only asks for a move-selection function.
+
 Release 4 supports server-advertised `mock:local`, Algorand testnet, and
 Algorand mainnet profiles. The client cross-checks `/meta`, a known native-USDC
 allowlist, and `OSC_EXPECT_NETWORK` before signer or algod access. Mock remains

@@ -277,6 +277,8 @@ export const metaSchema = z.object({
     openapi: z.string(),
     mcpPackage: z.string(),
     agentKitPackage: z.string(),
+    // Older servers omit it; the client must keep parsing their /meta.
+    botRepo: z.string().optional(),
     repo: z.string(),
   }),
 });

@@ -28,7 +28,7 @@ describe("server config composition", () => {
     expect(loaded.config.PAGE_SIZE_ACTIVE).toBe(5);
     expect(loaded.config.NONCE_TTL_SECONDS).toBe(300);
     expect(loaded.config.JWT_TTL_HOURS).toBe(24);
-    expect(loaded.config.RATE_LIMIT_AUTH_PER_IP_MIN).toBe(10);
+    expect(loaded.config.RATE_LIMIT_AUTH_PER_IP_MIN).toBe(60);
     expect(loaded.config.HUMAN_BOARD_RESERVE_PERCENT).toBe(25);
     expect(loaded.config.PAYOUT_BATCH_MAX).toBe(16);
     expect(loaded.config.BACKUP_HOUR_UTC).toBe(3);
