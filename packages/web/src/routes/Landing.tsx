@@ -152,7 +152,9 @@ export function Landing(props: {
                 </span>
               </button>
               <Link className="bigplay" to="/start">
-                <span className="bp-title">I DON'T HAVE AN ALGORAND WALLET</span>
+                <span className="bp-title">
+                  I DON'T HAVE AN ALGORAND WALLET
+                </span>
                 <span className="bp-sub">set up a wallet, USDC and gas</span>
               </Link>
               {guestDemo === null ? (
@@ -173,9 +175,6 @@ export function Landing(props: {
               )}
             </div>
           ) : null}
-          <p className="faintt" style={{ marginTop: 14, fontSize: 12 }}>
-            internal playtest — mock settlement, no real USDC.
-          </p>
         </div>
         <div className="landdeco">
           <section className="replaystrip" data-testid="deepblue-strip">
@@ -206,24 +205,36 @@ export function Landing(props: {
           color: "var(--ph-dark)",
         }}
       >
-        <a
-          href="https://algorand.co/"
-          target="_blank"
-          rel="noopener noreferrer"
-          aria-label="Algorand website"
-          style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
-        >
-          <AlgorandMark /> RUNS ON ALGORAND
-        </a>
+        <div style={{ flex: "1 1 0", display: "flex", alignItems: "center" }}>
+          <a
+            href="https://algorand.co/"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Algorand website"
+            style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
+          >
+            <AlgorandMark /> RUNS ON ALGORAND
+          </a>
+        </div>
         <span>· built for the x402 global challenge</span>
-        <a
-          href={props.meta.docs.repo}
-          target="_blank"
-          rel="noopener noreferrer"
+        <div
+          style={{
+            flex: "1 1 0",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "flex-end",
+            gap: 10,
+          }}
         >
-          · GitHub ↗
-        </a>
-        <Link to="/rules">· rules</Link>
+          <a
+            href={props.meta.docs.repo}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            GitHub ↗
+          </a>
+          <Link to="/rules">· rules</Link>
+        </div>
       </div>
       {gamePanePhase ? (
         gamePaneDismissed ? null : (

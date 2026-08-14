@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,10 +18,17 @@ afterEach(() => {
   for (const database of opened.splice(0)) database.sqlite.close();
 });
 
+// Mirrors the web shell's theme-bootstrap inline script: the served CSP must
+// allow exactly this content by hash, never via 'unsafe-inline'.
+const INLINE_BOOT_SCRIPT = 'window.__oscTheme = "green";';
+
 function makeStaticDir(): string {
   const dir = mkdtempSync(join(tmpdir(), "osc-static-"));
   dirs.push(dir);
-  writeFileSync(join(dir, "index.html"), "<main>osc</main>");
+  writeFileSync(
+    join(dir, "index.html"),
+    `<script>${INLINE_BOOT_SCRIPT}</script><main>osc</main>`,
+  );
   mkdirSync(join(dir, "assets"));
   const js = join(dir, "assets", "app-abcdef.js");
   writeFileSync(js, "export const raw = 1;\n");
@@ -100,7 +108,9 @@ describe("static and discovery serving (§6.6)", () => {
 
     // SPA fallback: unknown non-API GET → index.html, no-cache, uncompressed.
     const spa = await app.request("/play");
-    expect(await spa.text()).toBe("<main>osc</main>");
+    expect(await spa.text()).toBe(
+      `<script>${INLINE_BOOT_SCRIPT}</script><main>osc</main>`,
+    );
     expect(spa.headers.get("cache-control")).toBe("no-cache");
     expect(spa.headers.get("content-encoding")).toBeNull();
 
@@ -163,9 +173,53 @@ describe("static and discovery serving (§6.6)", () => {
     expect(csp).toContain("wss://wallet-connect-a.perawallet.app");
     expect(csp).toContain("wss://wallet-connect-h.perawallet.app");
     expect(csp).toContain("https://challenges.cloudflare.com");
-    // no wildcard or unsafe directives
-    expect(csp).not.toContain("*");
-    expect(csp).not.toContain("unsafe-inline");
+    // WalletConnect v1 dials a random [a-z0-9] bridge shard subdomain.
+    expect(csp).toContain("https://*.bridge.walletconnect.org");
+    expect(csp).toContain("wss://*.bridge.walletconnect.org");
+    // Pera modal assets, path-scoped to Pera's own bucket — never all of S3.
+    // `data:` is inert in connect-src (the URL is the content; nothing leaves
+    // the page) and lets Pera fetch its QR-center logo SVG.
+    expect(csp).toContain(
+      "connect-src 'self' data: https://mainnet-api.4160.nodely.dev",
+    );
+    expect(csp).toContain("https://s3.amazonaws.com/wc.perawallet.app/");
+    expect(csp).toContain(
+      "media-src 'self' https://s3.amazonaws.com/wc.perawallet.app/",
+    );
+    expect(csp).not.toContain("s3.amazonaws.com;");
+    expect(csp).not.toContain("s3.amazonaws.com ");
+    // Pera Connect renders its QR modal from JS-injected <style> elements, so
+    // style-src alone carries 'unsafe-inline'; the Google Fonts stylesheet its
+    // modal @imports is allowed by exact origin, with its font files in
+    // font-src.
+    expect(csp).toContain(
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    );
+    expect(csp).toContain("font-src 'self' https://fonts.gstatic.com");
+    // script-src stays strict: the shell's own inline bootstrap is allowed by
+    // its exact hash (recomputed from the served index.html), never by
+    // 'unsafe-inline'.
+    const bootHash = createHash("sha256")
+      .update(INLINE_BOOT_SCRIPT)
+      .digest("base64");
+    const scriptSrc = csp
+      .split(";")
+      .map((directive) => directive.trim())
+      .find((directive) => directive.startsWith("script-src"));
+    expect(scriptSrc).toBe(
+      `script-src 'self' https://challenges.cloudflare.com 'sha256-${bootHash}'`,
+    );
+    // No bare-wildcard source: every `*` is a subdomain wildcard on a
+    // reviewed host (the WalletConnect bridge shards).
+    const sources = csp
+      .split(";")
+      .flatMap((directive) => directive.trim().split(/\s+/).slice(1));
+    expect(sources).not.toContain("*");
+    for (const source of sources.filter((entry) => entry.includes("*"))) {
+      expect(source).toMatch(
+        /^(https|wss):\/\/\*\.bridge\.walletconnect\.org$/,
+      );
+    }
     expect(csp).not.toContain("unsafe-eval");
 
     // No HSTS on documented HTTP playtest origins.

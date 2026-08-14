@@ -1,4 +1,5 @@
 import type { Logger } from "../logger.js";
+import { deliverTelegramAlert, type TelegramAlertConfig } from "./telegram.js";
 
 const SECRET_KEY =
   /authorization|cookie|jwt|mnemonic|private|secret|signature|signed|payload_b64|payment/i;
@@ -30,6 +31,12 @@ export function sanitizeOperationalPayload(
   return value;
 }
 
+export type AlertBody = {
+  readonly type: string;
+  readonly at: string;
+  readonly payload: unknown;
+};
+
 export type AlertTransport = (
   url: string,
   init: {
@@ -45,6 +52,7 @@ export class OperationalAlerts {
   constructor(
     private readonly deps: {
       readonly url?: string;
+      readonly telegram?: TelegramAlertConfig;
       readonly dedupeSeconds: () => number;
       readonly now: () => number;
       readonly transport: AlertTransport;
@@ -66,23 +74,38 @@ export class OperationalAlerts {
       return false;
     }
     this.lastSent.set(type, now);
-    const body = {
+    const body: AlertBody = {
       type,
       at: new Date(now).toISOString(),
       payload: sanitizeOperationalPayload(payload, this.deps.secrets),
     };
-    if (this.deps.url === undefined) return true;
-    try {
-      await this.deps.transport(this.deps.url, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
-    } catch (error) {
-      this.deps.logger.warn(
-        { err: error, alertType: type },
-        "operational alert delivery failed",
-      );
+    if (this.deps.url !== undefined) {
+      try {
+        await this.deps.transport(this.deps.url, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+      } catch (error) {
+        this.deps.logger.warn(
+          { err: error, alertType: type, sink: "webhook" },
+          "operational alert delivery failed",
+        );
+      }
+    }
+    if (this.deps.telegram !== undefined) {
+      try {
+        await deliverTelegramAlert(
+          this.deps.telegram,
+          this.deps.transport,
+          body,
+        );
+      } catch (error) {
+        this.deps.logger.warn(
+          { err: error, alertType: type, sink: "telegram" },
+          "operational alert delivery failed",
+        );
+      }
     }
     return true;
   }

@@ -240,7 +240,10 @@ export function createWalletModule(
       id: WalletId.WALLETCONNECT,
       options: {
         projectId: walletConnectProjectId,
-        enableExplorer: true,
+        // The explorer wallet-list calls api.web3modal.org, which the server
+        // CSP's connect-src does not allow; the QR pairing path works without
+        // it. Allowlist those origins before ever re-enabling this.
+        enableExplorer: false,
         explorerRecommendedWalletIds: [],
         privacyPolicyUrl: window.location.origin,
         termsOfServiceUrl: window.location.origin,

@@ -117,6 +117,24 @@ describe("server config composition", () => {
     }
   });
 
+  it("requires_telegram_bot_token_and_chat_id_together", () => {
+    expect(() =>
+      loadConfig({ env: { ...baseEnv, TELEGRAM_BOT_TOKEN: "123:abc" } }),
+    ).toThrowError(ConfigError);
+    expect(() =>
+      loadConfig({ env: { ...baseEnv, TELEGRAM_CHAT_ID: "42" } }),
+    ).toThrowError(ConfigError);
+    const loaded = loadConfig({
+      env: {
+        ...baseEnv,
+        TELEGRAM_BOT_TOKEN: "123:abc",
+        TELEGRAM_CHAT_ID: "42",
+      },
+    });
+    expect(loaded.env.TELEGRAM_BOT_TOKEN).toBe("123:abc");
+    expect(loaded.env.TELEGRAM_CHAT_ID).toBe("42");
+  });
+
   it("keeps an explicitly provided JWT_SECRET", () => {
     const loaded = loadConfig({
       env: { ...baseEnv, JWT_SECRET: "a".repeat(32) },

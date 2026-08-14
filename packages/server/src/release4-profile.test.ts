@@ -518,13 +518,33 @@ describe("Release 4 server profiles and immutable identity (#97)", () => {
       "script-src 'self' https://challenges.cloudflare.com",
       "frame-src https://challenges.cloudflare.com",
       "img-src 'self' data: blob:",
-      "style-src 'self'",
-      "font-src 'self'",
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+      "font-src 'self' https://fonts.gstatic.com",
+      // Pera modal assets, path-scoped to Pera's bucket — never all of S3.
+      "media-src 'self' https://s3.amazonaws.com/wc.perawallet.app/",
     ]) {
       expect(csp).toContain(directive);
     }
-    expect(csp).not.toContain("*");
-    expect(csp).not.toContain("unsafe-inline");
+    // No bare-wildcard source: every `*` is a subdomain wildcard on the
+    // reviewed WalletConnect v1 bridge domain (random [a-z0-9] shards).
+    const sources = csp
+      .split(";")
+      .flatMap((directive) => directive.trim().split(/\s+/).slice(1));
+    expect(sources).not.toContain("*");
+    for (const source of sources.filter((entry) => entry.includes("*"))) {
+      expect(source).toMatch(
+        /^(https|wss):\/\/\*\.bridge\.walletconnect\.org$/,
+      );
+    }
+    // 'unsafe-inline' is scoped to style-src for the wallet SDK modals; the
+    // XSS-relevant script-src directive must never carry it.
+    const scriptSrc = csp
+      .split(";")
+      .map((directive) => directive.trim())
+      .find((directive) => directive.startsWith("script-src"));
+    expect(scriptSrc).toBe(
+      "script-src 'self' https://challenges.cloudflare.com",
+    );
     expect(csp).not.toContain("unsafe-eval");
 
     const walletMatrix = [
@@ -548,6 +568,12 @@ describe("Release 4 server profiles and immutable identity (#97)", () => {
       "https://challenges.cloudflare.com",
       "https://bridge.walletconnect.org",
       "wss://bridge.walletconnect.org",
+      "https://*.bridge.walletconnect.org",
+      "wss://*.bridge.walletconnect.org",
+      "https://s3.amazonaws.com/wc.perawallet.app/",
+      // Inert in connect-src (a data: fetch never leaves the page); lets Pera
+      // fetch its QR-center logo SVG.
+      "connect-src 'self' data:",
     ]) {
       expect(csp).toContain(origin);
     }

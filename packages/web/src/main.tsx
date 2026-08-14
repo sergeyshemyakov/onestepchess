@@ -3,9 +3,15 @@ import "./styles/tokens.css";
 import "./styles/components.css";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { z } from "zod";
 import { App, type AuthHandlers } from "./App.jsx";
 import { createApiClient } from "./api/client.js";
 import { readTheme } from "./lib/storage.js";
+
+// Zod v4 feature-detects JIT compilation with Function(""), which the CSP's
+// eval-free script-src blocks (a caught but noisy violation). Jitless mode
+// skips the probe; schemas parse identically, marginally slower.
+z.config({ jitless: true });
 
 document.documentElement.dataset.theme = readTheme();
 

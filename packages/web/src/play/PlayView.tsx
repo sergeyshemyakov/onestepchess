@@ -458,7 +458,6 @@ function ConfirmMorph(props: {
 
         {state.phase === "CONFIRM" && claim !== undefined ? (
           <>
-            
             {state.error !== null && state.error !== undefined ? (
               <p className="formerr" role="alert">
                 {state.error.hint}

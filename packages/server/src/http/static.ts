@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, normalize, resolve } from "node:path";
 import { brotliCompressSync, gzipSync } from "node:zlib";
@@ -14,13 +15,25 @@ import type { AppEnv } from "./app.js";
  * §6.6). Unlike the algod and WalletConnect origins it is not configurable. */
 const TURNSTILE_ORIGIN = "https://challenges.cloudflare.com";
 
+// Pera Connect loads its modal Lottie animations (fetch → connect-src) and
+// sign audio (<audio> → media-src) from its own path-style S3 bucket. The
+// path scopes the allowance to the bucket Pera controls; a bare
+// s3.amazonaws.com would hand any attacker-created bucket an exfil channel.
+const PERA_ASSET_BUCKET = "https://s3.amazonaws.com/wc.perawallet.app/";
+
 // Pera and Defly discover a WalletConnect v1 shard before opening the socket.
 // Exact sources keep the CSP closed while allowing their certified SDK flow.
+// The v1 bridge itself dials a random `[a-z0-9].bridge.walletconnect.org`
+// subdomain (@walletconnect/core url.ts), so that one host gets a subdomain
+// wildcard — still scoped to the reviewed bridge domain, never a bare `*`.
 const WALLET_PROVIDER_CONNECT_ORIGINS = [
   "https://wc.perawallet.app",
   "https://static.defly.app",
   "https://bridge.walletconnect.org",
   "wss://bridge.walletconnect.org",
+  "https://*.bridge.walletconnect.org",
+  "wss://*.bridge.walletconnect.org",
+  PERA_ASSET_BUCKET,
   ...["a", "b", "c", "d", "e", "f", "g", "h"].flatMap((shard) => [
     `https://wallet-connect-${shard}.perawallet.app`,
     `wss://wallet-connect-${shard}.perawallet.app`,
@@ -99,6 +112,18 @@ function contentType(path: string): string {
   return "application/octet-stream";
 }
 
+/** CSP sha256 sources for the shell's own inline `<script>` blocks (the theme
+ * bootstrap). Hashing the served content keeps script-src closed — no
+ * 'unsafe-inline' — while surviving web-package edits to the script. */
+export function inlineScriptHashes(html: string): readonly string[] {
+  return [
+    ...html.matchAll(/<script(?![^>]*\ssrc=)[^>]*>([\s\S]*?)<\/script>/gi),
+  ]
+    .map((match) => match[1] ?? "")
+    .filter((content) => content !== "")
+    .map((content) => createHash("sha256").update(content).digest("base64"));
+}
+
 function safeOrigin(url: string): string | null {
   try {
     return new URL(url).origin;
@@ -108,16 +133,24 @@ function safeOrigin(url: string): string | null {
 }
 
 /** CSP + hardening headers for HTML/static responses (server spec §6.6). The
- * algod and WalletConnect origins are config-derived; there is no `*`,
- * `unsafe-inline`, or `unsafe-eval`. HSTS rides only on HTTPS origins. */
+ * algod and WalletConnect origins are config-derived; there is no `*` or
+ * `unsafe-eval`, and `unsafe-inline` appears only in `style-src`: the Pera
+ * Connect modal is built from JS-injected `<style>` elements a nonce or hash
+ * cannot reach, and CSS exfiltration stays blocked because img/font/connect
+ * sources remain closed allowlists. `script-src` must never carry
+ * `unsafe-inline`. HSTS rides only on HTTPS origins. */
 export function securityHeaders(deps: {
   readonly config: ServerConfig;
   readonly publicBaseUrl: string;
+  readonly inlineScriptHashes?: readonly string[];
 }): Record<string, string> {
   const algod = safeOrigin(deps.config.ALGOD_URL);
   const walletconnect = safeOrigin(deps.config.WALLETCONNECT_RELAY_URL);
   const connect = [
     "'self'",
+    // Inert in connect-src — a data: fetch never leaves the page — and lets
+    // Pera Connect fetch its QR-center logo SVG.
+    "data:",
     algod,
     walletconnect,
     TURNSTILE_ORIGIN,
@@ -130,12 +163,18 @@ export function securityHeaders(deps: {
     "object-src 'none'",
     "base-uri 'self'",
     "frame-ancestors 'none'",
-    `script-src 'self' ${TURNSTILE_ORIGIN}`,
+    [
+      `script-src 'self' ${TURNSTILE_ORIGIN}`,
+      ...(deps.inlineScriptHashes ?? []).map((hash) => `'sha256-${hash}'`),
+    ].join(" "),
     `frame-src ${TURNSTILE_ORIGIN}`,
     `connect-src ${connect}`,
     "img-src 'self' data: blob:",
-    "style-src 'self'",
-    "font-src 'self'",
+    `media-src 'self' ${PERA_ASSET_BUCKET}`,
+    // The Google Fonts pair serves the Pera modal's @imported font; each is a
+    // fixed Google-operated origin, not user-uploadable storage.
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com",
   ].join("; ");
   const headers: Record<string, string> = {
     "X-Content-Type-Options": "nosniff",
@@ -219,6 +258,9 @@ export function registerStaticRoutes(
   app: Hono<AppEnv>,
   deps: StaticDeps,
 ): void {
+  // The shell is baked into the image, so its inline-script hashes are stable
+  // for the process lifetime.
+  let shellScriptHashes: readonly string[] | null = null;
   app.get("*", (c) => {
     if (
       deps.staticDir === undefined ||
@@ -227,9 +269,16 @@ export function registerStaticRoutes(
       c.req.path === "/llms.txt"
     )
       return c.notFound();
+    if (shellScriptHashes === null) {
+      const shell = join(resolve(deps.staticDir), "index.html");
+      shellScriptHashes = existsSync(shell)
+        ? inlineScriptHashes(readFileSync(shell, "utf8"))
+        : [];
+    }
     const headers = securityHeaders({
       config: deps.config(),
       publicBaseUrl: deps.publicBaseUrl,
+      inlineScriptHashes: shellScriptHashes,
     });
     const root = resolve(deps.staticDir);
     const relative = normalize(c.req.path.replace(/^\//, ""));

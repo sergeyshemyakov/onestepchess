@@ -58,6 +58,7 @@ import {
   registerOperationalCommands,
   runReconciliation,
 } from "./operations/reconciliation.js";
+import { pruneSettledPaymentIntents } from "./operations/retention.js";
 import {
   registerPayoutCommands,
   runPayoutExecutor,
@@ -122,6 +123,7 @@ export * from "./names.js";
 export * from "./operations/alerts.js";
 export * from "./operations/pause.js";
 export * from "./operations/reconciliation.js";
+export * from "./operations/retention.js";
 export * from "./payouts/executor.js";
 export * from "./rail/factory.js";
 export * from "./recovery.js";
@@ -130,7 +132,7 @@ export * from "./replays.js";
 const POOL_TICK_INTERVAL_MS = 60_000;
 const PAYOUT_TICK_INTERVAL_MS = 2_000;
 const NUDGE_TICK_INTERVAL_MS = 60_000;
-const EVENT_PRUNE_INTERVAL_MS = 86_400_000;
+const PRUNE_INTERVAL_MS = 86_400_000;
 
 export async function main(): Promise<void> {
   let loaded: LoadedConfig;
@@ -216,6 +218,14 @@ export async function main(): Promise<void> {
   registerBonusCommands(bonusLifecycleDeps);
   const alerts = new OperationalAlerts({
     url: loaded.env.ALERT_WEBHOOK_URL,
+    telegram:
+      loaded.env.TELEGRAM_BOT_TOKEN !== undefined &&
+      loaded.env.TELEGRAM_CHAT_ID !== undefined
+        ? {
+            botToken: loaded.env.TELEGRAM_BOT_TOKEN,
+            chatId: loaded.env.TELEGRAM_CHAT_ID,
+          }
+        : undefined,
     dedupeSeconds: () => config.ALERT_DEDUPE_SECONDS,
     now: Date.now,
     transport: (url, init) => fetch(url, init),
@@ -420,6 +430,7 @@ export async function main(): Promise<void> {
   // a restart converges to ground truth (F16 step 4).
   publicStats.rebuild(db);
   events.prune(now);
+  pruneSettledPaymentIntents(db, now, config.PAYMENT_INTENT_RETENTION_DAYS);
   rearmTimers(db, timers, now, config.TIMER_REVEAL_SECONDS);
   await coordinator.dispatch({ type: "PoolTick", payload: {} });
   const poolInterval = setInterval(() => {
@@ -448,10 +459,16 @@ export async function main(): Promise<void> {
     void coordinator.dispatch({ type: "NudgeTick", payload: {} });
   }, NUDGE_TICK_INTERVAL_MS);
   nudgeInterval.unref();
-  const eventPruneInterval = setInterval(() => {
+  const pruneInterval = setInterval(() => {
     events.prune();
-  }, EVENT_PRUNE_INTERVAL_MS);
-  eventPruneInterval.unref();
+    const deleted = pruneSettledPaymentIntents(
+      db,
+      Date.now(),
+      config.PAYMENT_INTENT_RETENTION_DAYS,
+    );
+    if (deleted > 0) logger.info({ deleted }, "settled payment intents pruned");
+  }, PRUNE_INTERVAL_MS);
+  pruneInterval.unref();
   const facilitatorInterval = setInterval(() => {
     void probeFacilitator(operationalDeps).catch((error) => {
       logger.error({ err: error }, "facilitator probe command failed");
@@ -628,7 +645,7 @@ export async function main(): Promise<void> {
     clearInterval(fundingInterval);
     clearInterval(heartbeatInterval);
     clearInterval(nudgeInterval);
-    clearInterval(eventPruneInterval);
+    clearInterval(pruneInterval);
     clearInterval(facilitatorInterval);
     clearInterval(reconciliationInterval);
     if (backupTimer !== undefined) clearTimeout(backupTimer);

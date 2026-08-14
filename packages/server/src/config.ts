@@ -77,6 +77,7 @@ export const serverConfigSchema = coreConfigSchema
     SSE_HEARTBEAT_SECONDS: positiveInt.default(25),
     SSE_MAX_CONNECTIONS_PER_PLAYER: positiveInt.default(4),
     EVENTS_RETENTION_DAYS: positiveInt.default(7),
+    PAYMENT_INTENT_RETENTION_DAYS: positiveInt.default(7),
     ADMIN_CACHE_TTL_SECONDS: positiveInt.default(60),
     PAYOUT_BATCH_MAX: positiveInt.default(16),
     PAYOUT_MAX_ATTEMPTS: positiveInt.default(10),
@@ -146,6 +147,8 @@ const envSchema = z.object({
   TURNSTILE_SECRET: z.string().min(1).optional(),
   SYSTEM_BANNER: z.string().min(1).optional(),
   ALERT_WEBHOOK_URL: z.url().optional(),
+  TELEGRAM_BOT_TOKEN: z.string().min(1).optional(),
+  TELEGRAM_CHAT_ID: z.string().min(1).optional(),
   BACKUP_DIR: z.string().min(1).optional(),
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).default(0),
   OSC_CONFIG_PATH: z.string().min(1).optional(),
@@ -254,6 +257,16 @@ export function loadConfig(
     }
   }
 
+  if (
+    (parsedEnv.TELEGRAM_BOT_TOKEN === undefined) !==
+    (parsedEnv.TELEGRAM_CHAT_ID === undefined)
+  ) {
+    throw new ConfigError(
+      ["TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"],
+      "invalid env: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set together",
+    );
+  }
+
   const configPath = resolveConfigPath(parsedEnv.OSC_CONFIG_PATH);
   const fileContents = configPath === null ? {} : readConfigFile(configPath);
   const networkEnv = Object.fromEntries(
@@ -330,5 +343,6 @@ export function secretValues(env: ServerEnv): readonly string[] {
     env.TREASURY_MNEMONIC,
     env.BONUS_MNEMONIC,
     env.TURNSTILE_SECRET,
+    env.TELEGRAM_BOT_TOKEN,
   ].filter((value): value is string => value !== undefined && value.length > 0);
 }
