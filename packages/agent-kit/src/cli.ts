@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import { BudgetGuard } from "./budget.js";
 import { createOscClient } from "./client.js";
 import { loadEnv } from "./env.js";
@@ -117,7 +118,9 @@ export async function runCli(
 }
 
 if (process.argv[1] !== undefined) {
-  const invoked = new URL(`file://${process.argv[1]}`).href;
+  // npm bin shims are symlinks: argv[1] is the symlink while import.meta.url
+  // resolves to the real file, so compare realpaths or `npx osc-agent` no-ops.
+  const invoked = pathToFileURL(realpathSync(process.argv[1])).href;
   if (import.meta.url === invoked) {
     process.exitCode = await runCli(process.argv.slice(2));
   }
