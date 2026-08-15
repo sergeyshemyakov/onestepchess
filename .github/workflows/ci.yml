@@ -1,18 +1,26 @@
 name: CI
 
 on:
+  workflow_dispatch:
   pull_request:
     branches: [main]
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
 jobs:
   ci:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: pnpm
@@ -21,3 +29,94 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+
+  publish:
+    # Only main may mint the production/sha tags; a workflow_dispatch on any
+    # other ref must not be able to repoint the tag operators pull manually.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.image.outputs.name }}
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate public build configuration
+        env:
+          WALLETCONNECT_PROJECT_ID: ${{ vars.VITE_WALLETCONNECT_PROJECT_ID }}
+        run: test -n "${WALLETCONNECT_PROJECT_ID}"
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@65b78e6e13532edd9afa3aa52ac7964289d1a9c1
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: image
+        name: Resolve lowercase image name
+        run: echo "name=${REGISTRY}/${IMAGE_NAME,,}" >> "${GITHUB_OUTPUT}"
+      - id: metadata
+        uses: docker/metadata-action@9ec57ed1fcdbf14dcef7dfbe97b2010124a938b7
+        with:
+          images: ${{ steps.image.outputs.name }}
+          tags: |
+            type=raw,value=production
+            type=sha,format=long
+      - id: push
+        name: Build and publish production image
+        uses: docker/build-push-action@f2a1d5e99d037542a71f64918e516c093c6f3fc4
+        with:
+          context: .
+          push: true
+          build-args: |
+            VITE_WALLETCONNECT_PROJECT_ID=${{ vars.VITE_WALLETCONNECT_PROJECT_ID }}
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+  deploy:
+    if: github.event_name != 'pull_request' && vars.PRODUCTION_DEPLOY_ENABLED == 'true'
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: onestepchess-production
+      cancel-in-progress: false
+    environment:
+      name: production
+      url: https://onestepchess.xyz
+    permissions:
+      contents: read
+    steps:
+      - name: Configure pinned SSH host and deploy key
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_KNOWN_HOSTS }}
+        run: |
+          install -m 0700 -d "${RUNNER_TEMP}/ssh"
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > "${RUNNER_TEMP}/ssh/id_ed25519"
+          printf '%s\n' "${SSH_KNOWN_HOSTS}" > "${RUNNER_TEMP}/ssh/known_hosts"
+          chmod 0600 "${RUNNER_TEMP}/ssh/id_ed25519" "${RUNNER_TEMP}/ssh/known_hosts"
+      - name: Deploy immutable image digest
+        env:
+          IMAGE_REF: ${{ needs.publish.outputs.image }}@${{ needs.publish.outputs.digest }}
+          SSH_HOST: ${{ secrets.PRODUCTION_HOST }}
+          SSH_PORT: ${{ vars.PRODUCTION_SSH_PORT }}
+          SSH_USER: ${{ vars.PRODUCTION_SSH_USER }}
+        run: |
+          test -n "${SSH_HOST}"
+          test -n "${SSH_USER}"
+          ssh -F /dev/null \
+            -i "${RUNNER_TEMP}/ssh/id_ed25519" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="${RUNNER_TEMP}/ssh/known_hosts" \
+            -p "${SSH_PORT:-22}" \
+            "${SSH_USER}@${SSH_HOST}" \
+            "deploy ${IMAGE_REF}"
+      - name: Verify public origin through Cloudflare
+        run: curl --fail --silent --show-error --retry 6 --retry-all-errors --retry-delay 5 https://onestepchess.xyz/healthz

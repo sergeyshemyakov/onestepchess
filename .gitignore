@@ -45,6 +45,7 @@ docs/
 
 .pnpm-store/
 artifacts/
+/deploy/hetzner/
 
 # Dev/release tooling pruned from the public repo (kept locally only)
 /scripts/
