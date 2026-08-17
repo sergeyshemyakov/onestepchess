@@ -12,6 +12,7 @@ const walletModule: WalletModule = {
   connect: vi.fn(),
   current: () => null,
   disconnect: vi.fn(async () => undefined),
+  resume: vi.fn(async () => undefined),
 };
 
 vi.mock("./provider.js", () => ({

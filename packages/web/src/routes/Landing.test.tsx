@@ -353,6 +353,13 @@ it("splits the landing into functional + decorative panes with a tower banner st
   expect(ctas?.querySelectorAll(".bigplay").length).toBe(3);
 });
 
+it("landing_appbar_hides_the_boards_and_archive_nav", async () => {
+  renderLanding(guestClient());
+  await screen.findByRole("button", { name: /I HAVE AN ALGORAND WALLET/ });
+  expect(screen.queryByRole("link", { name: "BOARDS" })).toBeNull();
+  expect(screen.queryByRole("link", { name: "ARCHIVE" })).toBeNull();
+});
+
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";

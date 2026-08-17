@@ -64,6 +64,7 @@ export const metaSchema = z.object({
   banners: z.object({
     tower: z.boolean(),
     championship: z.boolean(),
+    custom: z.string(),
   }),
   // Present only when the server enables public stats (F-W13 strip gating).
   stats: z

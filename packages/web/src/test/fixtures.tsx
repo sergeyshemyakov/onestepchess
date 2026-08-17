@@ -41,7 +41,7 @@ export const metaFixture: Meta = {
   quotas: { human: null, agent: 60, demo: 10, windowMinutes: 60 },
   status: { mode: "running", banner: null },
   turnstileSiteKey: "",
-  banners: { tower: true, championship: true },
+  banners: { tower: true, championship: true, custom: "" },
   rules: "one move at a time.",
   docs: {
     llms: "http://localhost:3000/llms.txt",

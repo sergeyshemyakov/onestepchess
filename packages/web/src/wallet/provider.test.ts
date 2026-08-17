@@ -6,10 +6,32 @@ import {
   brandedWalletChainId,
   type ConnectedWallet,
   connectWithStaleSessionRecovery,
+  createLuteSignData,
   createWalletModule,
   networkIdForCaip2,
   recoversStaleSession,
 } from "./provider.js";
+
+const lute = vi.hoisted(() => ({
+  ctor: vi.fn<(siteName: string) => void>(),
+  signData:
+    vi.fn<
+      (
+        data: { readonly authenticatorData: Uint8Array },
+        metadata: unknown,
+      ) => Promise<unknown>
+    >(),
+}));
+
+vi.mock("lute-connect", () => ({
+  ScopeType: { UNKNOWN: -1, AUTH: 1 },
+  default: class {
+    signData = lute.signData;
+    constructor(siteName: string) {
+      lute.ctor(siteName);
+    }
+  },
+}));
 
 afterEach(() => {
   localStorage.clear();
@@ -39,6 +61,9 @@ describe("Release 1 wallet surface", () => {
     expect(recoversStaleSession("pera")).toBe(true);
     expect(recoversStaleSession("defly")).toBe(true);
     expect(recoversStaleSession("walletconnect")).toBe(true);
+    // Lute is not WalletConnect-based, so it has no stale session to recover;
+    // a retry would also reopen its popup outside the user's click gesture.
+    expect(recoversStaleSession("lute")).toBe(false);
     expect(recoversStaleSession("mnemonic")).toBe(false);
   });
 
@@ -61,10 +86,49 @@ describe("Release 1 wallet surface", () => {
     expect(provider.connect).toHaveBeenCalledTimes(1);
   });
 
+  it("lute_signdata_speaks_the_lute_connect_v2_protocol", async () => {
+    // lute.app's v2 protocol expects the dApp-built StdSignData object; the
+    // v1-shaped bare payload use-wallet 4.x sends leaves the auth popup blank.
+    const account = algosdk.generateAccount();
+    const address = account.addr.toString();
+    lute.signData.mockImplementation(async (data) => ({
+      ...data,
+      signature: new Uint8Array([1, 2, 3]),
+    }));
+
+    const signData = createLuteSignData(address, "One Step Chess");
+    const result = await signData("e30=", { scope: 1, encoding: "base64" });
+
+    const domain = window.location.host;
+    const expectedAuthData = new Uint8Array(
+      await crypto.subtle.digest("SHA-256", new TextEncoder().encode(domain)),
+    );
+    expect(lute.ctor).toHaveBeenCalledWith("One Step Chess");
+    expect(lute.signData).toHaveBeenCalledWith(
+      {
+        data: "e30=",
+        signer: algosdk.decodeAddress(address).publicKey,
+        domain,
+        authenticatorData: expectedAuthData,
+      },
+      { scope: 1, encoding: "base64" },
+    );
+    expect(result.signatureB64).toBe(Buffer.from([1, 2, 3]).toString("base64"));
+    expect(result.authenticatorDataB64).toBe(
+      Buffer.from(expectedAuthData).toString("base64"),
+    );
+
+    await expect(
+      signData("e30=", { scope: -1, encoding: "base64" }),
+    ).rejects.toThrow("unsupported scope");
+    expect(lute.signData).toHaveBeenCalledTimes(1);
+  });
+
   it("installs every configured production wallet provider SDK", () => {
     for (const provider of [
       "@perawallet/connect",
       "@blockshake/defly-connect",
+      "lute-connect",
     ]) {
       expect(import.meta.resolve(provider)).toContain(provider);
     }
@@ -79,6 +143,7 @@ describe("Release 1 wallet surface", () => {
     ).toEqual([
       { id: "pera", name: "Pera" },
       { id: "defly", name: "Defly" },
+      { id: "lute", name: "Lute" },
       { id: "mnemonic", name: "dev wallet (mnemonic)" },
     ]);
   });
@@ -147,6 +212,89 @@ describe("Release 1 wallet surface", () => {
     );
   });
 
+  it("resume_restores_the_persisted_wallet_session_after_a_reload", async () => {
+    const account = algosdk.generateAccount();
+    const mnemonic = algosdk.secretKeyToMnemonic(account.sk);
+    vi.stubGlobal(
+      "prompt",
+      vi.fn(() => mnemonic),
+    );
+    await createWalletModule({
+      includeMnemonic: true,
+      walletConnectProjectId: "",
+    }).connect("mnemonic");
+
+    // A fresh module simulates a page reload: use-wallet's persisted session
+    // exists in localStorage, but nothing is connected in memory yet.
+    const reloaded = createWalletModule({
+      includeMnemonic: true,
+      walletConnectProjectId: "",
+    });
+    expect(reloaded.current()).toBeNull();
+
+    await reloaded.resume();
+
+    expect(reloaded.current()?.address).toBe(account.addr.toString());
+  });
+
+  it("resume_ignores_dead_inactive_wallet_sessions", async () => {
+    const account = algosdk.generateAccount();
+    const mnemonic = algosdk.secretKeyToMnemonic(account.sk);
+    const activeAccount = {
+      name: "Mnemonic Account",
+      address: account.addr.toString(),
+    };
+    localStorage.setItem(
+      "@txnlab/use-wallet:v4",
+      JSON.stringify({
+        wallets: {
+          mnemonic: { accounts: [activeAccount], activeAccount },
+          lute: { accounts: [activeAccount], activeAccount },
+        },
+        activeWallet: "mnemonic",
+        activeNetwork: "localnet",
+        customNetworkConfigs: {},
+      }),
+    );
+    localStorage.setItem("@txnlab/use-wallet:v4_mnemonic", mnemonic);
+    const prompt = vi.fn<() => string | null>(() => null);
+    vi.stubGlobal("prompt", prompt);
+
+    const reloaded = createWalletModule({
+      includeMnemonic: true,
+      walletConnectProjectId: "",
+    });
+    await reloaded.resume();
+
+    expect(reloaded.current()?.address).toBe(account.addr.toString());
+    expect(reloaded.current()?.walletName).toBe("dev wallet (mnemonic)");
+    expect(prompt).not.toHaveBeenCalled();
+  });
+
+  it("resume_resolves_signed_out_when_the_persisted_session_is_dead", async () => {
+    const account = algosdk.generateAccount();
+    const mnemonic = algosdk.secretKeyToMnemonic(account.sk);
+    const prompt = vi
+      .fn<() => string | null>()
+      .mockReturnValueOnce(mnemonic)
+      .mockReturnValue(null);
+    vi.stubGlobal("prompt", prompt);
+    await createWalletModule({
+      includeMnemonic: true,
+      walletConnectProjectId: "",
+    }).connect("mnemonic");
+    // The session record survives but its restore material is gone — the
+    // same shape as a WalletConnect pairing the wallet app has dropped.
+    localStorage.removeItem("@txnlab/use-wallet:v4_mnemonic");
+
+    const reloaded = createWalletModule({
+      includeMnemonic: true,
+      walletConnectProjectId: "",
+    });
+    await expect(reloaded.resume()).resolves.toBeUndefined();
+    expect(reloaded.current()).toBeNull();
+  });
+
   it("removes a persisted invalid mnemonic before the wallet can reuse it", () => {
     localStorage.setItem("@txnlab/use-wallet:v4_mnemonic", "not a mnemonic");
 
@@ -159,7 +307,7 @@ describe("Release 1 wallet surface", () => {
   });
 });
 
-it("wallet_auth_prefers_arc60_and_supports_pera_defly", async () => {
+it("wallet_auth_prefers_arc60_and_supports_pera_defly_lute", async () => {
   const choices = createWalletModule({
     includeMnemonic: false,
     walletConnectProjectId: "deployment-project-id",
@@ -167,6 +315,7 @@ it("wallet_auth_prefers_arc60_and_supports_pera_defly", async () => {
   expect(choices.map((choice) => choice.name)).toEqual([
     "Pera",
     "Defly",
+    "Lute",
     "WalletConnect",
   ]);
 

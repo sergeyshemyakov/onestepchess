@@ -307,6 +307,55 @@ a.btn {
   background: var(--faint);
   margin: 8px 44px 0;
 }
+.banner.dismissible {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding-block: 4px;
+}
+
+.captures {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+}
+.capture-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 17px;
+}
+.capture-label {
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  color: var(--ph-dim);
+  min-width: 56px;
+}
+.capture-glyphs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  color: var(--ph-hi);
+}
+.capture-glyphs .pc {
+  width: 15px;
+  height: 15px;
+}
+.capture-empty {
+  color: var(--ph-dark);
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
 
 /* ---- board ---- */
 .boardwrap {

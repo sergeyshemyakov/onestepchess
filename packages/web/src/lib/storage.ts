@@ -27,6 +27,7 @@ const CHAMP_KEY = "osc.champNotice";
 const TOWER_TEASER_KEY = "osc.towerTeaserDismissedAt";
 const LAST_SEEN_FINISHED_KEY = "osc.lastSeenFinishedAt";
 const BONUS_DONE_KEY = "osc.bonusDone";
+const CUSTOM_BANNER_KEY = "osc.customBanner";
 export const TOWER_TEASER_COOLDOWN_MS = 24 * 60 * 60 * 1_000;
 
 function safeGet(store: Storage, key: string): string | null {
@@ -143,6 +144,15 @@ export function readLastSeenFinishedAt(): string | null {
 
 export function writeLastSeenFinishedAt(iso: string): void {
   safeSet(localStorage, LAST_SEEN_FINISHED_KEY, iso);
+}
+
+/** Dismissal is per message — an edited banner text shows again. */
+export function customBannerDismissed(message: string): boolean {
+  return safeGet(localStorage, CUSTOM_BANNER_KEY) === message;
+}
+
+export function dismissCustomBanner(message: string): void {
+  safeSet(localStorage, CUSTOM_BANNER_KEY, message);
 }
 
 export function starterStakeAcknowledged(): boolean {

@@ -7,6 +7,7 @@ import { openDatabase, schema } from "../../db/open.js";
 import { PublicStats } from "../../incentives/stats.js";
 import { createLogger } from "../../logger.js";
 import { createApp } from "../app.js";
+import { publicApiSchemas } from "../contracts.js";
 import { registerDiscoveryRoutes } from "./discovery.js";
 
 function setup(
@@ -51,15 +52,33 @@ describe("discovery meta and profile (F12)", () => {
   it("meta_banners_reflect_the_banner_config_flags", async () => {
     const off = setup();
     const offBody = await (await off.app.request("/api/v1/meta")).json();
-    expect(offBody.banners).toEqual({ tower: false, championship: false });
+    expect(offBody.banners).toEqual({
+      tower: false,
+      championship: false,
+      custom: "",
+    });
     off.opened.sqlite.close();
 
     const on = setup({
       config: { TOWER_BANNER_ENABLED: true, CHAMP_BANNER_ENABLED: true },
     });
     const onBody = await (await on.app.request("/api/v1/meta")).json();
-    expect(onBody.banners).toEqual({ tower: true, championship: true });
+    expect(onBody.banners).toEqual({
+      tower: true,
+      championship: true,
+      custom: "",
+    });
     on.opened.sqlite.close();
+  });
+
+  it("meta_banners_custom_carries_the_configured_message", async () => {
+    const { app, opened } = setup({
+      config: { CUSTOM_BANNER_TEXT: "maintenance sunday 06:00 UTC" },
+    });
+    const body = await (await app.request("/api/v1/meta")).json();
+    expect(body.banners.custom).toBe("maintenance sunday 06:00 UTC");
+    expect(publicApiSchemas.metaResponse.safeParse(body).success).toBe(true);
+    opened.sqlite.close();
   });
 
   it("public_stats_are_gated_and_rebuild_to_sql_ground_truth", async () => {

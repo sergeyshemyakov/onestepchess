@@ -72,6 +72,8 @@ const CONFIG_DESCRIPTIONS = {
     "Whether the Tower integration banner appears on the site.",
   CHAMP_BANNER_ENABLED:
     "Whether the championship promo banner appears on the site.",
+  CUSTOM_BANNER_TEXT:
+    "Dismissible site-wide banner message; empty hides the banner.",
   CARD_CACHE_MAX: "Maximum rendered share cards held in memory.",
   CAIP2: "CAIP-2 identifier for the active Algorand network.",
   USDC_ASA: "ASA identifier for the accepted native USDC asset.",

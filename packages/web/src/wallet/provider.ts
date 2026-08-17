@@ -13,6 +13,9 @@ import algosdk from "algosdk";
 
 const MNEMONIC_STORAGE_KEY = "@txnlab/use-wallet:v4_mnemonic";
 
+/** Shown by Lute as the requesting site in its connect/sign popups. */
+const LUTE_SITE_NAME = "One Step Chess";
+
 // Client mirror of the server's genesis→network map (server/src/auth/genesis.ts).
 // The branded wallets (Pera/Defly/…) enforce their own selected network at
 // connect time, so the deployment's CAIP-2 — not a hardcoded MAINNET — decides
@@ -120,8 +123,8 @@ export type ConnectedWallet = {
     txns: readonly algosdk.Transaction[],
     indexesToSign?: readonly number[],
   ) => Promise<Uint8Array>;
-  /** ARC-60 branch — present only when the wallet supports signData;
-   * the fallback-txn path is used otherwise (F-W2). */
+  /** ARC-60 branch — present only when the wallet supports signData
+   * (currently Lute); the fallback-txn path is used otherwise (F-W2). */
   readonly signData?: (
     dataB64: string,
     metadata: { readonly scope: number; readonly encoding: string },
@@ -136,6 +139,11 @@ export type WalletModule = {
   readonly connect: (id: string) => Promise<ConnectedWallet>;
   readonly current: () => ConnectedWallet | null;
   readonly disconnect: () => Promise<void>;
+  /** Silently restores the active wallet session use-wallet persisted in a
+   * previous page load, so a reload does not force a fresh pairing just to
+   * sign. Resolves signed-out when there is nothing to resume or the persisted
+   * session is dead. */
+  readonly resume: () => Promise<void>;
 };
 
 export type WalletModuleOptions = {
@@ -215,6 +223,43 @@ export async function connectWithStaleSessionRecovery<Account>(
   }
 }
 
+/** use-wallet 4.x still speaks the lute-connect v1 signData wire protocol
+ * (a bare base64 payload), but lute.app now implements v2, which expects the
+ * dApp-built StdSignData object — a v1-shaped message leaves the lute.app/auth
+ * popup blank. Drive lute-connect directly for this one step; connect and
+ * signTransactions kept the v1 shape, so use-wallet still handles those. */
+export function createLuteSignData(
+  address: string,
+  siteName: string,
+): NonNullable<ConnectedWallet["signData"]> {
+  return async (dataB64, metadata) => {
+    if (metadata.scope !== ScopeType.AUTH) {
+      throw new Error("wallet auth metadata has an unsupported scope");
+    }
+    const { default: LuteConnect, ScopeType: LuteScope } = await import(
+      "lute-connect"
+    );
+    const client = new LuteConnect(siteName);
+    const domain = window.location.host;
+    const authenticatorData = new Uint8Array(
+      await crypto.subtle.digest("SHA-256", new TextEncoder().encode(domain)),
+    );
+    const response = await client.signData(
+      {
+        data: dataB64,
+        signer: algosdk.decodeAddress(address).publicKey,
+        domain,
+        authenticatorData,
+      },
+      { scope: LuteScope.AUTH, encoding: metadata.encoding },
+    );
+    return {
+      signatureB64: bytesToBase64(response.signature),
+      authenticatorDataB64: bytesToBase64(response.authenticatorData),
+    };
+  };
+}
+
 export function createWalletModule(
   options: WalletModuleOptions = {},
 ): WalletModule {
@@ -231,6 +276,9 @@ export function createWalletModule(
   const wallets: SupportedWallet[] = [
     { id: WalletId.PERA, options: { chainId } },
     { id: WalletId.DEFLY, options: { chainId } },
+    // Lute is not WalletConnect-based: it derives the network from the active
+    // algod client, so it takes no chainId and needs no stale-session recovery.
+    { id: WalletId.LUTE, options: { siteName: LUTE_SITE_NAME } },
   ];
   if (
     walletConnectProjectId !== undefined &&
@@ -269,6 +317,7 @@ export function createWalletModule(
   const names: Record<string, string> = {
     [WalletId.PERA]: "Pera",
     [WalletId.DEFLY]: "Defly",
+    [WalletId.LUTE]: "Lute",
     [WalletId.WALLETCONNECT]: "WalletConnect",
     [WalletId.MNEMONIC]: "dev wallet (mnemonic)",
   };
@@ -279,24 +328,29 @@ export function createWalletModule(
     wallet: (typeof manager.wallets)[number],
     address: string,
   ): ConnectedWallet {
-    const signData = wallet.canSignData
-      ? async (
-          dataB64: string,
-          metadata: { readonly scope: number; readonly encoding: string },
-        ) => {
-          if (metadata.scope !== ScopeType.AUTH) {
-            throw new Error("wallet auth metadata has an unsupported scope");
-          }
-          const signed = await wallet.signData(dataB64, {
-            scope: ScopeType.AUTH,
-            encoding: metadata.encoding,
-          });
-          return {
-            signatureB64: bytesToBase64(signed.signature),
-            authenticatorDataB64: bytesToBase64(signed.authenticatorData),
-          };
-        }
-      : undefined;
+    const signData =
+      wallet.id === WalletId.LUTE
+        ? createLuteSignData(address, LUTE_SITE_NAME)
+        : wallet.canSignData
+          ? async (
+              dataB64: string,
+              metadata: { readonly scope: number; readonly encoding: string },
+            ) => {
+              if (metadata.scope !== ScopeType.AUTH) {
+                throw new Error(
+                  "wallet auth metadata has an unsupported scope",
+                );
+              }
+              const signed = await wallet.signData(dataB64, {
+                scope: ScopeType.AUTH,
+                encoding: metadata.encoding,
+              });
+              return {
+                signatureB64: bytesToBase64(signed.signature),
+                authenticatorDataB64: bytesToBase64(signed.authenticatorData),
+              };
+            }
+          : undefined;
     return {
       address,
       walletName: names[wallet.id] ?? wallet.metadata.name,
@@ -339,6 +393,27 @@ export function createWalletModule(
     },
 
     current: () => connected,
+
+    async resume() {
+      const persistedActive = manager.activeWallet;
+      if (persistedActive === null) return;
+      try {
+        // use-wallet can retain several historical wallet sessions, but this
+        // app needs only the active one. Resuming all of them lets a dead,
+        // inactive pairing reject the aggregate operation and mask a healthy
+        // active session.
+        await persistedActive.resumeSession();
+      } catch {
+        // A dead persisted session (e.g. a pairing the wallet app dropped)
+        // must not block wallet loading — the user reconnects manually.
+        return;
+      }
+      const active = manager.activeWallet;
+      const address = active?.activeAccount?.address;
+      if (active !== null && address !== undefined) {
+        connected = connectedWallet(active, address);
+      }
+    },
 
     async disconnect() {
       const active = manager.activeWallet;
