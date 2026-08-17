@@ -6,32 +6,11 @@ import {
   brandedWalletChainId,
   type ConnectedWallet,
   connectWithStaleSessionRecovery,
-  createLuteSignData,
   createWalletModule,
   networkIdForCaip2,
   recoversStaleSession,
+  usesArc60SignData,
 } from "./provider.js";
-
-const lute = vi.hoisted(() => ({
-  ctor: vi.fn<(siteName: string) => void>(),
-  signData:
-    vi.fn<
-      (
-        data: { readonly authenticatorData: Uint8Array },
-        metadata: unknown,
-      ) => Promise<unknown>
-    >(),
-}));
-
-vi.mock("lute-connect", () => ({
-  ScopeType: { UNKNOWN: -1, AUTH: 1 },
-  default: class {
-    signData = lute.signData;
-    constructor(siteName: string) {
-      lute.ctor(siteName);
-    }
-  },
-}));
 
 afterEach(() => {
   localStorage.clear();
@@ -86,42 +65,16 @@ describe("Release 1 wallet surface", () => {
     expect(provider.connect).toHaveBeenCalledTimes(1);
   });
 
-  it("lute_signdata_speaks_the_lute_connect_v2_protocol", async () => {
-    // lute.app's v2 protocol expects the dApp-built StdSignData object; the
-    // v1-shaped bare payload use-wallet 4.x sends leaves the auth popup blank.
-    const account = algosdk.generateAccount();
-    const address = account.addr.toString();
-    lute.signData.mockImplementation(async (data) => ({
-      ...data,
-      signature: new Uint8Array([1, 2, 3]),
-    }));
-
-    const signData = createLuteSignData(address, "One Step Chess");
-    const result = await signData("e30=", { scope: 1, encoding: "base64" });
-
-    const domain = window.location.host;
-    const expectedAuthData = new Uint8Array(
-      await crypto.subtle.digest("SHA-256", new TextEncoder().encode(domain)),
-    );
-    expect(lute.ctor).toHaveBeenCalledWith("One Step Chess");
-    expect(lute.signData).toHaveBeenCalledWith(
-      {
-        data: "e30=",
-        signer: algosdk.decodeAddress(address).publicKey,
-        domain,
-        authenticatorData: expectedAuthData,
-      },
-      { scope: 1, encoding: "base64" },
-    );
-    expect(result.signatureB64).toBe(Buffer.from([1, 2, 3]).toString("base64"));
-    expect(result.authenticatorDataB64).toBe(
-      Buffer.from(expectedAuthData).toString("base64"),
-    );
-
-    await expect(
-      signData("e30=", { scope: -1, encoding: "base64" }),
-    ).rejects.toThrow("unsupported scope");
-    expect(lute.signData).toHaveBeenCalledTimes(1);
+  it("lute_authenticates_via_the_fallback_txn_path_not_arc60", () => {
+    // lute.app/auth crashes to a blank popup when the browser strips
+    // cross-site referrers (Brave default, hardened Firefox); its /sign page
+    // renders without a referrer, so Lute must never expose signData even
+    // though its SDK advertises support.
+    expect(usesArc60SignData("lute", true)).toBe(false);
+    // Wallets without signData stay on the fallback-txn path as before.
+    expect(usesArc60SignData("pera", false)).toBe(false);
+    // A future ARC-60-capable wallet keeps the signData branch.
+    expect(usesArc60SignData("exodus", true)).toBe(true);
   });
 
   it("installs every configured production wallet provider SDK", () => {

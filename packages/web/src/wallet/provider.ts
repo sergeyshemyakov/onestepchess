@@ -123,8 +123,8 @@ export type ConnectedWallet = {
     txns: readonly algosdk.Transaction[],
     indexesToSign?: readonly number[],
   ) => Promise<Uint8Array>;
-  /** ARC-60 branch — present only when the wallet supports signData
-   * (currently Lute); the fallback-txn path is used otherwise (F-W2). */
+  /** ARC-60 branch — present only when the wallet supports signData;
+   * the fallback-txn path is used otherwise (F-W2). */
   readonly signData?: (
     dataB64: string,
     metadata: { readonly scope: number; readonly encoding: string },
@@ -223,41 +223,13 @@ export async function connectWithStaleSessionRecovery<Account>(
   }
 }
 
-/** use-wallet 4.x still speaks the lute-connect v1 signData wire protocol
- * (a bare base64 payload), but lute.app now implements v2, which expects the
- * dApp-built StdSignData object — a v1-shaped message leaves the lute.app/auth
- * popup blank. Drive lute-connect directly for this one step; connect and
- * signTransactions kept the v1 shape, so use-wallet still handles those. */
-export function createLuteSignData(
-  address: string,
-  siteName: string,
-): NonNullable<ConnectedWallet["signData"]> {
-  return async (dataB64, metadata) => {
-    if (metadata.scope !== ScopeType.AUTH) {
-      throw new Error("wallet auth metadata has an unsupported scope");
-    }
-    const { default: LuteConnect, ScopeType: LuteScope } = await import(
-      "lute-connect"
-    );
-    const client = new LuteConnect(siteName);
-    const domain = window.location.host;
-    const authenticatorData = new Uint8Array(
-      await crypto.subtle.digest("SHA-256", new TextEncoder().encode(domain)),
-    );
-    const response = await client.signData(
-      {
-        data: dataB64,
-        signer: algosdk.decodeAddress(address).publicKey,
-        domain,
-        authenticatorData,
-      },
-      { scope: LuteScope.AUTH, encoding: metadata.encoding },
-    );
-    return {
-      signatureB64: bytesToBase64(response.signature),
-      authenticatorDataB64: bytesToBase64(response.authenticatorData),
-    };
-  };
+/** lute.app/auth (the ARC-60 signData popup) crashes to a blank page when the
+ * browser strips cross-site referrers — Brave does by default, hardened
+ * Firefox setups do too — while its /sign popup renders without a referrer.
+ * Lute therefore always authenticates via the fallback-txn path (F-W2), even
+ * though its SDK advertises signData support. */
+export function usesArc60SignData(id: string, canSignData: boolean): boolean {
+  return canSignData && id !== WalletId.LUTE;
 }
 
 export function createWalletModule(
@@ -328,29 +300,24 @@ export function createWalletModule(
     wallet: (typeof manager.wallets)[number],
     address: string,
   ): ConnectedWallet {
-    const signData =
-      wallet.id === WalletId.LUTE
-        ? createLuteSignData(address, LUTE_SITE_NAME)
-        : wallet.canSignData
-          ? async (
-              dataB64: string,
-              metadata: { readonly scope: number; readonly encoding: string },
-            ) => {
-              if (metadata.scope !== ScopeType.AUTH) {
-                throw new Error(
-                  "wallet auth metadata has an unsupported scope",
-                );
-              }
-              const signed = await wallet.signData(dataB64, {
-                scope: ScopeType.AUTH,
-                encoding: metadata.encoding,
-              });
-              return {
-                signatureB64: bytesToBase64(signed.signature),
-                authenticatorDataB64: bytesToBase64(signed.authenticatorData),
-              };
-            }
-          : undefined;
+    const signData = usesArc60SignData(wallet.id, wallet.canSignData)
+      ? async (
+          dataB64: string,
+          metadata: { readonly scope: number; readonly encoding: string },
+        ) => {
+          if (metadata.scope !== ScopeType.AUTH) {
+            throw new Error("wallet auth metadata has an unsupported scope");
+          }
+          const signed = await wallet.signData(dataB64, {
+            scope: ScopeType.AUTH,
+            encoding: metadata.encoding,
+          });
+          return {
+            signatureB64: bytesToBase64(signed.signature),
+            authenticatorDataB64: bytesToBase64(signed.authenticatorData),
+          };
+        }
+      : undefined;
     return {
       address,
       walletName: names[wallet.id] ?? wallet.metadata.name,
