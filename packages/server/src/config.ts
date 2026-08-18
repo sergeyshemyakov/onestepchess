@@ -104,6 +104,7 @@ export const serverConfigSchema = coreConfigSchema
     PUBLIC_STATS_ENABLED: z.boolean().default(false),
     TOWER_BANNER_ENABLED: z.boolean().default(false),
     CHAMP_BANNER_ENABLED: z.boolean().default(false),
+    CUSTOM_BANNER_TEXT: z.string().max(240).default(""),
     CARD_CACHE_MAX: positiveInt.default(200),
     CAIP2: z.string().min(1).default("mock:local"),
     USDC_ASA: z

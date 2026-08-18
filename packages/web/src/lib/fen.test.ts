@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  capturedPieces,
   fenWithoutSquare,
   parseFenBoard,
   parseUci,
@@ -34,6 +35,26 @@ describe("fen parsing", () => {
   it("parses uci moves incl. promotions", () => {
     expect(parseUci("e2e4")).toEqual({ from: "e2", to: "e4" });
     expect(parseUci("e7e8q")).toEqual({ from: "e7", to: "e8", promotion: "q" });
+  });
+});
+
+describe("capturedPieces", () => {
+  it("returns nothing for the start position", () => {
+    expect(capturedPieces(START, "white")).toEqual([]);
+    expect(capturedPieces(START, "black")).toEqual([]);
+  });
+
+  it("lists missing pieces sorted by value descending", () => {
+    // Black is missing its queen, one rook, one knight and two pawns.
+    const fen = "1nb1kb1r/1ppppp1p/8/8/8/8/PPPPPPPP/RNBQKBNR w Kk - 0 9";
+    expect(capturedPieces(fen, "black")).toEqual(["q", "r", "n", "p", "p"]);
+    expect(capturedPieces(fen, "white")).toEqual([]);
+  });
+
+  it("clamps promoted surplus at zero and counts the promoted pawn", () => {
+    // White promoted a pawn: two queens on the board, seven pawns.
+    const fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPP1/RNBQKBNQ w Qkq - 0 20";
+    expect(capturedPieces(fen, "white")).toEqual(["r", "p"]);
   });
 });
 

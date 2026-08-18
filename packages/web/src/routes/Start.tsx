@@ -30,24 +30,33 @@ export function Start(props: {
         <ol className="checklist">
           <li>
             <b>
-              install{" "}
+              get{" "}
               <a
                 href="https://perawallet.app/"
                 target="_blank"
                 rel="noopener noreferrer"
               >
                 Pera ↗
-              </a>{" "}
-              or{" "}
+              </a>
+              ,{" "}
               <a
                 href="https://defly.app/"
                 target="_blank"
                 rel="noopener noreferrer"
               >
                 Defly ↗
+              </a>{" "}
+              or{" "}
+              <a
+                href="https://lute.app/"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Lute ↗
               </a>
               .
             </b>{" "}
+            Lute runs in a browser and does not require installing any software.
             Pera is the easiest on a phone.
           </li>
           <li>

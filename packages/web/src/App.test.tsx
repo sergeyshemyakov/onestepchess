@@ -161,6 +161,7 @@ describe("wallet auth flow (#28)", () => {
       connect: vi.fn(async () => wallet),
       current: () => null,
       disconnect: vi.fn(async () => undefined),
+      resume: vi.fn(async () => undefined),
     };
   }
 

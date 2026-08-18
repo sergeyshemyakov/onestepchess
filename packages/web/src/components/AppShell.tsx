@@ -9,6 +9,7 @@ import {
 } from "../lib/storage.js";
 import { useMeta } from "../meta/MetaContext.jsx";
 import { ClaimBar } from "./ClaimBar.jsx";
+import { CustomBanner } from "./CustomBanner.jsx";
 import { useShellLive } from "./ShellLiveContext.js";
 
 const THEME_ORDER: readonly Theme[] = ["green", "amber", "ice"];
@@ -68,6 +69,9 @@ export function AppShell(props: {
   readonly showSystemBanner?: boolean;
   /** Operations is a dashboard, not a CRT stage (§7). */
   readonly dashboard?: boolean;
+  /** Signed-out surfaces have nowhere to navigate: BOARDS is the page itself
+   * and ARCHIVE redirects to it. */
+  readonly hideNav?: boolean;
 }) {
   const live = useShellLive();
   const location = useLocation();
@@ -89,7 +93,7 @@ export function AppShell(props: {
           ONE STEP CHESS
         </Link>
         <span className="spacer" />
-        {live !== null ? (
+        {live !== null && props.hideNav !== true ? (
           <nav className="appnav" aria-label="primary">
             <Link className="chip click" to="/">
               BOARDS
@@ -119,7 +123,12 @@ export function AppShell(props: {
       {showClaimBar ? (
         <ClaimBar deadline={deadline} onReturn={() => navigate("/")} />
       ) : null}
-      {props.showSystemBanner === false ? null : <SystemBanner />}
+      {props.showSystemBanner === false ? null : (
+        <>
+          <SystemBanner />
+          <CustomBanner />
+        </>
+      )}
       {props.children}
     </div>
   );

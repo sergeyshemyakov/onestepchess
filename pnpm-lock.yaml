@@ -238,7 +238,7 @@ importers:
         version: 1.5.2(algosdk@3.6.0)
       '@txnlab/use-wallet-react':
         specifier: ^4.0.0
-        version: 4.6.0(@blockshake/defly-connect@1.2.1(algosdk@3.6.0))(@perawallet/connect@1.5.2(algosdk@3.6.0))(algosdk@3.6.0)(lute-connect@1.7.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+        version: 4.6.0(@blockshake/defly-connect@1.2.1(algosdk@3.6.0))(@perawallet/connect@1.5.2(algosdk@3.6.0))(algosdk@3.6.0)(lute-connect@2.0.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@x402-avm/avm':
         specifier: ^2.6.0
         version: 2.6.1
@@ -248,6 +248,9 @@ importers:
       algosdk:
         specifier: ^3.0.0
         version: 3.6.0
+      lute-connect:
+        specifier: ^2.0.1
+        version: 2.0.1
       react:
         specifier: ^19.0.0
         version: 19.2.7
@@ -2003,8 +2006,8 @@ packages:
   lottie-web@5.13.0:
     resolution: {integrity: sha512-+gfBXl6sxXMPe8tKQm7qzLnUy5DUPJPKIyRHwtpCpyUEYjHYRJC/5gjUvdkuO2c3JllrPtHXH5UJJK8LRYl5yQ==}
 
-  lute-connect@1.7.0:
-    resolution: {integrity: sha512-/eXb2/c/xltKyVEVWchd1QZB6F0fvgXwVIqXDQWeJ9unPo0kMMbtuLkeb1v4Kr1lffxX8uGnb+8kAMYjczUASg==}
+  lute-connect@2.0.1:
+    resolution: {integrity: sha512-gyQj9SbRjQnZ0mOp9UusrTX6kSePR5PwiEGeQ7VpmDcSaY4WbQPBEoQfRoyyzA054Ly2ypBE3vpdNG3Dvh5CYw==}
 
   lz-string@1.5.0:
     resolution: {integrity: sha512-h5bgJWpxJNswbU7qCrV0tIKQCaS3blPDrqKWx+QxzuzL1zGUzij9XCWLrSLsJPu5t+eWA/ycetzYAO5IOMcWAQ==}
@@ -3200,17 +3203,17 @@ snapshots:
       '@types/react': 19.2.17
       '@types/react-dom': 19.2.3(@types/react@19.2.17)
 
-  '@txnlab/use-wallet-react@4.6.0(@blockshake/defly-connect@1.2.1(algosdk@3.6.0))(@perawallet/connect@1.5.2(algosdk@3.6.0))(algosdk@3.6.0)(lute-connect@1.7.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+  '@txnlab/use-wallet-react@4.6.0(@blockshake/defly-connect@1.2.1(algosdk@3.6.0))(@perawallet/connect@1.5.2(algosdk@3.6.0))(algosdk@3.6.0)(lute-connect@2.0.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
       '@tanstack/react-store': 0.8.0(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      '@txnlab/use-wallet': 4.6.0(@blockshake/defly-connect@1.2.1(algosdk@3.6.0))(@perawallet/connect@1.5.2(algosdk@3.6.0))(algosdk@3.6.0)(lute-connect@1.7.0)
+      '@txnlab/use-wallet': 4.6.0(@blockshake/defly-connect@1.2.1(algosdk@3.6.0))(@perawallet/connect@1.5.2(algosdk@3.6.0))(algosdk@3.6.0)(lute-connect@2.0.1)
       algosdk: 3.6.0
       react: 19.2.7
       react-dom: 19.2.7(react@19.2.7)
     optionalDependencies:
       '@blockshake/defly-connect': 1.2.1(algosdk@3.6.0)
       '@perawallet/connect': 1.5.2(algosdk@3.6.0)
-      lute-connect: 1.7.0
+      lute-connect: 2.0.1
     transitivePeerDependencies:
       - '@agoralabs-sh/avm-web-provider'
       - '@web3auth/base'
@@ -3218,14 +3221,14 @@ snapshots:
       - '@web3auth/modal'
       - '@web3auth/single-factor-auth'
 
-  '@txnlab/use-wallet@4.6.0(@blockshake/defly-connect@1.2.1(algosdk@3.6.0))(@perawallet/connect@1.5.2(algosdk@3.6.0))(algosdk@3.6.0)(lute-connect@1.7.0)':
+  '@txnlab/use-wallet@4.6.0(@blockshake/defly-connect@1.2.1(algosdk@3.6.0))(@perawallet/connect@1.5.2(algosdk@3.6.0))(algosdk@3.6.0)(lute-connect@2.0.1)':
     dependencies:
       '@tanstack/store': 0.8.0
       algosdk: 3.6.0
     optionalDependencies:
       '@blockshake/defly-connect': 1.2.1(algosdk@3.6.0)
       '@perawallet/connect': 1.5.2(algosdk@3.6.0)
-      lute-connect: 1.7.0
+      lute-connect: 2.0.1
 
   '@tybys/wasm-util@0.10.3':
     dependencies:
@@ -3964,8 +3967,7 @@ snapshots:
 
   lottie-web@5.13.0: {}
 
-  lute-connect@1.7.0:
-    optional: true
+  lute-connect@2.0.1: {}
 
   lz-string@1.5.0: {}
 

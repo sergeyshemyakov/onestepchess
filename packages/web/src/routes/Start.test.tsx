@@ -26,5 +26,12 @@ it("setup_guide_centers_its_copy_and_links_supported_algorand_wallets", () => {
   expect(
     screen.getByRole("link", { name: "Defly ↗" }).getAttribute("href"),
   ).toBe("https://defly.app/");
-  expect(screen.queryByRole("link", { name: "Lute ↗" })).toBeNull();
+  expect(
+    screen.getByRole("link", { name: "Lute ↗" }).getAttribute("href"),
+  ).toBe("https://lute.app/");
+  expect(
+    screen.getByText(
+      /Lute runs in a browser and does not require installing any software\. Pera is the easiest on a phone\./,
+    ),
+  ).not.toBeNull();
 });

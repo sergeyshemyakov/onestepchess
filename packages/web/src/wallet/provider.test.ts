@@ -9,6 +9,7 @@ import {
   createWalletModule,
   networkIdForCaip2,
   recoversStaleSession,
+  usesArc60SignData,
 } from "./provider.js";
 
 afterEach(() => {
@@ -39,6 +40,9 @@ describe("Release 1 wallet surface", () => {
     expect(recoversStaleSession("pera")).toBe(true);
     expect(recoversStaleSession("defly")).toBe(true);
     expect(recoversStaleSession("walletconnect")).toBe(true);
+    // Lute is not WalletConnect-based, so it has no stale session to recover;
+    // a retry would also reopen its popup outside the user's click gesture.
+    expect(recoversStaleSession("lute")).toBe(false);
     expect(recoversStaleSession("mnemonic")).toBe(false);
   });
 
@@ -61,10 +65,23 @@ describe("Release 1 wallet surface", () => {
     expect(provider.connect).toHaveBeenCalledTimes(1);
   });
 
+  it("lute_authenticates_via_the_fallback_txn_path_not_arc60", () => {
+    // lute.app/auth crashes to a blank popup when the browser strips
+    // cross-site referrers (Brave default, hardened Firefox); its /sign page
+    // renders without a referrer, so Lute must never expose signData even
+    // though its SDK advertises support.
+    expect(usesArc60SignData("lute", true)).toBe(false);
+    // Wallets without signData stay on the fallback-txn path as before.
+    expect(usesArc60SignData("pera", false)).toBe(false);
+    // A future ARC-60-capable wallet keeps the signData branch.
+    expect(usesArc60SignData("exodus", true)).toBe(true);
+  });
+
   it("installs every configured production wallet provider SDK", () => {
     for (const provider of [
       "@perawallet/connect",
       "@blockshake/defly-connect",
+      "lute-connect",
     ]) {
       expect(import.meta.resolve(provider)).toContain(provider);
     }
@@ -79,6 +96,7 @@ describe("Release 1 wallet surface", () => {
     ).toEqual([
       { id: "pera", name: "Pera" },
       { id: "defly", name: "Defly" },
+      { id: "lute", name: "Lute" },
       { id: "mnemonic", name: "dev wallet (mnemonic)" },
     ]);
   });
@@ -147,6 +165,89 @@ describe("Release 1 wallet surface", () => {
     );
   });
 
+  it("resume_restores_the_persisted_wallet_session_after_a_reload", async () => {
+    const account = algosdk.generateAccount();
+    const mnemonic = algosdk.secretKeyToMnemonic(account.sk);
+    vi.stubGlobal(
+      "prompt",
+      vi.fn(() => mnemonic),
+    );
+    await createWalletModule({
+      includeMnemonic: true,
+      walletConnectProjectId: "",
+    }).connect("mnemonic");
+
+    // A fresh module simulates a page reload: use-wallet's persisted session
+    // exists in localStorage, but nothing is connected in memory yet.
+    const reloaded = createWalletModule({
+      includeMnemonic: true,
+      walletConnectProjectId: "",
+    });
+    expect(reloaded.current()).toBeNull();
+
+    await reloaded.resume();
+
+    expect(reloaded.current()?.address).toBe(account.addr.toString());
+  });
+
+  it("resume_ignores_dead_inactive_wallet_sessions", async () => {
+    const account = algosdk.generateAccount();
+    const mnemonic = algosdk.secretKeyToMnemonic(account.sk);
+    const activeAccount = {
+      name: "Mnemonic Account",
+      address: account.addr.toString(),
+    };
+    localStorage.setItem(
+      "@txnlab/use-wallet:v4",
+      JSON.stringify({
+        wallets: {
+          mnemonic: { accounts: [activeAccount], activeAccount },
+          lute: { accounts: [activeAccount], activeAccount },
+        },
+        activeWallet: "mnemonic",
+        activeNetwork: "localnet",
+        customNetworkConfigs: {},
+      }),
+    );
+    localStorage.setItem("@txnlab/use-wallet:v4_mnemonic", mnemonic);
+    const prompt = vi.fn<() => string | null>(() => null);
+    vi.stubGlobal("prompt", prompt);
+
+    const reloaded = createWalletModule({
+      includeMnemonic: true,
+      walletConnectProjectId: "",
+    });
+    await reloaded.resume();
+
+    expect(reloaded.current()?.address).toBe(account.addr.toString());
+    expect(reloaded.current()?.walletName).toBe("dev wallet (mnemonic)");
+    expect(prompt).not.toHaveBeenCalled();
+  });
+
+  it("resume_resolves_signed_out_when_the_persisted_session_is_dead", async () => {
+    const account = algosdk.generateAccount();
+    const mnemonic = algosdk.secretKeyToMnemonic(account.sk);
+    const prompt = vi
+      .fn<() => string | null>()
+      .mockReturnValueOnce(mnemonic)
+      .mockReturnValue(null);
+    vi.stubGlobal("prompt", prompt);
+    await createWalletModule({
+      includeMnemonic: true,
+      walletConnectProjectId: "",
+    }).connect("mnemonic");
+    // The session record survives but its restore material is gone — the
+    // same shape as a WalletConnect pairing the wallet app has dropped.
+    localStorage.removeItem("@txnlab/use-wallet:v4_mnemonic");
+
+    const reloaded = createWalletModule({
+      includeMnemonic: true,
+      walletConnectProjectId: "",
+    });
+    await expect(reloaded.resume()).resolves.toBeUndefined();
+    expect(reloaded.current()).toBeNull();
+  });
+
   it("removes a persisted invalid mnemonic before the wallet can reuse it", () => {
     localStorage.setItem("@txnlab/use-wallet:v4_mnemonic", "not a mnemonic");
 
@@ -159,7 +260,7 @@ describe("Release 1 wallet surface", () => {
   });
 });
 
-it("wallet_auth_prefers_arc60_and_supports_pera_defly", async () => {
+it("wallet_auth_prefers_arc60_and_supports_pera_defly_lute", async () => {
   const choices = createWalletModule({
     includeMnemonic: false,
     walletConnectProjectId: "deployment-project-id",
@@ -167,6 +268,7 @@ it("wallet_auth_prefers_arc60_and_supports_pera_defly", async () => {
   expect(choices.map((choice) => choice.name)).toEqual([
     "Pera",
     "Defly",
+    "Lute",
     "WalletConnect",
   ]);
 

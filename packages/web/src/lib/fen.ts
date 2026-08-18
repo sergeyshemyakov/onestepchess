@@ -68,6 +68,43 @@ export function fenWithoutSquare(fen: string, square: string): string {
   return [rows.join("/"), ...fen.split(" ").slice(1)].join(" ");
 }
 
+const START_COUNTS: Record<PieceType, number> = {
+  p: 8,
+  n: 2,
+  b: 2,
+  r: 2,
+  q: 1,
+  k: 1,
+};
+
+/** Value order for displaying captures — queen first, pawns last. */
+const CAPTURE_ORDER: readonly PieceType[] = ["q", "r", "b", "n", "p"];
+
+/** Pieces of `side` missing from the board versus the starting set, sorted by
+ * value descending. FEN-only approximation (no move history is exposed): a
+ * promoted pawn shows as a captured pawn and surplus promoted pieces clamp
+ * at zero instead of going negative. */
+export function capturedPieces(fen: string, side: Side): readonly PieceType[] {
+  const counts: Record<PieceType, number> = {
+    p: 0,
+    n: 0,
+    b: 0,
+    r: 0,
+    q: 0,
+    k: 0,
+  };
+  for (const piece of parseFenBoard(fen)) {
+    if (piece !== null && piece.side === side) counts[piece.type] += 1;
+  }
+  const captured: PieceType[] = [];
+  for (const type of CAPTURE_ORDER) {
+    for (let index = counts[type]; index < START_COUNTS[type]; index += 1) {
+      captured.push(type);
+    }
+  }
+  return captured;
+}
+
 export function sideToMove(fen: string): Side {
   return fen.split(" ")[1] === "b" ? "black" : "white";
 }

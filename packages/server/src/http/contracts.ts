@@ -363,6 +363,7 @@ const metaResponse = z.object({
   banners: z.object({
     tower: z.boolean(),
     championship: z.boolean(),
+    custom: z.string(),
   }),
   // Present only when PUBLIC_STATS_ENABLED (F16 step 4).
   stats: z
@@ -701,6 +702,7 @@ export const publicApiSchemas = {
   gamesQuery: gamesQuerySchema,
   cardQuery: cardQuerySchema,
   challengeResponse,
+  metaResponse,
   verifyResponse,
   claimResponse,
   moveReceipt,

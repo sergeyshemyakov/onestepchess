@@ -78,6 +78,7 @@ export function registerDiscoveryRoutes(
       banners: {
         tower: config.TOWER_BANNER_ENABLED,
         championship: config.CHAMP_BANNER_ENABLED,
+        custom: config.CUSTOM_BANNER_TEXT,
       },
       // The stats strip ships dark; present only when PUBLIC_STATS_ENABLED and
       // the boot-rebuilt counters are wired (F16 step 4).

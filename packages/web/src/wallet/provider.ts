@@ -13,6 +13,9 @@ import algosdk from "algosdk";
 
 const MNEMONIC_STORAGE_KEY = "@txnlab/use-wallet:v4_mnemonic";
 
+/** Shown by Lute as the requesting site in its connect/sign popups. */
+const LUTE_SITE_NAME = "One Step Chess";
+
 // Client mirror of the server's genesis→network map (server/src/auth/genesis.ts).
 // The branded wallets (Pera/Defly/…) enforce their own selected network at
 // connect time, so the deployment's CAIP-2 — not a hardcoded MAINNET — decides
@@ -136,6 +139,11 @@ export type WalletModule = {
   readonly connect: (id: string) => Promise<ConnectedWallet>;
   readonly current: () => ConnectedWallet | null;
   readonly disconnect: () => Promise<void>;
+  /** Silently restores the active wallet session use-wallet persisted in a
+   * previous page load, so a reload does not force a fresh pairing just to
+   * sign. Resolves signed-out when there is nothing to resume or the persisted
+   * session is dead. */
+  readonly resume: () => Promise<void>;
 };
 
 export type WalletModuleOptions = {
@@ -215,6 +223,15 @@ export async function connectWithStaleSessionRecovery<Account>(
   }
 }
 
+/** lute.app/auth (the ARC-60 signData popup) crashes to a blank page when the
+ * browser strips cross-site referrers — Brave does by default, hardened
+ * Firefox setups do too — while its /sign popup renders without a referrer.
+ * Lute therefore always authenticates via the fallback-txn path (F-W2), even
+ * though its SDK advertises signData support. */
+export function usesArc60SignData(id: string, canSignData: boolean): boolean {
+  return canSignData && id !== WalletId.LUTE;
+}
+
 export function createWalletModule(
   options: WalletModuleOptions = {},
 ): WalletModule {
@@ -231,6 +248,9 @@ export function createWalletModule(
   const wallets: SupportedWallet[] = [
     { id: WalletId.PERA, options: { chainId } },
     { id: WalletId.DEFLY, options: { chainId } },
+    // Lute is not WalletConnect-based: it derives the network from the active
+    // algod client, so it takes no chainId and needs no stale-session recovery.
+    { id: WalletId.LUTE, options: { siteName: LUTE_SITE_NAME } },
   ];
   if (
     walletConnectProjectId !== undefined &&
@@ -269,6 +289,7 @@ export function createWalletModule(
   const names: Record<string, string> = {
     [WalletId.PERA]: "Pera",
     [WalletId.DEFLY]: "Defly",
+    [WalletId.LUTE]: "Lute",
     [WalletId.WALLETCONNECT]: "WalletConnect",
     [WalletId.MNEMONIC]: "dev wallet (mnemonic)",
   };
@@ -279,7 +300,7 @@ export function createWalletModule(
     wallet: (typeof manager.wallets)[number],
     address: string,
   ): ConnectedWallet {
-    const signData = wallet.canSignData
+    const signData = usesArc60SignData(wallet.id, wallet.canSignData)
       ? async (
           dataB64: string,
           metadata: { readonly scope: number; readonly encoding: string },
@@ -339,6 +360,27 @@ export function createWalletModule(
     },
 
     current: () => connected,
+
+    async resume() {
+      const persistedActive = manager.activeWallet;
+      if (persistedActive === null) return;
+      try {
+        // use-wallet can retain several historical wallet sessions, but this
+        // app needs only the active one. Resuming all of them lets a dead,
+        // inactive pairing reject the aggregate operation and mask a healthy
+        // active session.
+        await persistedActive.resumeSession();
+      } catch {
+        // A dead persisted session (e.g. a pairing the wallet app dropped)
+        // must not block wallet loading — the user reconnects manually.
+        return;
+      }
+      const active = manager.activeWallet;
+      const address = active?.activeAccount?.address;
+      if (active !== null && address !== undefined) {
+        connected = connectedWallet(active, address);
+      }
+    },
 
     async disconnect() {
       const active = manager.activeWallet;

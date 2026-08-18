@@ -17,9 +17,14 @@ export function loadWalletModule(caip2: string): Promise<WalletModule> {
     global?: typeof globalThis;
   };
   runtime.global ??= globalThis;
-  loaded ??= import("./provider.js").then((module) =>
-    module.createWalletModule({ caip2 }),
-  );
+  loaded ??= import("./provider.js").then(async (module) => {
+    const wallet = module.createWalletModule({ caip2 });
+    // A session persisted by a previous page load resumes before the module
+    // is handed out, so callers checking `current()` never see a stale
+    // signed-out state and force the user through a fresh pairing.
+    await wallet.resume();
+    return wallet;
+  });
   return loaded;
 }
 

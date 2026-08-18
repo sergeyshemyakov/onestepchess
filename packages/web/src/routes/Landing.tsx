@@ -130,6 +130,7 @@ export function Landing(props: {
 
   return (
     <AppShell
+      hideNav
       belowBar={
         <>
           <PromoStrip />

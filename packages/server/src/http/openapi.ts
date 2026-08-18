@@ -53,6 +53,7 @@ const agentKitExamples = {
     pool: { target: 64, active: 63, endspiel: 1 },
     status: { mode: "running", banner: "mock staging — no real USDC" },
     turnstileSiteKey: "",
+    banners: { tower: false, championship: false, custom: "" },
     rules: "One move at a time.",
     docs: {
       llms: "https://osc.example/llms.txt",

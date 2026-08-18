@@ -19,6 +19,7 @@ import {
   nextAtLabel,
 } from "../lib/format.js";
 import { coachMarksSeen, markCoachMarksSeen, readRef } from "../lib/storage.js";
+import { CapturedPieces } from "./CapturedPieces.jsx";
 import { INITIAL_NO_BOARDS_RETRY_SECONDS } from "./machine.js";
 import { Timer } from "./Timer.jsx";
 import type { PlayFlow } from "./usePlayFlow.js";
@@ -369,6 +370,7 @@ export function PlayView(props: {
                   onExpire={checkExpiry}
                 />
               </p>
+              <CapturedPieces fen={claim.fen} yourSide={claim.yourSide} />
               {promotion !== null && state.phase === "FOCUS" ? (
                 <PromotionPicker
                   moves={promotion}
