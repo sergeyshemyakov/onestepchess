@@ -82,7 +82,7 @@ it("ref_capture_is_first_touch_and_cleans_url_without_reload", async () => {
   const malformed = render(
     <App client={loggedOutClient()} authHandlers={handlers} />,
   );
-  await screen.findByRole("button", { name: /I HAVE AN ALGORAND WALLET/ });
+  await screen.findByRole("button", { name: /▸ LOG IN/ });
   expect(localStorage.getItem("osc.ref")).toBeNull();
   malformed.unmount();
 
@@ -92,7 +92,7 @@ it("ref_capture_is_first_touch_and_cleans_url_without_reload", async () => {
   const second = render(
     <App client={loggedOutClient()} authHandlers={handlers} />,
   );
-  await screen.findByRole("button", { name: /I HAVE AN ALGORAND WALLET/ });
+  await screen.findByRole("button", { name: /▸ LOG IN/ });
   expect(localStorage.getItem("osc.ref")).toBe("first-touch-001");
   expect(window.location.search).not.toContain("ref=");
   second.unmount();
@@ -101,9 +101,7 @@ it("ref_capture_is_first_touch_and_cleans_url_without_reload", async () => {
   //    registration-only).
   window.history.replaceState({}, "", "/");
   render(<App client={loggedOutClient()} authHandlers={handlers} />);
-  fireEvent.click(
-    await screen.findByRole("button", { name: /I HAVE AN ALGORAND WALLET/ }),
-  );
+  fireEvent.click(await screen.findByRole("button", { name: /▸ LOG IN/ }));
   fireEvent.click(await screen.findByTestId("stub-verify"));
   await waitFor(() => {
     expect(localStorage.getItem("osc.ref")).toBeNull();

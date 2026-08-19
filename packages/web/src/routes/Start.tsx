@@ -14,7 +14,9 @@ export function Start(props: {
   readonly meta: Meta;
   readonly onSignedIn: (player: PlayerView, linkedGuestClaims?: number) => void;
 }) {
-  const [connecting, setConnecting] = useState(false);
+  // "lute" mirrors the post-demo quick setup: lute.app opens in a new tab
+  // and the sheet offers the single Lute connect instead of the list.
+  const [connecting, setConnecting] = useState<"wallets" | "lute" | null>(null);
   const [copied, setCopied] = useState(false);
   const navigate = useNavigate();
   const assetId = props.meta.network.usdcAssetId;
@@ -57,7 +59,16 @@ export function Start(props: {
               .
             </b>{" "}
             Lute runs in a browser and does not require installing any software.
-            Pera is the easiest on a phone.
+            Pera is the easiest on a phone.{" "}
+            <a
+              className="btn pri mini"
+              href="https://lute.app/"
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => setConnecting("lute")}
+            >
+              ▸ QUICK SETUP WITH LUTE
+            </a>
           </li>
           <li>
             <b>
@@ -67,9 +78,9 @@ export function Start(props: {
             <button
               type="button"
               className="btn pri mini"
-              onClick={() => setConnecting(true)}
+              onClick={() => setConnecting("wallets")}
             >
-              ▸ I HAVE AN ALGORAND WALLET
+              ▸ LOG IN
             </button>
           </li>
         </ol>
@@ -109,15 +120,16 @@ export function Start(props: {
           </li>
         </ol>
       </div>
-      {connecting ? (
+      {connecting !== null ? (
         <ConnectSheet
           client={props.client}
           meta={props.meta}
+          lutePrompt={connecting === "lute"}
           onSignedIn={(player, linkedGuestClaims) => {
             props.onSignedIn(player, linkedGuestClaims);
             navigate("/");
           }}
-          onClose={() => setConnecting(false)}
+          onClose={() => setConnecting(null)}
         />
       ) : null}
     </AppShell>

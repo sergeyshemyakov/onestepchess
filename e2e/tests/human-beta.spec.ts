@@ -140,14 +140,23 @@ test("release2_human_happy_path", async ({ page }) => {
   page.on("dialog", (dialog) => dialog.accept(mnemonic));
 
   await page.goto("/");
-  await page.getByRole("button", { name: /PLAY A DEMO GAME/ }).click();
+  await page.getByRole("button", { name: /^GO/ }).click();
   await chooseE4(page);
   await page.getByRole("button", { name: /Y — make it so/ }).click();
   await expect(
-    page.getByText(/connect an Algorand wallet to see how it ends/),
+    page.getByText(/get an Algorand wallet to see how it ends/),
   ).toBeVisible();
+  await expect(page.getByRole("link", { name: /QUICK SETUP/ })).toHaveAttribute(
+    "href",
+    "https://lute.app/",
+  );
+  await expect(page.getByRole("link", { name: /SETUP GUIDE/ })).toHaveAttribute(
+    "href",
+    "/start",
+  );
 
-  await page.getByRole("button", { name: "I have a wallet" }).click();
+  await page.getByRole("button", { name: "close" }).click();
+  await page.getByRole("button", { name: /▸ LOG IN/ }).click();
   await page.getByRole("button", { name: /dev wallet \(mnemonic\)/ }).click();
   await expect(page.getByRole("dialog", { name: "register" })).toBeVisible();
   await page.getByRole("button", { name: /▸ register/ }).click();
@@ -177,15 +186,13 @@ test("release2_human_happy_path", async ({ page }) => {
   await page.goto("/");
   await page.getByTitle(account.addr.toString()).click();
   await page.getByRole("button", { name: "log out" }).click();
-  await expect(
-    page.getByRole("button", { name: /I HAVE AN ALGORAND WALLET/ }),
-  ).toBeVisible();
+  await expect(page.getByRole("button", { name: /▸ LOG IN/ })).toBeVisible();
 });
 
 test.describe("release2_human_edge_matrix", () => {
   test("reload and app-switch restore the chosen move", async ({ page }) => {
     await page.goto("/");
-    await page.getByRole("button", { name: /PLAY A DEMO GAME/ }).click();
+    await page.getByRole("button", { name: /^GO/ }).click();
     await chooseE4(page);
     await page.reload();
     await expect(page.getByText("FINAL MOVE?")).toBeVisible();

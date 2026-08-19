@@ -147,6 +147,18 @@ export function LiveProvider(props: {
   const [connection, setConnection] = useState<SseConnectionState | "closed">(
     "closed",
   );
+  const connectionRef = useRef(connection);
+  const [busEpoch, setBusEpoch] = useState(0);
+  // The ref must track the state synchronously: a resuming tab can deliver
+  // the pent-up SSE error and visibilitychange in the same task, before
+  // React re-renders, and revive() reads the ref in that window.
+  const updateConnection = useCallback(
+    (state: SseConnectionState | "closed") => {
+      connectionRef.current = state;
+      setConnection(state);
+    },
+    [],
+  );
   const [currentClaim, setCurrentClaim] = useState<ClaimView | null>(null);
   const [profile, setProfile] = useState<ProfileView | null>(null);
   const [ongoing, setOngoing] = useState<GamesPage<OngoingGameItem> | null>(
@@ -203,7 +215,7 @@ export function LiveProvider(props: {
 
   useEffect(() => {
     if (session.status !== "in") {
-      setConnection("closed");
+      updateConnection("closed");
       setCurrentClaim(null);
       setProfile(null);
       setOngoing(null);
@@ -217,8 +229,35 @@ export function LiveProvider(props: {
     } else {
       refreshAll();
     }
-  }, [session.status, refreshAll, refreshGamesProfile, refetch]);
+  }, [
+    session.status,
+    refreshAll,
+    refreshGamesProfile,
+    refetch,
+    updateConnection,
+  ]);
 
+  // EventSource stops retrying for good when a reconnect attempt gets an HTTP
+  // error (e.g. 401 after the session cookie expires in a backgrounded tab),
+  // so a stream stuck in "reconnecting" must be rebuilt, not waited on.
+  useEffect(() => {
+    if (session.status !== "in" || eventSourceFactory === undefined) return;
+    const revive = () => {
+      if (document.hidden || connectionRef.current !== "reconnecting") return;
+      setBusEpoch((epoch) => epoch + 1);
+      refreshAll();
+    };
+    window.addEventListener("focus", revive);
+    window.addEventListener("online", revive);
+    document.addEventListener("visibilitychange", revive);
+    return () => {
+      window.removeEventListener("focus", revive);
+      window.removeEventListener("online", revive);
+      document.removeEventListener("visibilitychange", revive);
+    };
+  }, [session.status, eventSourceFactory, refreshAll]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies(busEpoch): busEpoch rebuilds the bus after a permanently failed EventSource
   useEffect(() => {
     if (session.status !== "in" || eventSourceFactory === undefined) return;
     const bus = new SseBus(eventSourceFactory);
@@ -244,7 +283,7 @@ export function LiveProvider(props: {
 
     unsubscribers.push(
       bus.subscribeState((state) => {
-        setConnection(state);
+        updateConnection(state);
         if (state === "open") refetch();
       }),
     );
@@ -310,16 +349,18 @@ export function LiveProvider(props: {
       for (const unsubscribe of unsubscribers) unsubscribe();
       titleAlertCleanup.current();
       bus.close();
-      setConnection("closed");
+      updateConnection("closed");
     };
   }, [
     session.status,
     eventSourceFactory,
+    busEpoch,
     push,
     refetch,
     refreshAll,
     refreshGamesProfile,
     updateStatus,
+    updateConnection,
   ]);
 
   const value = useMemo<LiveValue>(

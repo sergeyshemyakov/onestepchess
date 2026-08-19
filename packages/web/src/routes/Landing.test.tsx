@@ -8,6 +8,7 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import type { ApiClient } from "../api/client.js";
 import type { MoveReceipt } from "../api/schemas.js";
 import { resetTurnstileForTests } from "../auth/turnstile.js";
 import { writeClaimDraft } from "../lib/storage.js";
@@ -18,6 +19,7 @@ import {
   Providers,
 } from "../test/fixtures.jsx";
 import { assertNoGameIdentity } from "../test/leak.js";
+import { resetWalletModuleForTests } from "../wallet/lazy.js";
 import { Landing } from "./Landing.jsx";
 
 const moduleSpies = vi.hoisted(() => ({
@@ -52,12 +54,17 @@ afterEach(() => {
   sessionStorage.clear();
   resetTurnstileForTests();
   window.turnstile = undefined;
+  resetWalletModuleForTests();
   moduleSpies.createWalletModule.mockReset();
   moduleSpies.payMove.mockReset();
 });
 
-function guestClient(moveResult: unknown = { kind: "receipt", receipt }) {
+function guestClient(
+  moveResult: unknown = { kind: "receipt", receipt },
+  overrides: Partial<ApiClient> = {},
+) {
   return mockClient({
+    ...overrides,
     probeProfile: vi.fn(async () => null),
     getCurrentClaim: vi.fn(async () => null),
     createClaim: vi.fn(async () => ({
@@ -86,9 +93,7 @@ function renderLanding(
 }
 
 async function reachConfirm(_view: ReturnType<typeof render>) {
-  fireEvent.click(
-    await screen.findByRole("button", { name: /PLAY A DEMO GAME/ }),
-  );
+  fireEvent.click(await screen.findByRole("button", { name: /^GO/ }));
   await screen.findByText(/YOU PLAY WHITE/);
   // The landing renders the bundled Deep Blue board too — scope square
   // taps to the play surface.
@@ -102,9 +107,7 @@ it("landing_demo_board_opens_in_an_overlay_pane", async () => {
   const client = guestClient();
   renderLanding(client);
 
-  fireEvent.click(
-    await screen.findByRole("button", { name: /PLAY A DEMO GAME/ }),
-  );
+  fireEvent.click(await screen.findByRole("button", { name: /^GO/ }));
 
   const pane = await screen.findByRole("dialog", { name: "demo game" });
   await within(pane).findByText(/YOU PLAY WHITE/);
@@ -117,7 +120,7 @@ it("landing_demo_board_opens_in_an_overlay_pane", async () => {
   );
   expect(screen.queryByRole("dialog", { name: "demo game" })).toBeNull();
 
-  fireEvent.click(screen.getByRole("button", { name: /PLAY A DEMO GAME/ }));
+  fireEvent.click(screen.getByRole("button", { name: /^GO/ }));
   const reopened = await screen.findByRole("dialog", { name: "demo game" });
   expect(within(reopened).getByText(/YOU PLAY WHITE/)).not.toBeNull();
   expect(client.createClaim).toHaveBeenCalledTimes(1);
@@ -127,7 +130,7 @@ it("web_agent_tab_uses_meta_docs_and_index_has_discovery_hooks", async () => {
   // -- API count: exactly /meta + the session boot probe, nothing else.
   const client = guestClient();
   const view = renderLanding(client);
-  await screen.findByRole("button", { name: /I HAVE AN ALGORAND WALLET/ });
+  await screen.findByRole("button", { name: /▸ LOG IN/ });
   expect(client.getMeta).toHaveBeenCalledTimes(1);
   expect(client.probeProfile).toHaveBeenCalledTimes(1);
   expect(client.createClaim).not.toHaveBeenCalled();
@@ -149,9 +152,7 @@ it("web_agent_tab_uses_meta_docs_and_index_has_discovery_hooks", async () => {
   expect(document.querySelector('script[src*="turnstile"]')).toBeNull();
 
   // -- CTA/nudge swap follows osc.guestDemo.
-  expect(
-    screen.getByRole("button", { name: /PLAY A DEMO GAME/ }),
-  ).not.toBeNull();
+  expect(screen.getByRole("button", { name: /^GO/ })).not.toBeNull();
   expect(screen.queryByTestId("guest-demo-nudge")).toBeNull();
   // -- Rules render verbatim from /meta; the agent tab links come from
   //    /meta.docs, not hardcoded URLs.
@@ -161,13 +162,9 @@ it("web_agent_tab_uses_meta_docs_and_index_has_discovery_hooks", async () => {
   fireEvent.click(screen.getByRole("tab", { name: "FOR AGENTS" }));
   const agentTab = screen.getByTestId("agent-tab");
   expect(screen.queryByTestId("rules-verbatim")).toBeNull();
-  expect(
-    screen.queryByRole("button", { name: /I HAVE AN ALGORAND WALLET/ }),
-  ).toBeNull();
-  expect(
-    screen.queryByRole("link", { name: /I DON'T HAVE AN ALGORAND WALLET/ }),
-  ).toBeNull();
-  expect(screen.queryByRole("button", { name: /PLAY A DEMO GAME/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: /▸ LOG IN/ })).toBeNull();
+  expect(screen.queryByTestId("onboard-hint")).toBeNull();
+  expect(screen.queryByRole("button", { name: /^GO/ })).toBeNull();
   expect(
     agentTab.querySelector(`a[href="${metaFixture.docs.botRepo}"]`),
   ).not.toBeNull();
@@ -218,7 +215,7 @@ it("web_agent_tab_uses_meta_docs_and_index_has_discovery_hooks", async () => {
   };
   renderLanding(guestClient(), statsMeta);
   await screen.findByTestId("guest-demo-nudge");
-  expect(screen.queryByRole("button", { name: /PLAY A DEMO GAME/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^GO/ })).toBeNull();
   expect(screen.queryByTestId("champ-promo")).toBeNull();
   expect(screen.getByTestId("stats-strip").textContent).toContain(
     "41 human moves · 7 wallets · 5 games settled · 44 payments",
@@ -251,7 +248,7 @@ it("tower_teaser_can_be_closed_and_stays_hidden_during_its_cooldown", async () =
   first.unmount();
 
   renderLanding(guestClient());
-  await screen.findByRole("button", { name: /I HAVE AN ALGORAND WALLET/ });
+  await screen.findByRole("button", { name: /▸ LOG IN/ });
   expect(screen.queryByTestId("tower-teaser")).toBeNull();
 });
 
@@ -293,9 +290,7 @@ it("guest_demo_receipt_and_expiry_render_only_login_wall_data", async () => {
     ...metaFixture,
     turnstileSiteKey: "production-site-key",
   });
-  fireEvent.click(
-    await screen.findByRole("button", { name: /PLAY A DEMO GAME/ }),
-  );
+  fireEvent.click(await screen.findByRole("button", { name: /^GO/ }));
   await waitFor(() => {
     expect(screen.getByTestId("play-surface").dataset.phase).toBe("GUEST_GATE");
   });
@@ -306,9 +301,7 @@ it("guest_demo_receipt_and_expiry_render_only_login_wall_data", async () => {
 
   const receiptClient = guestClient();
   const receiptView = renderLanding(receiptClient);
-  fireEvent.click(
-    await screen.findByRole("button", { name: /PLAY A DEMO GAME/ }),
-  );
+  fireEvent.click(await screen.findByRole("button", { name: /^GO/ }));
   await waitFor(() => {
     expect(screen.getByTestId("play-surface").dataset.phase).toBe("FOCUS");
   });
@@ -319,8 +312,17 @@ it("guest_demo_receipt_and_expiry_render_only_login_wall_data", async () => {
   await screen.findByText("FINAL MOVE?");
   assertNoGameIdentity(receiptView.container, identitySeeds);
   fireEvent.click(screen.getByRole("button", { name: /Y — make it so/ }));
-  await screen.findByText(/connect an Algorand wallet to see how it ends/);
-  expect(screen.getByTestId("onboarding-doors").children).toHaveLength(2);
+  await screen.findByText(/get an Algorand wallet to see how it ends/);
+  const doors = screen.getByTestId("onboarding-doors");
+  expect(doors.children).toHaveLength(2);
+  const quickSetup = within(doors).getByRole("link", { name: /QUICK SETUP/ });
+  expect(quickSetup.getAttribute("href")).toBe("https://lute.app/");
+  expect(quickSetup.getAttribute("target")).toBe("_blank");
+  expect(
+    within(doors)
+      .getByRole("link", { name: /SETUP GUIDE/ })
+      .getAttribute("href"),
+  ).toBe("/start");
   assertNoGameIdentity(receiptView.container, identitySeeds);
   receiptView.unmount();
   localStorage.removeItem("osc.guestDemo");
@@ -330,16 +332,76 @@ it("guest_demo_receipt_and_expiry_render_only_login_wall_data", async () => {
   await reachConfirm(expiredView);
   fireEvent.click(screen.getByRole("button", { name: /Y — make it so/ }));
   await screen.findByText("POSITION PASSED ON");
-  expect(screen.getByText(/log in to keep playing/)).not.toBeNull();
+  expect(screen.getByText(/get a wallet to keep playing/)).not.toBeNull();
   assertNoGameIdentity(expiredView.container, identitySeeds);
   await waitFor(() => {
     expect(localStorage.getItem("osc.guestDemo")).toBe("expired");
   });
 });
 
+it("quick_setup_opens_a_single_lute_connect_prompt", async () => {
+  const luteWallet = {
+    address: "LUTEWALLETADDRESSAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    walletName: "Lute",
+    signTransactions: vi.fn(() => new Promise<never>(() => undefined)),
+  };
+  const connect = vi.fn(async () => luteWallet);
+  moduleSpies.createWalletModule.mockReturnValue({
+    resume: vi.fn(async () => undefined),
+    current: () => null,
+    listWallets: () => [{ id: "lute", name: "Lute" }],
+    connect,
+    disconnect: vi.fn(async () => undefined),
+  });
+  const authChallenge = vi.fn(
+    () => new Promise<never>(() => undefined),
+  ) as ApiClient["authChallenge"];
+  const view = renderLanding(guestClient(undefined, { authChallenge }));
+  await reachConfirm(view);
+  fireEvent.click(screen.getByRole("button", { name: /Y — make it so/ }));
+  const doors = await screen.findByTestId("onboarding-doors");
+
+  fireEvent.click(within(doors).getByRole("link", { name: /QUICK SETUP/ }));
+  const sheet = await screen.findByRole("dialog", { name: "connect wallet" });
+  expect(
+    within(sheet).getByText(/create a new Lute wallet and connect/),
+  ).not.toBeNull();
+  // A single Lute door — never the full wallet list.
+  expect(within(sheet).queryByText("WALLETS")).toBeNull();
+  const buttons = within(sheet).getAllByRole("button");
+  expect(
+    buttons.filter((button) => button.textContent?.includes("CONNECT")),
+  ).toHaveLength(1);
+
+  fireEvent.click(
+    within(sheet).getByRole("button", { name: /CONNECT WITH LUTE/ }),
+  );
+  // Every Lute click warns about popup blockers — lute-connect hangs
+  // silently when its window.open is eaten.
+  expect(screen.getByText(/Lute opens in a popup/)).not.toBeNull();
+  await waitFor(() => expect(connect).toHaveBeenCalledWith("lute"));
+
+  // Lute signs via a popup it opens itself; continuing straight into the
+  // challenge would fire window.open outside a user gesture and get the
+  // popup silently blocked. The flow must pause for a fresh SIGN IN click.
+  const signIn = await screen.findByRole("button", { name: /▸ SIGN IN/ });
+  expect(screen.getByText(/Lute connected ::/)).not.toBeNull();
+  // Pulsing highlight: SIGN IN replaces CONNECT WITH LUTE in place and must
+  // read as a new action, not the button just pressed.
+  expect(signIn.className).toContain("pulse-soft");
+  expect(authChallenge).not.toHaveBeenCalled();
+  fireEvent.click(signIn);
+  expect(
+    screen.getByText(/Lute asks for the signature in a popup/),
+  ).not.toBeNull();
+  await waitFor(() =>
+    expect(authChallenge).toHaveBeenCalledWith(luteWallet.address),
+  );
+});
+
 it("splits the landing into functional + decorative panes with a tower banner strip", async () => {
   renderLanding(guestClient());
-  await screen.findByRole("button", { name: /I HAVE AN ALGORAND WALLET/ });
+  await screen.findByRole("button", { name: /▸ LOG IN/ });
   expect(screen.queryByText(/strangers and machines share/)).toBeNull();
   const split = screen.getByTestId("landing-split");
   expect(within(split).getByTestId("how-it-works")).not.toBeNull();
@@ -350,12 +412,24 @@ it("splits the landing into functional + decorative panes with a tower banner st
   const tower = screen.getByTestId("tower-teaser");
   expect(tower.className).toContain("promostrip");
   const ctas = split.querySelector(".ctas");
-  expect(ctas?.querySelectorAll(".bigplay").length).toBe(3);
+  expect(ctas?.querySelector(".gobtn")).not.toBeNull();
+  expect(ctas?.querySelector(".loginbtn")).not.toBeNull();
+  const hint = within(split).getByTestId("onboard-hint");
+  expect(
+    within(hint)
+      .getByRole("link", { name: /how to play/ })
+      .getAttribute("href"),
+  ).toBe("/rules");
+  expect(
+    within(hint)
+      .getByRole("link", { name: /get set up/ })
+      .getAttribute("href"),
+  ).toBe("/start");
 });
 
 it("landing_appbar_hides_the_boards_and_archive_nav", async () => {
   renderLanding(guestClient());
-  await screen.findByRole("button", { name: /I HAVE AN ALGORAND WALLET/ });
+  await screen.findByRole("button", { name: /▸ LOG IN/ });
   expect(screen.queryByRole("link", { name: "BOARDS" })).toBeNull();
   expect(screen.queryByRole("link", { name: "ARCHIVE" })).toBeNull();
 });
