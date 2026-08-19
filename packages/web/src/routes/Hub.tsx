@@ -30,6 +30,7 @@ import { payoutChip } from "../games/QuickView.jsx";
 import { explorerTxUrl } from "../lib/explorer.js";
 import { parseUci } from "../lib/fen.js";
 import {
+  formatCents,
   formatElapsedTime,
   formatGameDuration,
   formatGameLabel,
@@ -437,7 +438,6 @@ export function Hub(props: {
       : null;
 
   const stake = props.meta.economics.humanStakeMicroUsdc;
-  const payout = stake * props.meta.economics.humanTargetMult;
 
   const start = useCallback(
     async (demo: boolean) => {
@@ -508,11 +508,7 @@ export function Hub(props: {
             }
             onClick={() => void start(false)}
           >
-            <span className="bp-title">▸ PLAY</span>
-            <span className="bp-sub">
-              {formatMicroUsdc(stake)} on one move in a live game — win pays{" "}
-              {formatMicroUsdc(payout)}
-            </span>
+            <span className="bp-title">▸ PLAY · {formatCents(stake)}</span>
           </button>
           <button
             type="button"
@@ -523,10 +519,7 @@ export function Hub(props: {
             }
             onClick={() => void start(true)}
           >
-            <span className="bp-title">▸ DEMO PLAY</span>
-            <span className="bp-sub">
-              $0 — same live games · no stats · no replay
-            </span>
+            <span className="bp-title">▸ DEMO PLAY · {formatCents(0)}</span>
           </button>
         </div>
         {stakeBalanceError !== null ? (

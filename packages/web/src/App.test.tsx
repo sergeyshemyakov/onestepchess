@@ -62,7 +62,7 @@ describe("shell + router (#27)", () => {
     for (const link of algorandLinks) {
       expect(link.getAttribute("href")).toBe("https://algorand.co/");
     }
-    await screen.findByRole("button", { name: /I HAVE AN ALGORAND WALLET/ });
+    await screen.findByRole("button", { name: /▸ LOG IN/ });
     view.unmount();
 
     window.history.pushState({}, "", "/definitely-not-a-route");
@@ -124,7 +124,7 @@ describe("boot probe (#28)", () => {
       probeProfile: vi.fn(async () => null),
     } as never);
     render(<App client={client} authHandlers={handlers} />);
-    await screen.findByRole("button", { name: /I HAVE AN ALGORAND WALLET/ });
+    await screen.findByRole("button", { name: /▸ LOG IN/ });
     expect(screen.queryByRole("button", { name: /▸ PLAY/ })).toBeNull();
   });
 });
@@ -191,9 +191,7 @@ describe("wallet auth flow (#28)", () => {
     } as never);
 
     render(<App client={client} authHandlers={handlers} />);
-    fireEvent.click(
-      await screen.findByRole("button", { name: /I HAVE AN ALGORAND WALLET/ }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: /▸ LOG IN/ }));
     fireEvent.click(
       await screen.findByRole("button", { name: /dev wallet \(mnemonic\)/ }),
     );
@@ -243,9 +241,7 @@ describe("wallet auth flow (#28)", () => {
     } as never);
 
     render(<App client={client} authHandlers={handlers} />);
-    fireEvent.click(
-      await screen.findByRole("button", { name: /I HAVE AN ALGORAND WALLET/ }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: /▸ LOG IN/ }));
     fireEvent.click(
       await screen.findByRole("button", { name: /dev wallet \(mnemonic\)/ }),
     );
@@ -294,9 +290,7 @@ describe("wallet auth flow (#28)", () => {
     } as never);
 
     render(<App client={client} authHandlers={handlers} />);
-    fireEvent.click(
-      await screen.findByRole("button", { name: /I HAVE AN ALGORAND WALLET/ }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: /▸ LOG IN/ }));
     fireEvent.click(
       await screen.findByRole("button", { name: /dev wallet \(mnemonic\)/ }),
     );
@@ -304,9 +298,7 @@ describe("wallet auth flow (#28)", () => {
       expect(screen.queryByRole("dialog")).toBeNull();
     });
     // Landing intact, no verify attempted, session untouched.
-    expect(
-      screen.getByRole("button", { name: /I HAVE AN ALGORAND WALLET/ }),
-    ).not.toBeNull();
+    expect(screen.getByRole("button", { name: /▸ LOG IN/ })).not.toBeNull();
     expect(client.authVerify).not.toHaveBeenCalled();
     expect(probeProfile).toHaveBeenCalledTimes(1);
   });
@@ -326,9 +318,7 @@ describe("wallet auth flow (#28)", () => {
     } as never);
 
     render(<App client={client} authHandlers={handlers} />);
-    fireEvent.click(
-      await screen.findByRole("button", { name: /I HAVE AN ALGORAND WALLET/ }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: /▸ LOG IN/ }));
     fireEvent.click(
       await screen.findByRole("button", { name: /dev wallet \(mnemonic\)/ }),
     );

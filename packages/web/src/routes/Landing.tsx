@@ -88,7 +88,9 @@ export function Landing(props: {
   readonly meta: Meta;
   readonly onSignedIn: (player: PlayerView, linkedGuestClaims?: number) => void;
 }) {
-  const [connecting, setConnecting] = useState(false);
+  // "lute" is the post-demo quick-setup path: lute.app just opened in a new
+  // tab, so the sheet offers exactly one connect option instead of the list.
+  const [connecting, setConnecting] = useState<"wallets" | "lute" | null>(null);
   const [audience, setAudience] = useState<"human" | "agent">("human");
   const [guestDemo, setGuestDemo] = useState(readGuestDemo);
   const [gamePaneDismissed, setGamePaneDismissed] = useState(false);
@@ -124,7 +126,13 @@ export function Landing(props: {
     <PlayView
       flow={flow}
       meta={props.meta}
-      onWalletIntent={() => setConnecting(true)}
+      onWalletIntent={() => setConnecting("wallets")}
+      onQuickSetup={() => {
+        // Leaving for lute.app is a deliberate exit from the receipt —
+        // dismiss it so the connect prompt stands alone when they return.
+        flow.send({ type: "ACK" });
+        setConnecting("lute");
+      }}
     />
   );
 
@@ -145,39 +153,39 @@ export function Landing(props: {
           </h1>
           <HowItWorks meta={props.meta} tab={audience} onTab={setAudience} />
           {audience === "human" ? (
-            <div className="ctas">
-              <button
-                type="button"
-                className="bigplay primary pulse-soft"
-                onClick={() => setConnecting(true)}
-              >
-                <span className="bp-title">▸ I HAVE AN ALGORAND WALLET</span>
-                <span className="bp-sub">
-                  connect &amp; sign a zero transfer to log in
-                </span>
-              </button>
-              <Link className="bigplay" to="/start">
-                <span className="bp-title">
-                  I DON'T HAVE AN ALGORAND WALLET
-                </span>
-                <span className="bp-sub">set up a wallet, USDC and gas</span>
-              </Link>
+            <div className="ctas gostack">
               {guestDemo === null ? (
                 <button
                   type="button"
-                  className="bigplay demo"
+                  className="gobtn"
+                  aria-label="GO — play a free demo game"
                   onClick={openDemoGame}
                 >
-                  <span className="bp-title">PLAY A DEMO GAME</span>
-                  <span className="bp-sub">
-                    no wallet needed · you make one real move
-                  </span>
+                  <span className="go-title">GO</span>
+                  <span className="go-sub">free demo — no wallet needed</span>
                 </button>
               ) : (
                 <p className="console" data-testid="guest-demo-nudge">
                   &gt; you have a demo game waiting — log in to see how it ends
                 </p>
               )}
+              <button
+                type="button"
+                className="loginbtn"
+                onClick={() => setConnecting("wallets")}
+              >
+                ▸ LOG IN
+              </button>
+              <p className="onboardline" data-testid="onboard-hint">
+                &gt; new here?{" "}
+                <Link className="hintlink" to="/rules">
+                  how to play ▸
+                </Link>{" "}
+                ·{" "}
+                <Link className="hintlink" to="/start">
+                  get set up ▸
+                </Link>
+              </p>
             </div>
           ) : null}
         </div>
@@ -254,12 +262,13 @@ export function Landing(props: {
       ) : flow.state.phase !== "IDLE" ? (
         playView
       ) : null}
-      {connecting ? (
+      {connecting !== null ? (
         <ConnectSheet
           client={props.client}
           meta={props.meta}
+          lutePrompt={connecting === "lute"}
           onSignedIn={props.onSignedIn}
-          onClose={() => setConnecting(false)}
+          onClose={() => setConnecting(null)}
         />
       ) : null}
     </AppShell>

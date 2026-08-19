@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useToasts } from "../components/Toasts.jsx";
 import { useDialogFocusTrap } from "../components/useDialogFocusTrap.js";
 import { loadWalletModule } from "./lazy.js";
+import { LUTE_CONNECT_POPUP_HINT, LUTE_WALLET_ID } from "./lute.js";
 import type { ConnectedWallet, WalletChoice } from "./provider.js";
 
 export function PaymentWalletSheet(props: {
@@ -15,6 +17,7 @@ export function PaymentWalletSheet(props: {
   const [error, setError] = useState<string | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const { onCancel } = props;
+  const { push } = useToasts();
   useDialogFocusTrap(dialogRef, onCancel);
 
   useEffect(() => {
@@ -36,6 +39,7 @@ export function PaymentWalletSheet(props: {
       if (busy) return;
       setBusy(true);
       setError(null);
+      if (id === LUTE_WALLET_ID) push(LUTE_CONNECT_POPUP_HINT);
       try {
         const module = await loadWalletModule(props.caip2);
         const wallet = await module.connect(id);
@@ -57,7 +61,7 @@ export function PaymentWalletSheet(props: {
         setBusy(false);
       }
     },
-    [busy, props],
+    [busy, props, push],
   );
 
   return (

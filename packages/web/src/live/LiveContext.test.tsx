@@ -330,6 +330,66 @@ describe("Release 2 live human surfaces", () => {
     });
   });
 
+  it("sse_stuck_reconnect_rebuilds_stream_on_tab_return", async () => {
+    const client = mockClient({
+      getCurrentClaim: vi.fn(async () => null),
+    } as never);
+    render(
+      <App
+        client={client}
+        authHandlers={handlers}
+        eventSourceFactory={factory}
+      />,
+    );
+    await waitFor(() => expect(FakeEventSource.current).not.toBeNull());
+    const first = source();
+    first.emit("open");
+
+    fireEvent(document, new Event("visibilitychange"));
+    expect(FakeEventSource.current).toBe(first);
+    expect(first.closed).toBe(false);
+
+    first.emit("error");
+    expect(await screen.findByText("reconnecting…")).not.toBeNull();
+    const claimCallsBefore = vi.mocked(client.getCurrentClaim).mock.calls
+      .length;
+
+    fireEvent(document, new Event("visibilitychange"));
+    await waitFor(() => expect(FakeEventSource.current).not.toBe(first));
+    expect(first.closed).toBe(true);
+    await waitFor(() =>
+      expect(
+        vi.mocked(client.getCurrentClaim).mock.calls.length,
+      ).toBeGreaterThan(claimCallsBefore),
+    );
+
+    source().emit("open");
+    await waitFor(() => expect(screen.queryByText("reconnecting…")).toBeNull());
+  });
+
+  it("sse_revive_sees_error_delivered_in_same_task_as_tab_return", async () => {
+    const client = mockClient({} as never);
+    render(
+      <App
+        client={client}
+        authHandlers={handlers}
+        eventSourceFactory={factory}
+      />,
+    );
+    await waitFor(() => expect(FakeEventSource.current).not.toBeNull());
+    const first = source();
+    first.emit("open");
+    await waitFor(() => expect(screen.queryByText("reconnecting…")).toBeNull());
+
+    // A frozen tab resuming delivers the pent-up SSE error and the
+    // visibilitychange in the same task, before React re-renders.
+    first.emit("error");
+    fireEvent(document, new Event("visibilitychange"));
+
+    await waitFor(() => expect(FakeEventSource.current).not.toBe(first));
+    expect(first.closed).toBe(true);
+  });
+
   it("claim_bar_follows_open_claim_across_every_route", async () => {
     for (const path of [
       "/archive",

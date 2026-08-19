@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatCents,
   formatCountdown,
   formatElapsedTime,
   formatGameDuration,
@@ -22,6 +23,18 @@ describe("formatMicroUsdc (§4.5 cases)", () => {
     expect(formatMicroUsdc(200)).toBe("0.02 ¢");
     expect(formatMicroUsdc(0)).toBe("0 ¢");
     expect(formatMicroUsdc(9_999)).toBe("0.9999 ¢");
+  });
+});
+
+describe("formatCents (play CTA stake labels)", () => {
+  it("renders whole and zero stakes as bare cents", () => {
+    expect(formatCents(10_000)).toBe("1 ¢");
+    expect(formatCents(0)).toBe("0 ¢");
+  });
+
+  it("keeps fractional stakes in cent form too", () => {
+    expect(formatCents(15_000)).toBe("1.5 ¢");
+    expect(formatCents(1_000)).toBe("0.1 ¢");
   });
 });
 

@@ -136,6 +136,9 @@ export function PlayView(props: {
   readonly flow: PlayFlow;
   readonly meta: Meta;
   readonly onWalletIntent?: () => void;
+  /** Guest quick setup: lute.app opens in a new tab and the host surfaces a
+   * single Lute connect prompt for the wallet being created there. */
+  readonly onQuickSetup?: () => void;
   readonly acceptedMove?: {
     readonly claimId: string;
     readonly txid: string | null;
@@ -288,11 +291,11 @@ export function PlayView(props: {
           <p className="mv">POSITION PASSED ON</p>
           <p className="sub">
             {state.guest === true
-              ? "nothing charged. log in to keep playing."
+              ? "nothing charged. get a wallet to keep playing."
               : "the board went to another player. nothing was charged."}
           </p>
           {state.guest === true ? (
-            <OnboardingDoors onWalletIntent={props.onWalletIntent} />
+            <OnboardingDoors onQuickSetup={props.onQuickSetup} />
           ) : null}
         </StatusDialog>
       ) : null}
@@ -398,7 +401,7 @@ export function PlayView(props: {
         <ConfirmMorph
           flow={props.flow}
           meta={meta}
-          onWalletIntent={props.onWalletIntent}
+          onQuickSetup={props.onQuickSetup}
           acceptedMove={props.acceptedMove}
         />
       ) : null}
@@ -411,7 +414,7 @@ export function PlayView(props: {
 function ConfirmMorph(props: {
   readonly flow: PlayFlow;
   readonly meta: Meta;
-  readonly onWalletIntent?: () => void;
+  readonly onQuickSetup?: () => void;
   readonly acceptedMove?: {
     readonly claimId: string;
     readonly txid: string | null;
@@ -540,7 +543,7 @@ function ConfirmMorph(props: {
         ) : null}
 
         {state.phase === "RECEIPT" && state.receipt !== undefined ? (
-          <Receipt flow={props.flow} onWalletIntent={props.onWalletIntent} />
+          <Receipt flow={props.flow} onQuickSetup={props.onQuickSetup} />
         ) : null}
       </div>
     </div>
@@ -551,7 +554,7 @@ function ConfirmMorph(props: {
  * correlate two claims to one game (D16). */
 function Receipt(props: {
   readonly flow: PlayFlow;
-  readonly onWalletIntent?: () => void;
+  readonly onQuickSetup?: () => void;
 }) {
   const { state, send } = props.flow;
   const receipt = state.receipt;
@@ -564,7 +567,7 @@ function Receipt(props: {
           <>
             &gt; move played :: {receipt.move.san}
             {"\n"}&gt; the game goes on without you
-            {"\n"}&gt; connect an Algorand wallet to see how it ends
+            {"\n"}&gt; get an Algorand wallet to see how it ends
           </>
         ) : demo ? (
           <>
@@ -594,7 +597,7 @@ function Receipt(props: {
         )}
       </div>
       {state.guest === true ? (
-        <OnboardingDoors onWalletIntent={props.onWalletIntent} />
+        <OnboardingDoors onQuickSetup={props.onQuickSetup} />
       ) : (
         <p className="console receipt-notice">
           &gt; you will be notified when the game ends
@@ -682,19 +685,40 @@ function LoginWall(props: {
   return (
     <StatusDialog title="DEMO WAITING" onClose={props.onClose}>
       <p className="sub">{props.message}</p>
-      <OnboardingDoors onWalletIntent={props.onWalletIntent} />
+      <div className="modal-actions pair">
+        <button
+          type="button"
+          className="btn pri"
+          onClick={props.onWalletIntent}
+        >
+          ▸ LOG IN
+        </button>
+        <a className="btn" href="/start">
+          SETUP GUIDE
+        </a>
+      </div>
     </StatusDialog>
   );
 }
 
-function OnboardingDoors(props: { readonly onWalletIntent?: () => void }) {
+/** Post-demo doors: both lead to getting a wallet — the demo already proved
+ * the game, so the guest is never asked whether they own one. QUICK SETUP
+ * opens lute.app in a new tab; the host swaps in a Lute connect prompt so
+ * the freshly created wallet has somewhere to land. */
+function OnboardingDoors(props: { readonly onQuickSetup?: () => void }) {
   return (
     <div className="modal-actions pair" data-testid="onboarding-doors">
-      <button type="button" className="btn pri" onClick={props.onWalletIntent}>
-        I have a wallet
-      </button>
+      <a
+        className="btn pri"
+        href="https://lute.app/"
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={props.onQuickSetup}
+      >
+        QUICK SETUP ↗
+      </a>
       <a className="btn" href="/start">
-        I don't have one yet
+        SETUP GUIDE
       </a>
     </div>
   );

@@ -28,6 +28,12 @@ export function formatMicroUsdc(microUsdc: number): string {
   return `${sign}${trimmedFixed(absolute / MICRO_PER_CENT, 4)} ¢`;
 }
 
+/** Play CTAs label the stake as a bare cent amount ("1 ¢") — the dollar form
+ * from formatMicroUsdc reads as a price tag, not a stake. */
+export function formatCents(microUsdc: number): string {
+  return `${trimmedFixed(microUsdc / MICRO_PER_CENT, 4)} ¢`;
+}
+
 const MICRO_PER_ALGO = 1_000_000;
 
 export function formatMicroAlgo(microAlgo: number): string {
