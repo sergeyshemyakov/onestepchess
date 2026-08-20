@@ -15,7 +15,7 @@ import {
   MOCK_SCHEME,
 } from "./index.js";
 
-const RESOURCE = "https://osc.example/api/v1/claims/claim-1/move";
+const RESOURCE = "https://osc.example/api/v1/moves";
 
 function payment(
   rail: ReturnType<typeof createMockRail>,
@@ -159,7 +159,7 @@ describe("rail-mock clean path", () => {
     const expected = payment(rail, "bound");
     const otherChallenge = rail.buildPaymentChallenge({
       amountMicroUsdc: 1_000,
-      resource: "https://osc.example/api/v1/claims/other/move",
+      resource: "https://other.example/api/v1/moves",
     });
     const wrongResource = buildMockHeader({
       challenge: otherChallenge,

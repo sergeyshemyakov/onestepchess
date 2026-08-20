@@ -51,7 +51,7 @@ export const claimBodySchema = z
   .strict();
 
 export const moveBodySchema = z
-  .object({ move: z.string().min(1).max(32) })
+  .object({ claimId: z.string().min(1), move: z.string().min(1).max(32) })
   .strict();
 
 export const renameBodySchema = z.object({ nickname: z.string() }).strict();
@@ -655,12 +655,11 @@ export const publicApiRoutes = [
   }),
   createRoute({
     method: "post",
-    path: "/api/v1/claims/{id}/move",
+    path: "/api/v1/moves",
     tags: ["claims"],
     summary: "Submit the one move for a claim",
     security: bearerOrCookie,
     request: {
-      params: idParam,
       body: { content: { "application/json": { schema: moveBodySchema } } },
     },
     responses: {
@@ -668,6 +667,7 @@ export const publicApiRoutes = [
       202: json("Payment outcome is pending", paymentPending),
       400: json("Illegal, ambiguous, or invalid move", errorEnvelope),
       402: json("x402 payment required or rejected", errorEnvelope),
+      404: json("Claim not found", errorEnvelope),
       409: json("Payment already in flight", errorEnvelope),
       410: json("Claim expired", errorEnvelope),
       503: json("Payment or service unavailable", errorEnvelope),

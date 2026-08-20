@@ -17,7 +17,7 @@ const at = "2026-07-25T12:00:00.000Z";
 const payer = algosdk.generateAccount();
 const treasury = algosdk.generateAccount();
 const feePayer = algosdk.generateAccount();
-const moveUrl = "https://osc.example/api/v1/claims/clm_pay/move";
+const moveUrl = "https://osc.example/api/v1/moves";
 const MOVE_DESCRIPTION =
   "Submit one legal move to an active shared One Step Chess game and receive the committed move and Algorand settlement receipt.";
 const claim = {
@@ -48,7 +48,7 @@ function paymentExtensions() {
           type: "http" as const,
           method: "POST" as const,
           bodyType: "json" as const,
-          body: { move: "e2e4" },
+          body: { claimId: "clm_pay", move: "e2e4" },
         },
         output: { type: "json" as const, example: receipt },
       },
@@ -227,7 +227,11 @@ function moveServer(mode: MoveServerMode) {
             : null,
       });
     }
-    if (path.endsWith("/claims/clm_pay/move")) {
+    if (path.endsWith("/api/v1/moves")) {
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        claimId: "clm_pay",
+        move: expect.any(String),
+      });
       const header = new Headers(init?.headers).get("PAYMENT-SIGNATURE");
       if (header === null) {
         return json({ error: "PAYMENT_REQUIRED", hint: "pay", docs: "" }, 402, {

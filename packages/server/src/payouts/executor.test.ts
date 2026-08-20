@@ -399,7 +399,7 @@ describe("payout executor — end-to-end echo memory (F7)", () => {
     for (const [i, amount] of stakes.entries()) {
       const challenge = stack.rail.buildPaymentChallenge({
         amountMicroUsdc: amount,
-        resource: "https://osc.example/claims/x/move",
+        resource: "https://osc.example/api/v1/moves",
       });
       const header = buildMockHeader({
         challenge,

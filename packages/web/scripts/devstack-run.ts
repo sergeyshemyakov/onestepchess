@@ -142,9 +142,9 @@ async function main(): Promise<void> {
     stake: demoClaim.stakeMicroUsdc,
   });
   const demoMove = (demoClaim.legalMoves as Json[])[0] as Json;
-  const demoReceipt = await api(`/claims/${demoClaim.claimId}/move`, {
+  const demoReceipt = await api("/moves", {
     method: "POST",
-    body: { move: demoMove.uci },
+    body: { claimId: demoClaim.claimId, move: demoMove.uci },
     jwt: human1.jwt,
   });
   if (demoReceipt.status !== 200) throw new Error("demo move did not settle");
@@ -161,9 +161,9 @@ async function main(): Promise<void> {
     stake: stakedClaim.stakeMicroUsdc,
   });
   const stakedMove = (stakedClaim.legalMoves as Json[])[0] as Json;
-  const first = await api(`/claims/${stakedClaim.claimId}/move`, {
+  const first = await api("/moves", {
     method: "POST",
-    body: { move: stakedMove.uci },
+    body: { claimId: stakedClaim.claimId, move: stakedMove.uci },
     jwt: human2.jwt,
   });
   if (first.status !== 402)
@@ -198,9 +198,9 @@ async function main(): Promise<void> {
       },
     }),
   ).toString("base64");
-  const settled = await api(`/claims/${stakedClaim.claimId}/move`, {
+  const settled = await api("/moves", {
     method: "POST",
-    body: { move: stakedMove.uci },
+    body: { claimId: stakedClaim.claimId, move: stakedMove.uci },
     jwt: human2.jwt,
     headers: { "PAYMENT-SIGNATURE": header },
   });
@@ -218,9 +218,9 @@ async function main(): Promise<void> {
   }
 
   // Idempotent replay: same header returns the original receipt.
-  const replay = await api(`/claims/${stakedClaim.claimId}/move`, {
+  const replay = await api("/moves", {
     method: "POST",
-    body: { move: stakedMove.uci },
+    body: { claimId: stakedClaim.claimId, move: stakedMove.uci },
     jwt: human2.jwt,
     headers: { "PAYMENT-SIGNATURE": header },
   });

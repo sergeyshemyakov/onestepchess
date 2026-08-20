@@ -365,14 +365,11 @@ describe("guest demo sessions and link-on-login (F13)", () => {
     const stack = setup();
 
     const moved = await createGuest(stack);
-    const moveRes = await stack.app.request(
-      `/api/v1/claims/${moved.claim.claimId}/move`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json", cookie: moved.cookie },
-        body: JSON.stringify({ move: "e2e4" }),
-      },
-    );
+    const moveRes = await stack.app.request("/api/v1/moves", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: moved.cookie },
+      body: JSON.stringify({ claimId: moved.claim.claimId, move: "e2e4" }),
+    });
     expect(moveRes.status).toBe(200);
     const afterMove = await postClaims(
       stack,
@@ -459,14 +456,11 @@ describe("guest demo sessions and link-on-login (F13)", () => {
     )) as { status: string };
     expect(openStatus.status).toBe("open");
 
-    const illegal = await stack.app.request(
-      `/api/v1/claims/${claimRow.id}/move`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json", ...cookie },
-        body: JSON.stringify({ move: "a1a1" }),
-      },
-    );
+    const illegal = await stack.app.request("/api/v1/moves", {
+      method: "POST",
+      headers: { "content-type": "application/json", ...cookie },
+      body: JSON.stringify({ claimId: claimRow.id, move: "a1a1" }),
+    });
     expect(illegal.status).toBe(400);
     const illegalBody = (await capture(illegal.clone())) as Record<
       string,
@@ -480,10 +474,10 @@ describe("guest demo sessions and link-on-login (F13)", () => {
     ]);
 
     const receipt = (await capture(
-      await stack.app.request(`/api/v1/claims/${claimRow.id}/move`, {
+      await stack.app.request("/api/v1/moves", {
         method: "POST",
         headers: { "content-type": "application/json", ...cookie },
-        body: JSON.stringify({ move: "e2e4" }),
+        body: JSON.stringify({ claimId: claimRow.id, move: "e2e4" }),
       }),
     )) as Record<string, unknown>;
     expect(Object.keys(receipt).sort()).toEqual([
@@ -553,13 +547,16 @@ describe("guest demo sessions and link-on-login (F13)", () => {
 
     // Moved guest claim transfers to a fresh wallet.
     const movedGuest = await createGuest(stack);
-    await stack.app.request(`/api/v1/claims/${movedGuest.claim.claimId}/move`, {
+    await stack.app.request("/api/v1/moves", {
       method: "POST",
       headers: {
         "content-type": "application/json",
         cookie: movedGuest.cookie,
       },
-      body: JSON.stringify({ move: "e2e4" }),
+      body: JSON.stringify({
+        claimId: movedGuest.claim.claimId,
+        move: "e2e4",
+      }),
     });
     const wallet = nobleIdentity();
     const linked = await verify(stack, wallet, {
@@ -629,17 +626,17 @@ describe("guest demo sessions and link-on-login (F13)", () => {
       .where(eq(schema.claims.id, conflictGuest.claim.claimId))
       .get();
     if (conflictClaim === undefined) throw new Error("claim missing");
-    await stack.app.request(
-      `/api/v1/claims/${conflictGuest.claim.claimId}/move`,
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          cookie: conflictGuest.cookie,
-        },
-        body: JSON.stringify({ move: "e2e4" }),
+    await stack.app.request("/api/v1/moves", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie: conflictGuest.cookie,
       },
-    );
+      body: JSON.stringify({
+        claimId: conflictGuest.claim.claimId,
+        move: "e2e4",
+      }),
+    });
     const conflictWallet = nobleIdentity();
     const registered = await verify(stack, conflictWallet, {
       nickname: "conflict-human",

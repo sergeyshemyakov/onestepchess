@@ -14,7 +14,7 @@ export class RailError extends Error {
 
 export type StakeQuote = {
   readonly amountMicroUsdc: MicroUsdc; // claim.stake_microusdc, > 0
-  readonly resource: string; // absolute URL of the claim's move endpoint
+  readonly resource: string; // absolute URL of the stable move endpoint
 };
 
 export type PaymentRequirements = {

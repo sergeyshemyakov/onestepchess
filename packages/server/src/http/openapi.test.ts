@@ -25,7 +25,7 @@ const PUBLIC_HUMAN_ROUTES: ReadonlyArray<readonly [string, string]> = [
   ["post", "/api/v1/claims"],
   ["get", "/api/v1/claims/current"],
   ["get", "/api/v1/claims/{id}/status"],
-  ["post", "/api/v1/claims/{id}/move"],
+  ["post", "/api/v1/moves"],
   ["get", "/api/v1/events"],
 ];
 
@@ -81,7 +81,7 @@ describe("/api/v1/openapi.json (F12)", () => {
         Record<string, { requestBody?: unknown; responses?: unknown }>
       >;
     };
-    const move = doc.paths["/api/v1/claims/{id}/move"]?.post;
+    const move = doc.paths["/api/v1/moves"]?.post;
     expect(move?.requestBody).toBeDefined();
     expect(move?.responses).toBeDefined();
   });

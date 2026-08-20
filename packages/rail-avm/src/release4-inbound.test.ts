@@ -10,11 +10,11 @@ import { describe, expect, it, vi } from "vitest";
 import { createAvmRail } from "./index.js";
 import {
   accountConfig,
-  CLAIM_URL,
   encodeJson,
   exactPaymentFixture,
   json,
   MAINNET_CAIP2,
+  MOVE_URL,
   signedClientTransaction,
   suggestedParams,
   supported,
@@ -64,7 +64,7 @@ describe("rail-avm Release 4 inbound and query adapter", () => {
     expect(() =>
       rail.buildPaymentChallenge({
         amountMicroUsdc: 1_000,
-        resource: CLAIM_URL,
+        resource: MOVE_URL,
       }),
     ).toThrowError(expect.objectContaining({ code: "NOT_READY" }));
 
@@ -72,14 +72,14 @@ describe("rail-avm Release 4 inbound and query adapter", () => {
     expect(
       rail.buildPaymentChallenge({
         amountMicroUsdc: 1_000,
-        resource: CLAIM_URL,
+        resource: MOVE_URL,
       }).required.accepts[0].extra.feePayer,
     ).toBe(firstSigner);
 
     await expect(rail.health()).resolves.toBe(true);
     const rotated = rail.buildPaymentChallenge({
       amountMicroUsdc: 1_000,
-      resource: CLAIM_URL,
+      resource: MOVE_URL,
     });
     expect(rotated.required.accepts[0].extra.feePayer).toBe(rotatedSigner);
 
@@ -90,7 +90,7 @@ describe("rail-avm Release 4 inbound and query adapter", () => {
     expect(
       rail.buildPaymentChallenge({
         amountMicroUsdc: 1_000,
-        resource: CLAIM_URL,
+        resource: MOVE_URL,
       }),
     ).toEqual(rotated);
   });
@@ -121,7 +121,7 @@ describe("rail-avm Release 4 inbound and query adapter", () => {
     await expect(rail.health()).resolves.toBe(true);
     const challenge = rail.buildPaymentChallenge({
       amountMicroUsdc: 1_000,
-      resource: CLAIM_URL,
+      resource: MOVE_URL,
     });
 
     expect(
@@ -134,7 +134,7 @@ describe("rail-avm Release 4 inbound and query adapter", () => {
     expect(challenge.required).toEqual({
       x402Version: 2,
       resource: {
-        url: CLAIM_URL,
+        url: MOVE_URL,
         description: MOVE_RESOURCE_DESCRIPTION,
         mimeType: MOVE_RESOURCE_MIME_TYPE,
       },
@@ -289,7 +289,7 @@ describe("rail-avm Release 4 inbound and query adapter", () => {
     await rail.health();
     const required = rail.buildPaymentChallenge({
       amountMicroUsdc: 1_000,
-      resource: CLAIM_URL,
+      resource: MOVE_URL,
     }).required;
     const payment = exactPaymentFixture({
       payer,
@@ -333,7 +333,7 @@ describe("rail-avm Release 4 inbound and query adapter", () => {
       await unavailableRail.health();
       const unavailableRequired = unavailableRail.buildPaymentChallenge({
         amountMicroUsdc: 1_000,
-        resource: CLAIM_URL,
+        resource: MOVE_URL,
       }).required;
       const result = await unavailableRail[operation](
         payment.header,
@@ -373,7 +373,7 @@ describe("rail-avm Release 4 inbound and query adapter", () => {
     await rail.health();
     const required = rail.buildPaymentChallenge({
       amountMicroUsdc: 1_000,
-      resource: CLAIM_URL,
+      resource: MOVE_URL,
     }).required;
     const mutations: Array<
       Parameters<typeof exactPaymentFixture>[0]["mutate"]
@@ -604,7 +604,7 @@ describe("rail-avm Release 4 inbound and query adapter", () => {
     await rail.health();
     const required = rail.buildPaymentChallenge({
       amountMicroUsdc: 1_000,
-      resource: CLAIM_URL,
+      resource: MOVE_URL,
     }).required;
     const payment = exactPaymentFixture({
       payer: algosdk.generateAccount(),
@@ -716,7 +716,7 @@ describe("rail-avm Release 4 inbound and query adapter", () => {
     await rail.health();
     const required = rail.buildPaymentChallenge({
       amountMicroUsdc: 1_000,
-      resource: CLAIM_URL,
+      resource: MOVE_URL,
     }).required;
     const payment = exactPaymentFixture({
       payer,

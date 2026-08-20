@@ -285,8 +285,8 @@ async function playPaidMove(
 
   const challengeResponse = await postJson(
     stack,
-    `/api/v1/claims/${claim.claimId}/move`,
-    { move },
+    "/api/v1/moves",
+    { claimId: claim.claimId, move },
     authHeaders,
   );
   expect(challengeResponse.status, `ply ${ply} x402 challenge`).toBe(402);
@@ -303,8 +303,8 @@ async function playPaidMove(
   );
   const moveResponse = await postJson(
     stack,
-    `/api/v1/claims/${claim.claimId}/move`,
-    { move },
+    "/api/v1/moves",
+    { claimId: claim.claimId, move },
     { ...authHeaders, "PAYMENT-SIGNATURE": paymentHeader },
   );
   expect(moveResponse.status, `ply ${ply} paid move`).toBe(200);
@@ -436,13 +436,9 @@ describe("Release 1 gate", () => {
       const { claim } = (await claimResponse.json()) as {
         readonly claim: ClaimView;
       };
-      const path = `/api/v1/claims/${claim.claimId}/move`;
-      const challengeResponse = await postJson(
-        stack,
-        path,
-        { move: "e2e4" },
-        authHeaders,
-      );
+      const path = "/api/v1/moves";
+      const body = { claimId: claim.claimId, move: "e2e4" };
+      const challengeResponse = await postJson(stack, path, body, authHeaders);
       expect(challengeResponse.status).toBe(402);
       const initialHeader = challengeResponse.headers.get("PAYMENT-REQUIRED");
       if (initialHeader === null)
@@ -451,6 +447,8 @@ describe("Release 1 gate", () => {
       const requirement = required.accepts[0];
       if (requirement === undefined)
         throw new Error("challenge has no payment requirement");
+      expect(required.resource.url.endsWith("/api/v1/moves")).toBe(true);
+      expect(required.resource.url).not.toContain(claim.claimId);
       expect(required.resource).toMatchObject({
         description:
           "Submit one legal move to an active shared One Step Chess game and receive the committed move and Algorand settlement receipt.",
@@ -464,12 +462,26 @@ describe("Release 1 gate", () => {
               type: "http",
               method: "POST",
               bodyType: "json",
-              body: { move: "e2e4" },
+              body: { claimId: "clm_example", move: "e2e4" },
             },
             output: { type: "json" },
           },
         },
       });
+      const bazaarSchema = (
+        required.extensions as unknown as {
+          bazaar: {
+            schema: {
+              properties: {
+                input: { properties: { body: { required: string[] } } };
+              };
+            };
+          };
+        }
+      ).bazaar.schema;
+      expect(
+        bazaarSchema.properties.input.properties.body.required.sort(),
+      ).toEqual(["claimId", "move"]);
 
       const browserHeader = synthesizeMockHeader(
         JSON.parse(
@@ -499,15 +511,10 @@ describe("Release 1 gate", () => {
 
       const verify = vi.spyOn(stack.rail, "verify");
       const settle = vi.spyOn(stack.rail, "settle");
-      const moved = await postJson(
-        stack,
-        path,
-        { move: "e2e4" },
-        {
-          ...authHeaders,
-          "PAYMENT-SIGNATURE": browserHeader,
-        },
-      );
+      const moved = await postJson(stack, path, body, {
+        ...authHeaders,
+        "PAYMENT-SIGNATURE": browserHeader,
+      });
       expect(moved.status).toBe(200);
       expect(await moved.json()).toMatchObject({
         status: "moved",

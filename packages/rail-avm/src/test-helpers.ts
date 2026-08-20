@@ -12,7 +12,7 @@ export const TESTNET_CAIP2 =
   "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=";
 export const MAINNET_CAIP2 =
   "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=";
-export const CLAIM_URL = "https://osc.example/api/v1/claims/clm_release4/move";
+export const MOVE_URL = "https://osc.example/api/v1/moves";
 
 export function accountConfig(caip2 = TESTNET_CAIP2) {
   const treasury = algosdk.generateAccount();
@@ -135,7 +135,7 @@ export function exactPaymentFixture(args: {
   const payload: ExactPaymentPayloadFixture = {
     x402Version: 2,
     resource: {
-      url: args.resource ?? CLAIM_URL,
+      url: args.resource ?? MOVE_URL,
       description: MOVE_RESOURCE_DESCRIPTION,
       mimeType: MOVE_RESOURCE_MIME_TYPE,
     },

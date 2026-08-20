@@ -178,7 +178,7 @@ function paymentHeader(
 ): string {
   const challenge = rail.buildPaymentChallenge({
     amountMicroUsdc: claim.stakeMicrousdc,
-    resource: `${BASE_URL}/api/v1/claims/${claim.id}/move`,
+    resource: `${BASE_URL}/api/v1/moves`,
   });
   return buildMockHeader({ challenge, from: address, nonce });
 }
@@ -187,17 +187,26 @@ function moveRequest(
   stack: ReturnType<typeof setup>,
   claim: ClaimRecord,
   address: string,
-  header: string,
+  header?: string,
 ): Promise<Response> {
-  return stack.app.request(`/api/v1/claims/${claim.id}/move`, {
+  return stack.app.request("/api/v1/moves", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${session(stack, address)}`,
       "Content-Type": "application/json",
-      "PAYMENT-SIGNATURE": header,
+      ...(header === undefined ? {} : { "PAYMENT-SIGNATURE": header }),
     },
-    body: JSON.stringify({ move: "e2e4" }),
+    body: JSON.stringify({ claimId: claim.id, move: "e2e4" }),
   });
+}
+
+function decodeChallenge(response: Response): {
+  resource: { url: string };
+  accepts: { amount: string }[];
+} {
+  const header = response.headers.get("PAYMENT-REQUIRED");
+  if (header === null) throw new Error("missing PAYMENT-REQUIRED");
+  return JSON.parse(Buffer.from(header, "base64").toString("utf8"));
 }
 
 afterEach(() => {
@@ -228,18 +237,15 @@ describe("staked claim moves (F4)", () => {
       "agent-one",
       "agent-contract",
     );
-    const movedResponse = await stack.app.request(
-      `/api/v1/claims/${claim.id}/move`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: authorization,
-          "Content-Type": "application/json",
-          "PAYMENT-SIGNATURE": header,
-        },
-        body: JSON.stringify({ move: "e2e4" }),
+    const movedResponse = await stack.app.request("/api/v1/moves", {
+      method: "POST",
+      headers: {
+        Authorization: authorization,
+        "Content-Type": "application/json",
+        "PAYMENT-SIGNATURE": header,
       },
-    );
+      body: JSON.stringify({ claimId: claim.id, move: "e2e4" }),
+    });
     moveReceiptSchema.parse(await movedResponse.json());
     expect(
       stack.database.db
@@ -270,13 +276,7 @@ describe("staked claim moves (F4)", () => {
     const firstBody = await first.json();
     const firstResponseHeader = first.headers.get("PAYMENT-RESPONSE");
     const replay = await moveRequest(stack, claim, "alice", header);
-    const unsignedReplay = await stack.app.request(
-      `/api/v1/claims/${claim.id}/move`,
-      {
-        method: "POST",
-        headers: { Authorization: `Bearer ${session(stack, "alice")}` },
-      },
-    );
+    const unsignedReplay = await moveRequest(stack, claim, "alice");
 
     expect(first.status).toBe(200);
     expect(firstBody).toMatchObject({
@@ -473,11 +473,110 @@ describe("staked claim moves (F4)", () => {
   });
 });
 
-describe("demo claim moves (F4 demo variant)", () => {
-  it("returns the exact zero-debit receipt and creates no payment or ledger rows", async () => {
+describe("stable x402 move resource (2026-08-20 spec)", () => {
+  it("stable_challenge_url_is_byte_identical_across_claims", async () => {
     const stack = setup();
     await addPlayer(stack, "alice");
-    const claim = await openClaim(stack, "alice", true);
+    await addPlayer(stack, "bob");
+    const aliceClaim = await openClaim(stack, "alice");
+    const bobClaim = await openClaim(stack, "bob");
+
+    const aliceResponse = await moveRequest(stack, aliceClaim, "alice");
+    const bobResponse = await moveRequest(stack, bobClaim, "bob");
+
+    expect(aliceResponse.status).toBe(402);
+    expect(bobResponse.status).toBe(402);
+    const aliceChallenge = decodeChallenge(aliceResponse);
+    const bobChallenge = decodeChallenge(bobResponse);
+    expect(aliceChallenge.resource.url).toBe(`${BASE_URL}/api/v1/moves`);
+    expect(aliceChallenge.resource.url).not.toContain(aliceClaim.id);
+    expect(bobChallenge.resource.url).not.toContain(bobClaim.id);
+    expect(JSON.stringify(aliceChallenge.resource)).toBe(
+      JSON.stringify(bobChallenge.resource),
+    );
+  });
+
+  it("submitted_header_cannot_migrate_claims", async () => {
+    const stack = setup();
+    await addPlayer(stack, "alice");
+    const claimA = await openClaim(stack, "alice");
+    const header = paymentHeader(stack.rail, claimA, "alice", "migrate");
+    expect((await moveRequest(stack, claimA, "alice", header)).status).toBe(
+      200,
+    );
+    const claimB = await openClaim(stack, "alice");
+    expect(claimB.id).not.toBe(claimA.id);
+
+    const response = await moveRequest(stack, claimB, "alice", header);
+
+    expect(response.status).toBe(402);
+    expect((await response.json()).error).toBe("PAYMENT_INVALID");
+    expect(
+      stack.database.db
+        .select({ status: schema.claims.status })
+        .from(schema.claims)
+        .where(eq(schema.claims.id, claimB.id))
+        .get(),
+    ).toEqual({ status: "open" });
+  });
+
+  it("never_submitted_header_is_endpoint_authorized", async () => {
+    const stack = setup();
+    await addPlayer(stack, "alice");
+    await addPlayer(stack, "bob");
+    const claimA = await openClaim(stack, "alice");
+    const header = paymentHeader(stack.rail, claimA, "alice", "stale");
+    stack.setNow(claimA.deadline);
+    await stack.coordinator.dispatch({
+      type: "ExpireClaim",
+      payload: { claimId: claimA.id },
+    });
+    const claimB = await openClaim(stack, "alice");
+    expect(claimB.stakeMicrousdc).toBe(claimA.stakeMicrousdc);
+    const bobClaim = await openClaim(stack, "bob");
+    const verify = vi.spyOn(stack.rail, "verify");
+
+    const foreign = await moveRequest(stack, bobClaim, "bob", header);
+    expect(foreign.status).toBe(402);
+    expect((await foreign.json()).error).toBe("PAYMENT_INVALID");
+    expect(verify).not.toHaveBeenCalled();
+
+    const settled = await moveRequest(stack, claimB, "alice", header);
+    expect(settled.status).toBe(200);
+    expect(await settled.json()).toMatchObject({
+      status: "moved",
+      debitMicroUsdc: claimB.stakeMicrousdc,
+    });
+    expect(
+      stack.database.db
+        .select({ claimId: schema.paymentIntents.claimId })
+        .from(schema.paymentIntents)
+        .get(),
+    ).toEqual({ claimId: claimB.id });
+  });
+
+  it("other_players_claim_id_fails_ownership_before_payment", async () => {
+    const stack = setup();
+    await addPlayer(stack, "alice");
+    await addPlayer(stack, "bob");
+    const aliceClaim = await openClaim(stack, "alice");
+    const bobHeader = paymentHeader(stack.rail, aliceClaim, "bob", "intrude");
+    const verify = vi.spyOn(stack.rail, "verify");
+
+    const response = await moveRequest(stack, aliceClaim, "bob", bobHeader);
+
+    expect(response.status).toBe(403);
+    expect((await response.json()).error).toBe("NOT_YOUR_CLAIM");
+    expect(verify).not.toHaveBeenCalled();
+    expect(
+      stack.database.db.select().from(schema.paymentIntents).all(),
+    ).toEqual([]);
+  });
+
+  it("old_move_route_is_a_tombstone_without_a_challenge", async () => {
+    const stack = setup();
+    await addPlayer(stack, "alice");
+    const claim = await openClaim(stack, "alice");
 
     const response = await stack.app.request(
       `/api/v1/claims/${claim.id}/move`,
@@ -487,9 +586,32 @@ describe("demo claim moves (F4 demo variant)", () => {
           Authorization: `Bearer ${session(stack, "alice")}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ move: "e4" }),
+        body: JSON.stringify({ move: "e2e4" }),
       },
     );
+    const body = (await response.json()) as { error: string; hint: string };
+
+    expect(response.status).toBe(410);
+    expect(body.error).toBe("ENDPOINT_RETIRED");
+    expect(body.hint).toContain("/api/v1/moves");
+    expect(response.headers.get("PAYMENT-REQUIRED")).toBeNull();
+  });
+});
+
+describe("demo claim moves (F4 demo variant)", () => {
+  it("demo_move_settles_on_the_stable_route_without_payment", async () => {
+    const stack = setup();
+    await addPlayer(stack, "alice");
+    const claim = await openClaim(stack, "alice", true);
+
+    const response = await stack.app.request("/api/v1/moves", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session(stack, "alice")}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ claimId: claim.id, move: "e4" }),
+    });
     const receipt = await response.json();
     const status = await stack.app.request(
       `/api/v1/claims/${claim.id}/status`,

@@ -61,8 +61,7 @@ function environment(
     OSC_LIVE_TREASURY_MNEMONIC: "treasury-secret",
     OSC_LIVE_BONUS_MNEMONIC: "bonus-secret",
     OSC_LIVE_PAYER_MNEMONIC: "payer-secret",
-    OSC_LIVE_RESOURCE_URL:
-      "https://osc.example/api/v1/claims/release4-live-smoke/move",
+    OSC_LIVE_RESOURCE_URL: "https://osc.example/api/v1/moves",
     OSC_LIVE_PAYMENT_MICRO_USDC: mainnet ? "50000" : "1000",
     OSC_LIVE_PAYOUT_MICRO_USDC: mainnet ? "50000" : "500",
     OSC_LIVE_AGGREGATE_BUDGET_MICRO_USDC: mainnet ? "100000" : "1500",
@@ -367,7 +366,7 @@ it("release4_money_crash_matrix_converges_without_duplicate_move_payout_or_bonus
   let rail = createMockRail({ state });
   const challenge = rail.buildPaymentChallenge({
     amountMicroUsdc: 1_000,
-    resource: "https://osc.example/api/v1/claims/crash-matrix/move",
+    resource: "https://osc.example/api/v1/moves",
   });
   const header = buildMockHeader({
     challenge,
@@ -440,7 +439,7 @@ it("release4_money_crash_matrix_converges_without_duplicate_move_payout_or_bonus
 });
 
 it("captured_release4_shapes_roundtrip_through_rail_web_and_agent_guards", async () => {
-  const resourceUrl = "https://osc.example/api/v1/claims/release4-fixture/move";
+  const resourceUrl = "https://osc.example/api/v1/moves";
   const required = paymentRequiredSchema.parse({
     x402Version: 2,
     resource: {

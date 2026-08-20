@@ -190,7 +190,7 @@ const agentKitExamples = {
   paymentRequired: {
     x402Version: 2,
     resource: {
-      url: "https://osc.example/api/v1/claims/clm_example/move",
+      url: "https://osc.example/api/v1/moves",
       description: MOVE_RESOURCE_DESCRIPTION,
       mimeType: MOVE_RESOURCE_MIME_TYPE,
     },

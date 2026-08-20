@@ -248,7 +248,7 @@ describe("agent-kit wire client and authentication", () => {
     const paymentRequired = {
       x402Version: 2 as const,
       resource: {
-        url: "https://osc.example/api/v1/claims/clm_fixture/move",
+        url: "https://osc.example/api/v1/moves",
         description:
           "Submit one legal move to an active shared One Step Chess game and receive the committed move and Algorand settlement receipt.",
         mimeType: "application/json",
@@ -271,7 +271,7 @@ describe("agent-kit wire client and authentication", () => {
               type: "http",
               method: "POST",
               bodyType: "json",
-              body: { move: "e2e4" },
+              body: { claimId: "clm_fixture", move: "e2e4" },
             },
             output: { type: "json", example: receipt },
           },

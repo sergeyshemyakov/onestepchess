@@ -298,7 +298,14 @@ export async function createRelease3Harness(
       const incoming = new Request(input, init);
       const headers = new Headers(incoming.headers);
       headers.set("x-forwarded-for", ip);
-      return app.fetch(new Request(incoming, { headers }));
+      // Types-only cast: the ambient DOM Request and @types/node's undici
+      // Request drift apart across @types/node versions; both are the same
+      // runtime object.
+      return app.fetch(
+        new Request(incoming, { headers }) as unknown as Parameters<
+          typeof app.fetch
+        >[0],
+      );
     };
     return fetch;
   };

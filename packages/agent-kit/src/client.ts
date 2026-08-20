@@ -365,17 +365,11 @@ export function createOscClient(options: OscClientOptions): OscClient {
     claimId: string,
     paid: boolean,
   ): Promise<MoveReceipt> {
-    const receipt = await parse(
-      response,
-      moveReceiptSchema,
-      "POST /claims/:id/move",
-    );
+    const receipt = await parse(response, moveReceiptSchema, "POST /moves");
     if (paid) {
       const header = response.headers.get("PAYMENT-RESPONSE");
       if (header === null) {
-        throw new Error(
-          "POST /claims/:id/move response omitted PAYMENT-RESPONSE",
-        );
+        throw new Error("POST /moves response omitted PAYMENT-RESPONSE");
       }
       const settlement = decodePaymentResponse(header);
       const network = (await getMeta()).network.caip2;
@@ -436,7 +430,7 @@ export function createOscClient(options: OscClientOptions): OscClient {
       claim = status.claim;
     }
 
-    const path = `/claims/${encodeURIComponent(claimId)}/move`;
+    const path = "/moves";
     const resourceUrl = url(path);
     let cached = paymentCache.get(claimId);
     let rebuilds = 0;
@@ -447,7 +441,7 @@ export function createOscClient(options: OscClientOptions): OscClient {
       try {
         response = await request(path, {
           method: "POST",
-          body: { move: moveText },
+          body: { claimId, move: moveText },
           timeoutMs: moveTimeoutMs,
           ...(cached === undefined
             ? {}

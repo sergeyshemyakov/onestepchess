@@ -153,17 +153,17 @@ describe("mock-beta deployment profile (R2-04)", () => {
     expect([200, 201]).toContain(claimResponse.status);
     expect(claimed.claim.legalMoves.length).toBeGreaterThan(0);
 
-    const bareMove = await fetch(
-      `${base}/api/v1/claims/${claimed.claim.claimId}/move`,
-      {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${session.jwt}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({ move: claimed.claim.legalMoves[0]?.uci }),
+    const bareMove = await fetch(`${base}/api/v1/moves`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${session.jwt}`,
+        "content-type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        claimId: claimed.claim.claimId,
+        move: claimed.claim.legalMoves[0]?.uci,
+      }),
+    });
     expect(bareMove.status).toBe(402);
     expect(bareMove.headers.get("PAYMENT-REQUIRED")).not.toBeNull();
     expect(

@@ -5,10 +5,10 @@ import { describe, expect, it, vi } from "vitest";
 import { createAvmRail } from "./index.js";
 import {
   accountConfig,
-  CLAIM_URL,
   exactPaymentFixture,
   json,
   MAINNET_CAIP2,
+  MOVE_URL,
   signedClientTransaction,
   suggestedParams,
   supported,
@@ -575,7 +575,7 @@ describe("rail-avm Release 4 prepared treasury and opt-in adapter", () => {
     expect(await rail.health()).toBe(true);
     const challenge = rail.buildPaymentChallenge({
       amountMicroUsdc: 1_000,
-      resource: CLAIM_URL,
+      resource: MOVE_URL,
     });
     const payment = exactPaymentFixture({
       payer,
