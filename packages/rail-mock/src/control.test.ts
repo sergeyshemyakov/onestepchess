@@ -2,7 +2,7 @@ import { RailError } from "@onestepchess/core";
 import { describe, expect, it, vi } from "vitest";
 import { buildMockHeader, createMockRail } from "./index.js";
 
-const RESOURCE = "https://osc.example/api/v1/claims/control/move";
+const RESOURCE = "https://osc.example/api/v1/moves";
 
 function payment(
   rail: ReturnType<typeof createMockRail>,

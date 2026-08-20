@@ -5,6 +5,7 @@ import type { Meta, MoveReceipt } from "../api/schemas.js";
 import type { ConnectedWallet } from "./provider.js";
 import {
   cachedHeaderFor,
+  expectedChallengeOrigin,
   guardExactPaymentGroup,
   payMove,
   resetHeaderCacheForTests,
@@ -48,7 +49,7 @@ function paymentExtensions() {
           type: "http" as const,
           method: "POST" as const,
           bodyType: "json" as const,
-          body: { move: "e2e4" },
+          body: { claimId: "clm_1", move: "e2e4" },
         },
         output: {
           type: "json" as const,
@@ -89,9 +90,7 @@ function challengeB64(
   return btoa(
     JSON.stringify({
       x402Version: 2,
-      resource: paymentResource(
-        "http://localhost:3000/api/v1/claims/clm_1/move",
-      ),
+      resource: paymentResource("http://localhost:3000/api/v1/moves"),
       accepts: [{ ...requirement, ...req }],
       extensions: paymentExtensions(),
       ...overrides,
@@ -156,13 +155,58 @@ describe("challenge validation matrix (#32)", () => {
     });
   });
 
+  it("web_wallet_resource_check_pins_the_stable_move_url", () => {
+    const withUrl = (url: string) =>
+      btoa(
+        JSON.stringify({
+          x402Version: 2,
+          resource: paymentResource(url),
+          accepts: [requirement],
+          extensions: paymentExtensions(),
+        }),
+      );
+    const pinned = {
+      ...validArgs,
+      expectedOrigin: "http://localhost:3000",
+    };
+
+    expect(
+      validateChallenge(withUrl("http://localhost:3000/api/v1/moves"), pinned)
+        .ok,
+    ).toBe(true);
+    expect(
+      validateChallenge(
+        withUrl("http://localhost:3000/api/v1/moves?claim=clm_1"),
+        pinned,
+      ),
+    ).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("canonical"),
+    });
+    expect(
+      validateChallenge(
+        withUrl("http://localhost:3000/api/v1/claims/clm_1/move"),
+        pinned,
+      ),
+    ).toMatchObject({ ok: false, reason: expect.stringContaining("resource") });
+    expect(
+      validateChallenge(withUrl("https://evil.example/api/v1/moves"), pinned),
+    ).toMatchObject({ ok: false, reason: expect.stringContaining("origin") });
+
+    // Loopback pages (the vite dev proxy) mint challenges on the server's own
+    // localhost origin, so the origin pin applies only to deployed pages.
+    expect(expectedChallengeOrigin("http://localhost:5173")).toBeUndefined();
+    expect(expectedChallengeOrigin("http://127.0.0.1:5173")).toBeUndefined();
+    expect(expectedChallengeOrigin("https://osc.example")).toBe(
+      "https://osc.example",
+    );
+  });
+
   it("rejects multiple accepts entries", () => {
     const bad = btoa(
       JSON.stringify({
         x402Version: 2,
-        resource: paymentResource(
-          "http://localhost:3000/api/v1/claims/clm_1/move",
-        ),
+        resource: paymentResource("http://localhost:3000/api/v1/moves"),
         accepts: [requirement, requirement],
         extensions: paymentExtensions(),
       }),
@@ -238,7 +282,7 @@ it("t1_fixtures_are_consumed_by_web_payment_guards", () => {
   const fixture = btoa(
     JSON.stringify({
       x402Version: 2,
-      resource: paymentResource("https://osc.example/api/v1/claims/clm_1/move"),
+      resource: paymentResource("https://osc.example/api/v1/moves"),
       accepts: [fixtureRequirement],
       extensions: paymentExtensions(),
     }),
@@ -254,9 +298,7 @@ it("t1_fixtures_are_consumed_by_web_payment_guards", () => {
     const mutated = btoa(
       JSON.stringify({
         x402Version: 2,
-        resource: paymentResource(
-          "https://osc.example/api/v1/claims/clm_1/move",
-        ),
+        resource: paymentResource("https://osc.example/api/v1/moves"),
         accepts: [{ ...fixtureRequirement, ...mutation }],
         extensions: paymentExtensions(),
       }),
@@ -331,9 +373,7 @@ describe("mock branch (#32)", () => {
     const args = {
       required: {
         x402Version: 2 as const,
-        resource: paymentResource(
-          "http://localhost:3000/api/v1/claims/clm_1/move",
-        ),
+        resource: paymentResource("http://localhost:3000/api/v1/moves"),
         accepts: [requirement],
         extensions: paymentExtensions(),
       },
@@ -469,7 +509,7 @@ function exactChallenge(
   return btoa(
     JSON.stringify({
       x402Version: 2,
-      resource: paymentResource("https://osc.example/api/v1/claims/clm_1/move"),
+      resource: paymentResource("https://osc.example/api/v1/moves"),
       accepts: [exactRequirement(requirementOverrides)],
       extensions: paymentExtensions(),
       ...requiredOverrides,

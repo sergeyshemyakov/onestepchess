@@ -55,6 +55,17 @@ export type ChallengeValidation =
     }
   | { readonly ok: false; readonly reason: string };
 
+/** The SPA and API share one origin in production, so a deployed page pins the
+ * challenge resource to its own origin. Loopback pages are exempt: the vite
+ * dev proxy serves the SPA on a different localhost port than the server that
+ * mints the challenge. */
+export function expectedChallengeOrigin(
+  pageOrigin: string,
+): string | undefined {
+  const host = new URL(pageOrigin).hostname;
+  return host === "localhost" || host === "127.0.0.1" ? undefined : pageOrigin;
+}
+
 /** Validate the 402 challenge against the claim and the `/meta` trust pins —
  * every mismatch rejects locally before any signer or network retry. */
 export function validateChallenge(
@@ -63,6 +74,7 @@ export function validateChallenge(
     readonly claimId: string;
     readonly stakeMicroUsdc: number;
     readonly meta: Meta;
+    readonly expectedOrigin?: string;
   },
 ): ChallengeValidation {
   let decoded: unknown;
@@ -89,20 +101,30 @@ export function validateChallenge(
       reason: "challenge must offer exactly one requirement",
     };
   }
-  let resourcePath: string;
+  let resource: URL;
   try {
-    const resource = new URL(required.resource.url);
-    if (resource.search !== "" || resource.hash !== "") {
-      return { ok: false, reason: "challenge resource is not canonical" };
-    }
-    resourcePath = resource.pathname;
+    resource = new URL(required.resource.url);
   } catch {
     return { ok: false, reason: "challenge resource is not a URL" };
   }
-  if (resourcePath !== `/api/v1/claims/${args.claimId}/move`) {
+  if (resource.search !== "" || resource.hash !== "") {
+    return { ok: false, reason: "challenge resource is not canonical" };
+  }
+  // The claim-specific assurance the per-claim URL used to carry is now the
+  // amount check below plus the claimId the client sends in the same request.
+  if (resource.pathname !== "/api/v1/moves") {
     return {
       ok: false,
-      reason: "challenge resource is not this claim's move URL",
+      reason: "challenge resource is not the stable move URL",
+    };
+  }
+  if (
+    args.expectedOrigin !== undefined &&
+    resource.origin !== args.expectedOrigin
+  ) {
+    return {
+      ok: false,
+      reason: "challenge resource is not on this page's origin",
     };
   }
   if (
@@ -293,7 +315,11 @@ async function headerFromChallenge(
   | { readonly ok: true; readonly header: string }
   | { readonly ok: false; readonly outcome: PayMoveOutcome }
 > {
-  const validated = validateChallenge(challengeHeader, args);
+  const origin = expectedChallengeOrigin(window.location.origin);
+  const validated = validateChallenge(challengeHeader, {
+    ...args,
+    ...(origin === undefined ? {} : { expectedOrigin: origin }),
+  });
   if (!validated.ok) {
     return {
       ok: false,

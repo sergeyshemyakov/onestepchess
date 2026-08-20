@@ -94,7 +94,7 @@ function pauseCheck(deps: ClaimRouteDeps): void {
 function challenge(deps: ClaimRouteDeps, claim: ClaimRecord) {
   return deps.rail.buildPaymentChallenge({
     amountMicroUsdc: claim.stakeMicrousdc,
-    resource: `${deps.publicBaseUrl}/api/v1/claims/${claim.id}/move`,
+    resource: `${deps.publicBaseUrl}/api/v1/moves`,
   });
 }
 
@@ -134,17 +134,12 @@ function assertClaimNotExpired(deps: ClaimRouteDeps, claim: ClaimRecord): void {
     throw new AppError("CLAIM_EXPIRED", { hint: "claim expired" });
 }
 
-async function normalizeRequestedMove(
+function normalizeRequestedMove(
   deps: ClaimRouteDeps,
   claim: ClaimRecord,
-  request: { json(): Promise<unknown> },
-): Promise<MoveReceipt["move"]> {
-  const body = await parseJsonBody(
-    moveBodySchema,
-    request,
-    "invalid request body",
-  );
-  const normalized = legalMove(deps, claim, body.move);
+  requestedMove: string,
+): MoveReceipt["move"] {
+  const normalized = legalMove(deps, claim, requestedMove);
   if (!normalized.ok)
     throw new AppError(
       normalized.reason === "ambiguous" ? "AMBIGUOUS_MOVE" : "ILLEGAL_MOVE",
@@ -155,10 +150,6 @@ async function normalizeRequestedMove(
     );
   return normalized.move;
 }
-
-type JsonRequest = {
-  json(): Promise<unknown>;
-};
 
 type PaidMoveResult =
   | {
@@ -179,11 +170,11 @@ async function submitDemoMove(
   deps: ClaimRouteDeps,
   claim: ClaimRecord,
   player: string,
-  request: JsonRequest,
+  requestedMove: string,
 ): Promise<MoveReceipt> {
   assertClaimNotExpired(deps, claim);
   if (claim.status === "moved") return receipt(deps, claim);
-  const move = await normalizeRequestedMove(deps, claim, request);
+  const move = normalizeRequestedMove(deps, claim, requestedMove);
   const result = await deps.coordinator.dispatch<unknown, MoveReceipt>({
     type: "DemoMoveSubmitted",
     payload: { claimId: claim.id, player, move },
@@ -196,7 +187,7 @@ async function submitPaidMove(
   claim: ClaimRecord,
   player: string,
   signature: string | undefined,
-  request: JsonRequest,
+  requestedMove: string,
 ): Promise<PaidMoveResult> {
   const required = challenge(deps, claim);
   if (signature === undefined) {
@@ -208,7 +199,7 @@ async function submitPaidMove(
         paymentResponse: null,
       };
     }
-    await normalizeRequestedMove(deps, claim, request);
+    normalizeRequestedMove(deps, claim, requestedMove);
     throw new AppError("PAYMENT_REQUIRED", {
       hint: "payment signature required",
       headers: { "PAYMENT-REQUIRED": required.header },
@@ -264,7 +255,7 @@ async function submitPaidMove(
   if (claim.status !== "open") {
     throw paymentError("PAYMENT_INVALID", required.header);
   }
-  const move = await normalizeRequestedMove(deps, claim, request);
+  const move = normalizeRequestedMove(deps, claim, requestedMove);
   const inflight = deps.db
     .select()
     .from(schema.paymentIntents)
@@ -605,19 +596,34 @@ export function registerClaimRoutes(
         intent?.status === "verified" ? "verifying" : (intent?.status ?? null),
     });
   });
-  app.post("/api/v1/claims/:id/move", auth, async (c) => {
+  // Retired per docs/spec/2026-08-20-stable-x402-move-resource.md — the
+  // per-claim URL polluted the facilitator's Bazaar catalog with single-use
+  // resource records. Tombstone for one release, then remove.
+  app.post("/api/v1/claims/:id/move", () => {
+    throw new AppError("ENDPOINT_RETIRED", {
+      hint: "resubmit via POST /api/v1/moves with { claimId, move }",
+    });
+  });
+  app.post("/api/v1/moves", auth, async (c) => {
     pauseCheck(deps);
     const session = c.get("session");
-    const claim = claimed(deps, c.req.param("id"), session.address);
+    const body = await parseJsonBody(
+      moveBodySchema,
+      c.req,
+      "invalid request body",
+    );
+    const claim = claimed(deps, body.claimId, session.address);
     if (claim.demo) {
-      return c.json(await submitDemoMove(deps, claim, session.address, c.req));
+      return c.json(
+        await submitDemoMove(deps, claim, session.address, body.move),
+      );
     }
     const result = await submitPaidMove(
       deps,
       claim,
       session.address,
       c.req.header("PAYMENT-SIGNATURE"),
-      c.req,
+      body.move,
     );
     if (result.kind === "pending") {
       return c.json(

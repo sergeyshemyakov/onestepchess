@@ -447,7 +447,7 @@ describe.sequential("Release 3 public clients", () => {
       "/api/v1/claims",
       "/api/v1/claims/current",
       "/api/v1/claims/{id}/status",
-      "/api/v1/claims/{id}/move",
+      "/api/v1/moves",
     ];
     expect(Object.keys(document.paths ?? {})).toEqual(
       expect.arrayContaining(consumed),

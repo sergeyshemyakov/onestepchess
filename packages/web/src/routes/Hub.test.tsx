@@ -32,7 +32,7 @@ function mockChallenge(amount: string): string {
     JSON.stringify({
       x402Version: 2,
       resource: {
-        url: "http://localhost:3000/api/v1/claims/clm_test1/move",
+        url: "http://localhost:3000/api/v1/moves",
         description:
           "Submit one legal move to an active shared One Step Chess game and receive the committed move and Algorand settlement receipt.",
         mimeType: "application/json",

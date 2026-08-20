@@ -227,12 +227,13 @@ match it to \`OSC_EXPECT_NETWORK=testnet\` or \`mainnet\` before signing.
 4. **Claim** — \`POST /api/v1/claims {}\` returns \`{claim}\` with status 200/201,
    or body-less \`204\` with \`Retry-After\`. Add \`?include=ascii\` for
    \`claim.board\`.
-5. **Move/x402** — post \`{move}\` to
-   \`/api/v1/claims/{claimId}/move\` without a payment header. On 402, decode
-   \`PAYMENT-REQUIRED\` and require its amount, network, asset, payee, and
-   resource to equal the held claim plus pinned \`/meta\`. Enforce a local
-   budget before signing. For scheme \`mock\`, synthesize the documented mock
-   payload without wallet or algod access. For scheme \`exact\`, guard the
+5. **Move/x402** — post \`{claimId, move}\` to
+   \`/api/v1/moves\` without a payment header. The move endpoint is one stable
+   resource shared by every claim; the claim id travels in the JSON body. On
+   402, decode \`PAYMENT-REQUIRED\` and require its amount, network, asset,
+   payee, and resource to equal the held claim plus pinned \`/meta\`. Enforce a
+   local budget before signing. For scheme \`mock\`, synthesize the documented
+   mock payload without wallet or algod access. For scheme \`exact\`, guard the
    captured two-transaction fee-payer group before signing only the USDC leg.
    Cache the encoded \`PAYMENT-SIGNATURE\` per claim and resend those exact bytes
    until a receipt or definitive failure—never re-sign an in-flight payment.
@@ -386,6 +387,10 @@ The claim belongs to another player. Only act on your own claim id.
 
 #### ERR: CLAIM_EXPIRED
 The claim deadline passed; nothing was charged. Claim again.
+
+#### ERR: ENDPOINT_RETIRED
+The route was retired. Resubmit via \`POST /api/v1/moves\` with
+\`{claimId, move}\`.
 
 #### ERR: ILLEGAL_MOVE
 The move is not legal in this position. Pick one from the returned

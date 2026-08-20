@@ -232,28 +232,28 @@ describe("Release 4 server profiles and immutable identity (#97)", () => {
     expect(() =>
       rail.buildPaymentChallenge({
         amountMicroUsdc: 1_000,
-        resource: "https://osc.example/api/v1/claims/c/move",
+        resource: "https://osc.example/api/v1/moves",
       }),
     ).toThrowError(/successful health probe/);
     expect(await rail.health()).toBe(true);
     expect(
       rail.buildPaymentChallenge({
         amountMicroUsdc: 1_000,
-        resource: "https://osc.example/api/v1/claims/c/move",
+        resource: "https://osc.example/api/v1/moves",
       }).required.accepts[0].extra.feePayer,
     ).toBe(first);
     expect(await rail.health()).toBe(true);
     expect(
       rail.buildPaymentChallenge({
         amountMicroUsdc: 1_000,
-        resource: "https://osc.example/api/v1/claims/c/move",
+        resource: "https://osc.example/api/v1/moves",
       }).required.accepts[0].extra.feePayer,
     ).toBe(second);
     expect(await rail.health()).toBe(false);
     expect(
       rail.buildPaymentChallenge({
         amountMicroUsdc: 1_000,
-        resource: "https://osc.example/api/v1/claims/c/move",
+        resource: "https://osc.example/api/v1/moves",
       }).required.accepts[0].extra.feePayer,
     ).toBe(second);
 

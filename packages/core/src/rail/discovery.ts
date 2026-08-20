@@ -13,7 +13,7 @@ export function moveBazaarExtensions(): Readonly<Record<string, unknown>> {
           type: "http",
           method: "POST",
           bodyType: "json",
-          body: { move: "e2e4" },
+          body: { claimId: "clm_example", move: "e2e4" },
         },
         output: {
           type: "json",
@@ -41,8 +41,11 @@ export function moveBazaarExtensions(): Readonly<Record<string, unknown>> {
               bodyType: { type: "string", enum: ["json"] },
               body: {
                 type: "object",
-                properties: { move: { type: "string" } },
-                required: ["move"],
+                properties: {
+                  claimId: { type: "string" },
+                  move: { type: "string" },
+                },
+                required: ["claimId", "move"],
                 additionalProperties: false,
               },
             },

@@ -35,7 +35,7 @@ function isContractError(error: unknown): boolean {
 
 const quote = {
   amountMicroUsdc: 1_000,
-  resource: "https://osc.example/api/v1/claims/conformance/move",
+  resource: "https://osc.example/api/v1/moves",
 } as const;
 
 function payoutRecipient(

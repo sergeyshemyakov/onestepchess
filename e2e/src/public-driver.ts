@@ -222,10 +222,11 @@ export function createPublicHumanDriver(
     claim,
     async play(claimView, move) {
       const selectedMove = selectMove(claimView, move);
-      const path = `/claims/${encodeURIComponent(claimView.claimId)}/move`;
+      const path = "/moves";
+      const body = { claimId: claimView.claimId, move: selectedMove };
       const challengeResponse = await request(path, {
         method: "POST",
-        body: { move: selectedMove },
+        body,
       });
       if (challengeResponse.status !== 402) {
         throw new Error(
@@ -258,7 +259,7 @@ export function createPublicHumanDriver(
       return expectJson<MoveReceipt>(
         await request(path, {
           method: "POST",
-          body: { move: selectedMove },
+          body,
           headers: { "PAYMENT-SIGNATURE": payment },
         }),
       );

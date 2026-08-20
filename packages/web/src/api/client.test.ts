@@ -143,6 +143,26 @@ describe("session-out hook", () => {
 });
 
 describe("postMove result mapping", () => {
+  it("posts_claim_id_and_move_to_the_stable_moves_route", async () => {
+    const { client, fetchFn } = clientWith(
+      jsonResponse(200, {
+        status: "moved",
+        move: { uci: "e2e4", san: "e4" },
+        debitMicroUsdc: 0,
+        txid: null,
+        explorerUrl: null,
+        fenAfterYourMove: "fen",
+      }),
+    );
+    await client.postMove("clm_1", "e2e4");
+    const [url, init] = fetchFn.mock.calls[0] as unknown as [
+      string,
+      { body: string },
+    ];
+    expect(url).toBe("/api/v1/moves");
+    expect(JSON.parse(init.body)).toEqual({ claimId: "clm_1", move: "e2e4" });
+  });
+
   it("maps a 402 challenge to payment_required with the header", async () => {
     const { client } = clientWith(
       jsonResponse(402, envelope("PAYMENT_REQUIRED"), {

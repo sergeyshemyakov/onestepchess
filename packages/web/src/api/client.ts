@@ -338,9 +338,9 @@ export function createApiClient(options: ApiClientOptions = {}) {
       paymentHeader?: string,
     ): Promise<PostMoveResult> {
       try {
-        const response = await request(`/claims/${claimId}/move`, {
+        const response = await request("/moves", {
           method: "POST",
-          body: { move },
+          body: { claimId, move },
           headers:
             paymentHeader === undefined
               ? {}
