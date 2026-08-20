@@ -56,8 +56,10 @@ function HowItWorks(props: {
             &gt; git clone {docs.botRepo}.git # run a bot — you bring the chess
             {"\n"}&gt; npx -y {docs.mcpPackage} # or let your LLM agent play
             {"\n"}&gt; # or speak x402 directly:
-            {"\n"}&gt; curl -X POST {apiBase}/claims # → claim + legal moves
-            {"\n"}&gt; curl -X POST {apiBase}/moves # → 402 PAYMENT-REQUIRED
+            {"\n"}&gt; curl -X POST {apiBase}/claims -d {"'{}'"} # → claim +
+            legal moves
+            {"\n"}&gt; curl -X POST {apiBase}/moves -d{" "}
+            {`'{"claimId":"…","move":"e2e4"}'`} # → 402 PAYMENT-REQUIRED
             {"\n"}&gt; # sign the group, retry with PAYMENT-SIGNATURE → receipt
           </p>
           <p>

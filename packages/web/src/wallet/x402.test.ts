@@ -5,7 +5,6 @@ import type { Meta, MoveReceipt } from "../api/schemas.js";
 import type { ConnectedWallet } from "./provider.js";
 import {
   cachedHeaderFor,
-  expectedChallengeOrigin,
   guardExactPaymentGroup,
   payMove,
   resetHeaderCacheForTests,
@@ -165,19 +164,23 @@ describe("challenge validation matrix (#32)", () => {
           extensions: paymentExtensions(),
         }),
       );
-    const pinned = {
+    const deployed = {
       ...validArgs,
-      expectedOrigin: "http://localhost:3000",
+      expectedOrigin: "https://osc.example",
+    };
+    const loopback = {
+      ...validArgs,
+      expectedOrigin: "http://localhost:5173",
     };
 
     expect(
-      validateChallenge(withUrl("http://localhost:3000/api/v1/moves"), pinned)
+      validateChallenge(withUrl("https://osc.example/api/v1/moves"), deployed)
         .ok,
     ).toBe(true);
     expect(
       validateChallenge(
-        withUrl("http://localhost:3000/api/v1/moves?claim=clm_1"),
-        pinned,
+        withUrl("https://osc.example/api/v1/moves?claim=clm_1"),
+        deployed,
       ),
     ).toMatchObject({
       ok: false,
@@ -185,21 +188,27 @@ describe("challenge validation matrix (#32)", () => {
     });
     expect(
       validateChallenge(
-        withUrl("http://localhost:3000/api/v1/claims/clm_1/move"),
-        pinned,
+        withUrl("https://osc.example/api/v1/claims/clm_1/move"),
+        deployed,
       ),
     ).toMatchObject({ ok: false, reason: expect.stringContaining("resource") });
     expect(
-      validateChallenge(withUrl("https://evil.example/api/v1/moves"), pinned),
+      validateChallenge(withUrl("https://evil.example/api/v1/moves"), deployed),
     ).toMatchObject({ ok: false, reason: expect.stringContaining("origin") });
 
-    // Loopback pages (the vite dev proxy) mint challenges on the server's own
-    // localhost origin, so the origin pin applies only to deployed pages.
-    expect(expectedChallengeOrigin("http://localhost:5173")).toBeUndefined();
-    expect(expectedChallengeOrigin("http://127.0.0.1:5173")).toBeUndefined();
-    expect(expectedChallengeOrigin("https://osc.example")).toBe(
-      "https://osc.example",
-    );
+    // Loopback pages (the vite dev proxy) accept the server's own localhost
+    // port but still reject every deployed origin.
+    expect(
+      validateChallenge(withUrl("http://localhost:3000/api/v1/moves"), loopback)
+        .ok,
+    ).toBe(true);
+    expect(
+      validateChallenge(withUrl("http://127.0.0.1:3000/api/v1/moves"), loopback)
+        .ok,
+    ).toBe(true);
+    expect(
+      validateChallenge(withUrl("https://evil.example/api/v1/moves"), loopback),
+    ).toMatchObject({ ok: false, reason: expect.stringContaining("origin") });
   });
 
   it("rejects multiple accepts entries", () => {
@@ -509,7 +518,9 @@ function exactChallenge(
   return btoa(
     JSON.stringify({
       x402Version: 2,
-      resource: paymentResource("https://osc.example/api/v1/moves"),
+      // Loopback resource: these payMove flows run on happy-dom's loopback
+      // page origin, which accepts only loopback challenge origins.
+      resource: paymentResource("http://localhost:3000/api/v1/moves"),
       accepts: [exactRequirement(requirementOverrides)],
       extensions: paymentExtensions(),
       ...requiredOverrides,
@@ -562,6 +573,12 @@ it("web_exact_payment_rejects_every_wrong_trust_pin_before_loading_or_signing_wa
       {
         resource: { url: "https://osc.example/api/v1/claims/other/move" },
       },
+    ),
+    // Foreign origin: rejected through the real payMove wiring even though
+    // this test's page origin is loopback (the happy-dom default).
+    exactChallenge(
+      {},
+      { resource: paymentResource("https://evil.example/api/v1/moves") },
     ),
     exactChallenge({ network: MAINNET_CAIP2 }),
     exactChallenge({ asset: "1" }),

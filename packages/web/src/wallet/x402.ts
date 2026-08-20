@@ -55,15 +55,8 @@ export type ChallengeValidation =
     }
   | { readonly ok: false; readonly reason: string };
 
-/** The SPA and API share one origin in production, so a deployed page pins the
- * challenge resource to its own origin. Loopback pages are exempt: the vite
- * dev proxy serves the SPA on a different localhost port than the server that
- * mints the challenge. */
-export function expectedChallengeOrigin(
-  pageOrigin: string,
-): string | undefined {
-  const host = new URL(pageOrigin).hostname;
-  return host === "localhost" || host === "127.0.0.1" ? undefined : pageOrigin;
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1";
 }
 
 /** Validate the 402 challenge against the claim and the `/meta` trust pins —
@@ -118,14 +111,21 @@ export function validateChallenge(
       reason: "challenge resource is not the stable move URL",
     };
   }
-  if (
-    args.expectedOrigin !== undefined &&
-    resource.origin !== args.expectedOrigin
-  ) {
-    return {
-      ok: false,
-      reason: "challenge resource is not on this page's origin",
-    };
+  // The SPA and API share one origin in production, so a deployed page pins
+  // the challenge resource to its own origin. A loopback page (the vite dev
+  // proxy serves the SPA on a different localhost port than the server that
+  // mints the challenge) accepts any loopback origin but still rejects every
+  // deployed one.
+  if (args.expectedOrigin !== undefined) {
+    const allowed = isLoopbackHost(new URL(args.expectedOrigin).hostname)
+      ? isLoopbackHost(resource.hostname)
+      : resource.origin === args.expectedOrigin;
+    if (!allowed) {
+      return {
+        ok: false,
+        reason: "challenge resource is not on this page's origin",
+      };
+    }
   }
   if (
     required.resource.description !== MOVE_RESOURCE_DESCRIPTION ||
@@ -315,10 +315,9 @@ async function headerFromChallenge(
   | { readonly ok: true; readonly header: string }
   | { readonly ok: false; readonly outcome: PayMoveOutcome }
 > {
-  const origin = expectedChallengeOrigin(window.location.origin);
   const validated = validateChallenge(challengeHeader, {
     ...args,
-    ...(origin === undefined ? {} : { expectedOrigin: origin }),
+    expectedOrigin: window.location.origin,
   });
   if (!validated.ok) {
     return {
