@@ -3,6 +3,7 @@
  * No light mode — the tube is the brand. */
 :root {
   --sq: 60px;
+  --crt-zoom: 1;
   --line: color-mix(in oklab, var(--ph) 25%, transparent);
   --faint: color-mix(in oklab, var(--ph) 12%, transparent);
   --ph-dim: color-mix(in oklab, var(--ph) 62%, black);
@@ -95,7 +96,12 @@ a {
  * below 768px (D13) — one class is the global kill switch. */
 .crt {
   position: relative;
-  min-height: 100vh;
+  /* vh resolves before zoom is applied, so zoomed tubes divide it back out
+   * to still fill exactly one viewport. */
+  min-height: calc(100vh / var(--crt-zoom));
+  zoom: var(--crt-zoom);
+  display: flex;
+  flex-direction: column;
   background: radial-gradient(
     120% 100% at 50% 0%,
     color-mix(in oklab, var(--ph) 5%, var(--bg)) 0%,
@@ -104,18 +110,40 @@ a {
   overflow: hidden;
 }
 @media (min-width: 769px) {
+  /* Side margins scale with the viewport (clamped) instead of staying a
+   * fixed 120px, so the tube keeps a deliberate bezel-to-wall ratio on
+   * large monitors rather than drowning in dead black. */
   .crt {
-    width: min(1240px, calc(100% - 120px));
+    width: min(1400px, calc(100% - clamp(120px, 10vw, 280px)));
     margin-inline: auto;
     border-inline: 1px solid var(--line);
   }
   body.fx .crt {
-    width: min(1240px, calc(100% - 120px));
+    width: min(1400px, calc(100% - clamp(120px, 10vw, 280px)));
   }
 }
+/* The design is deliberately px-based (CRT fiction) — on very large
+ * monitors the whole tube scales up like a bigger physical set instead of
+ * shrinking into the black. zoom (not transform) so layout follows. */
+@media (min-width: 1800px) {
+  :root {
+    --crt-zoom: 1.2;
+  }
+}
+@media (min-width: 2400px) {
+  :root {
+    --crt-zoom: 1.45;
+  }
+}
+/* The bezel gaps live on the (unzoomed) body: block margins on the zoomed
+ * tube get double-counted into the page's scroll extent by Chrome,
+ * producing a phantom scrollbar. */
+body.fx {
+  padding-block: 14px;
+}
 body.fx .crt {
-  margin: 14px auto;
-  min-height: calc(100vh - 28px);
+  margin: 0 auto;
+  min-height: calc((100vh - 28px) / var(--crt-zoom));
   border-radius: 26px;
   box-shadow:
     inset 0 0 140px rgba(0, 0, 0, 0.66),
@@ -195,6 +223,9 @@ body.fx svg.pc {
   }
   body.fx .overlay.scan {
     display: none;
+  }
+  body.fx {
+    padding-block: 0;
   }
   body.fx .crt {
     margin: 0;

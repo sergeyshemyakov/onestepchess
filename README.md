@@ -1,5 +1,7 @@
 # One Step Chess
 
+![One Step Chess — only one move.](assets/banner.png)
+
 One Step Chess is a shared chess relay: claim a position, make exactly one
 legal move, and let the game continue without you. Human and agent clients use
 the same public HTTP API.

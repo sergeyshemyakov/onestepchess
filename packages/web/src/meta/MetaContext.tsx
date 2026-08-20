@@ -55,3 +55,8 @@ export function useMeta(): MetaState {
   if (value === null) throw new Error("useMeta outside MetaProvider");
   return value;
 }
+
+/** For shell chrome that also mounts on the provider-less public replay. */
+export function useMetaOptional(): MetaState | null {
+  return useContext(MetaContext);
+}

@@ -1036,10 +1036,15 @@ svg.pc {
 }
 
 /* ---- hidden operations dashboard (§7) ---- */
+/* The dashboard fills the viewport edge-to-edge — the fx bottom bezel gap
+ * would otherwise leave a phantom scrollbar under it. */
+body.fx:has(.admin-shell) {
+  padding-block: 0;
+}
 .admin-shell,
 body.fx .crt.admin-shell {
   margin-block: 0;
-  min-height: 100vh;
+  min-height: calc(100vh / var(--crt-zoom));
   border-radius: 0;
   box-shadow: none;
   background: var(--bg);
@@ -2339,4 +2344,57 @@ body.fx .admin-shell svg.pc {
   font: inherit;
   padding: 0;
   cursor: pointer;
+}
+
+/* ---- main content region ---- */
+/* Route content fills the tube between the bar and the footer, so the
+ * footer always sits on the tube's bottom edge. Spare height on tall
+ * screens splits 2:3 around the content — slightly above true center,
+ * where it reads as placed rather than sinking. */
+.appmain {
+  display: flex;
+  flex-direction: column;
+  flex: 1 0 auto;
+  min-width: 0;
+}
+.appmain::before {
+  content: "";
+  flex: 2;
+}
+.appmain::after {
+  content: "";
+  flex: 3;
+}
+
+/* ---- shared footer ---- */
+.appfoot {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  padding: 10px 30px;
+  margin-top: 26px;
+  border-top: 1px solid var(--line);
+  font-size: 11.5px;
+  color: var(--ph-dark);
+}
+.appfoot a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.appfoot-side {
+  flex: 1 1 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.appfoot-side.right {
+  justify-content: flex-end;
+}
+@media (max-width: 768px) {
+  .appfoot {
+    flex-wrap: wrap;
+    row-gap: 6px;
+    padding: 10px 14px;
+  }
 }

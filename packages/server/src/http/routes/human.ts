@@ -575,12 +575,48 @@ export function registerHumanRoutes(
         : game.result === "draw" || game.result === "aborted"
           ? "DRAW"
           : "LOST";
+    // Author aggregates across all their moves in this game (Sergey's card
+    // copy, 2026-08-20): summed thinking time and net USDC (payouts − stakes),
+    // matching the /my/games multi-move totals.
+    const authorClaims = deps.db
+      .select()
+      .from(schema.claims)
+      .where(
+        and(
+          eq(schema.claims.gameId, game.id),
+          eq(schema.claims.player, ply.authorAddress),
+          eq(schema.claims.status, "moved"),
+        ),
+      )
+      .all();
+    const thinkingTimeMs = authorClaims.reduce(
+      (total, claim) =>
+        total +
+        Math.max(0, (claim.movedAt ?? claim.createdAt) - claim.createdAt),
+      0,
+    );
+    const stakeMicroUsdc = authorClaims.reduce(
+      (total, claim) => total + claim.stakeMicrousdc,
+      0,
+    );
+    const authorClaimIds = authorClaims.map((claim) => claim.id);
+    const payoutMicroUsdc = (
+      authorClaimIds.length === 0
+        ? []
+        : deps.db
+            .select()
+            .from(schema.stakeEntries)
+            .where(inArray(schema.stakeEntries.claimId, authorClaimIds))
+            .all()
+    ).reduce((total, entry) => total + (entry.payoutAmount ?? 0), 0);
     const svg = buildCardSvg({
       gameId: game.id,
       authorNickname: author?.nickname ?? null,
       outcome,
       fen: ply.fenAfter,
       moveUci: ply.move.uci,
+      thinkingTimeMs,
+      wonMicroUsdc: payoutMicroUsdc - stakeMicroUsdc,
     });
     const png = await cardCache.render(`${game.id}:${plyIndex}`, svg);
     // Copy into a plain Uint8Array so the body type is exact (Hono rejects the

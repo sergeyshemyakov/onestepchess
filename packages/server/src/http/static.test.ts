@@ -35,6 +35,8 @@ function makeStaticDir(): string {
   // Distinctive bytes so the test can prove which sibling was served.
   writeFileSync(`${js}.br`, Buffer.from("BR-COMPRESSED-APP"));
   writeFileSync(`${js}.gz`, Buffer.from("GZ-COMPRESSED-APP"));
+  writeFileSync(join(dir, "favicon.ico"), Buffer.from("ICO"));
+  writeFileSync(join(dir, "apple-touch-icon.png"), Buffer.from("PNG"));
   return dir;
 }
 
@@ -58,6 +60,20 @@ function buildApp(
 }
 
 describe("static and discovery serving (§6.6)", () => {
+  it("static_server_types_site_icons_as_images", async () => {
+    const app = buildApp();
+
+    // Bazaar/dashboard crawlers reject an icon served as octet-stream, so the
+    // shell's declared icons must carry their real image type.
+    const ico = await app.request("/favicon.ico");
+    expect(ico.status).toBe(200);
+    expect(ico.headers.get("content-type")).toBe("image/x-icon");
+
+    const png = await app.request("/apple-touch-icon.png");
+    expect(png.status).toBe(200);
+    expect(png.headers.get("content-type")).toBe("image/png");
+  });
+
   it("static_server_negotiates_precompressed_assets_and_spa_fallback", async () => {
     const app = buildApp();
 

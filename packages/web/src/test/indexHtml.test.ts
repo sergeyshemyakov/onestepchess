@@ -27,6 +27,15 @@ describe("index.html pinned content snapshot (#27)", () => {
     );
   });
 
+  it("declares the site icons the Bazaar crawler reads for the logo", () => {
+    expect(html).toContain(
+      '<link rel="icon" href="/favicon.ico" sizes="32x32">',
+    );
+    expect(html).toContain(
+      '<link rel="apple-touch-icon" href="/apple-touch-icon.png">',
+    );
+  });
+
   it("carries the osc:og placeholder for server-side OG injection", () => {
     expect(html).toContain("<!-- osc:og -->");
   });
