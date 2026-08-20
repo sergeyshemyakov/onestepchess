@@ -3,7 +3,6 @@ import { Link } from "react-router";
 import type { ApiClient } from "../api/client.js";
 import type { Meta, PlayerView } from "../api/schemas.js";
 import { ConnectSheet } from "../auth/ConnectSheet.jsx";
-import { AlgorandMark } from "../board/pieces.jsx";
 import { AppShell } from "../components/AppShell.jsx";
 import { GamePane } from "../components/GamePane.jsx";
 import { PromoStrip } from "../components/PromoStrip.jsx";
@@ -205,50 +204,6 @@ export function Landing(props: {
 
       <StatsStrip meta={props.meta} />
 
-      <div
-        className="landfoot"
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 22,
-          padding: "10px 30px",
-          marginTop: 26,
-          borderTop: "1px solid var(--line)",
-          fontSize: 11.5,
-          color: "var(--ph-dark)",
-        }}
-      >
-        <div style={{ flex: "1 1 0", display: "flex", alignItems: "center" }}>
-          <a
-            href="https://algorand.co/"
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label="Algorand website"
-            style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
-          >
-            <AlgorandMark /> RUNS ON ALGORAND
-          </a>
-        </div>
-        <span>· built for the x402 global challenge</span>
-        <div
-          style={{
-            flex: "1 1 0",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "flex-end",
-            gap: 10,
-          }}
-        >
-          <a
-            href={props.meta.docs.repo}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            GitHub ↗
-          </a>
-          <Link to="/rules">· rules</Link>
-        </div>
-      </div>
       {gamePanePhase ? (
         gamePaneDismissed ? null : (
           <GamePane

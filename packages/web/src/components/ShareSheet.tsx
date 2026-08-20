@@ -6,9 +6,10 @@ import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 // quick-view) are the callers' responsibility. The `ref` param on the built
 // URL is the only tracer; there are no client-side share analytics.
 
-/** Pinned share text (CA-14 placeholder until Sergey's copy). */
+/** Pinned share text (Sergey's copy, 2026-08-20) — "@onestepchess" links the
+ * project's X account in the posted tweet. */
 export const SHARE_TEXT =
-  "my moves held up. strangers and machines share every game — i played part of this one. one step chess, on algorand.";
+  "my moves held up. strangers and machines share every game, i played part of this one. @onestepchess, on algorand.";
 
 export function shareUrl(args: {
   readonly origin: string;

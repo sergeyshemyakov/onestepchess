@@ -655,7 +655,9 @@ describe("responsive treatment (#31)", () => {
     const dir = dirname(fileURLToPath(import.meta.url));
     const tokens = readFileSync(join(dir, "../styles/tokens.css"), "utf8");
     const desktop = tokens.slice(tokens.indexOf("@media (min-width: 769px)"));
-    expect(desktop).toMatch(/\.crt \{[\s\S]*width: min\(1240px/);
+    expect(desktop).toMatch(
+      /\.crt \{[\s\S]*width: min\(1400px, calc\(100% - clamp\(120px, 10vw, 280px\)\)\)/,
+    );
     expect(desktop).toContain("margin-inline: auto");
   });
 

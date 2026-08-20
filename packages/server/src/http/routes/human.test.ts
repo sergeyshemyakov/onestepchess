@@ -1060,6 +1060,8 @@ describe("profile, game history, and public replay reads (§6.3)", () => {
       outcome: "WON",
       fen: FEN_AFTER_E5,
       moveUci: "e7e5",
+      thinkingTimeMs: 1_000,
+      wonMicroUsdc: 10_000,
     });
     expect(svg).not.toContain("<script>");
     expect(svg).toContain("&lt;script&gt;");
@@ -1078,6 +1080,8 @@ describe("profile, game history, and public replay reads (§6.3)", () => {
           outcome: "DRAW",
           fen: STARTING_FEN,
           moveUci: "e2e4",
+          thinkingTimeMs: null,
+          wonMicroUsdc: null,
         }),
       );
     }

@@ -10,6 +10,7 @@ import {
 import { useMeta } from "../meta/MetaContext.jsx";
 import { ClaimBar } from "./ClaimBar.jsx";
 import { CustomBanner } from "./CustomBanner.jsx";
+import { Footer } from "./Footer.jsx";
 import { useShellLive } from "./ShellLiveContext.js";
 
 const THEME_ORDER: readonly Theme[] = ["green", "amber", "ice"];
@@ -129,7 +130,8 @@ export function AppShell(props: {
           <CustomBanner />
         </>
       )}
-      {props.children}
+      <main className="appmain">{props.children}</main>
+      <Footer />
     </div>
   );
 }
