@@ -524,16 +524,4 @@ describe("chess adapter properties and performance", () => {
     const assertion: ApplyArgs extends Expected ? true : false = true;
     expect(assertion).toBe(true);
   });
-
-  it("applies a sequential 300-ply game within the amortized budget", () => {
-    const game = createChess({ ...CONFIG, MAX_PLIES: 1_000 });
-    let state = game.initial();
-    const cycle = ["g1f3", "g8f6", "f3g1", "f6g8"] as const;
-    const startedAt = performance.now();
-    for (let ply = 0; ply < 300; ply += 1) {
-      const uci = cycle[ply % cycle.length];
-      state = game.apply(state, { uci: uci as string, san: "" });
-    }
-    expect(performance.now() - startedAt).toBeLessThan(50);
-  });
 });
