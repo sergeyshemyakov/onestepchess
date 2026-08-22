@@ -296,6 +296,43 @@ describe("payout executor — crash matrix (release gate: prepare/submit boundar
   });
 });
 
+describe("payout executor — duplicate broadcast rejection (2026-08-22 incident)", () => {
+  it("never double-pays when a rejected broadcast raced bytes that landed", async () => {
+    const shared = createMockRailState({ usdcMicroUsdc: INITIAL });
+    const stack = makeStack({}, shared);
+    seedGame(stack.db, stack.now(), "gm_dup");
+    seedJob(stack.db, stack.now(), {
+      id: "pj_dup",
+      gameId: "gm_dup",
+      recipient: "erin",
+      amount: 20_400,
+    });
+
+    // The incident shape: a concurrent submit of the same bytes landed them,
+    // so the node answers this POST with a 4xx duplicate rejection.
+    stack.rail.control.queueSubmitPrepared({
+      ok: false,
+      reason: "rejected",
+      applied: true,
+    });
+    await drain(stack);
+    stack.setNow(stack.now() + 3_001);
+    await drain(stack);
+
+    const job = stack.db.select().from(schema.payoutJobs).get();
+    expect(job?.status).toBe("confirmed");
+    const ledgerRows = stack.db
+      .select()
+      .from(schema.ledger)
+      .where(eq(schema.ledger.refType, "payout"))
+      .all();
+    expect(ledgerRows).toHaveLength(1);
+    // The chain must have moved the money exactly once — a discarded batch
+    // whose bytes landed would drain the treasury a second time.
+    expect(await treasuryUsdc(stack)).toBe(INITIAL - 20_400);
+  });
+});
+
 describe("payout executor — retries and failure (F7 step 4)", () => {
   it("retries a rejected submit with backoff and gives up as failed but visible", async () => {
     const stack = makeStack({ PAYOUT_MAX_ATTEMPTS: 3 });

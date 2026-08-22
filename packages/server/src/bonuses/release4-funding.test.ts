@@ -489,6 +489,34 @@ describe("Release 4 recoverable starter-stake funding (#99)", () => {
     ).toBe("funded");
   });
 
+  it("bonus_funding_never_double_sends_when_a_rejected_submit_raced_bytes_that_landed", async () => {
+    const stack = setup();
+    const account = algosdk.generateAccount();
+    seedBonus(stack, account, "opted_in");
+    // Crash-resubmit shape: the bytes landed on a prior broadcast, so the
+    // node rejects this POST as a duplicate while the transfer is live.
+    stack.rail.control.queueSubmitPrepared({
+      ok: false,
+      reason: "rejected",
+      applied: true,
+    });
+    await runFundingExecutor(stack.deps);
+    stack.setNow(stack.now() + 1_001);
+    await runFundingExecutor(stack.deps);
+    stack.setNow(stack.now() + 1_001);
+    await runFundingExecutor(stack.deps);
+    expect(
+      (await stack.rail.getBalances(stack.rail.bonusAddress)).usdcMicroUsdc,
+    ).toBe(INITIAL_BONUS_USDC - 200_000);
+    expect(
+      stack.database.db
+        .select()
+        .from(schema.ledger)
+        .where(eq(schema.ledger.refType, "bonus"))
+        .all(),
+    ).toHaveLength(1);
+  });
+
   it("bonus_account_guards_defer_discretionary_work_without_stranding_submitted_obligations", async () => {
     const stack = setup();
     const pending = algosdk.generateAccount();

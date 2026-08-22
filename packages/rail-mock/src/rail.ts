@@ -527,8 +527,7 @@ export function createMockRail(options: MockRailOptions = {}): MockRail {
         applyPrepared(prepared);
         return { ok: true };
       }
-      if (value.reason === "unavailable" && value.applied === true)
-        applyPrepared(prepared);
+      if (value.applied === true) applyPrepared(prepared);
       return {
         ok: false,
         reason: value.reason,
