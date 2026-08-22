@@ -405,21 +405,39 @@ export async function runRelease3Soak(
       reason: "rejected",
       detail: "soak injected payout rejection",
     });
-    await stack.runPayouts();
-    stack.advance(60_000);
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    // Drain until every job is terminal: "no failed jobs" alone would report
+    // convergence while a job still sits in retry backoff.
+    for (let attempt = 0; attempt < 10; attempt += 1) {
       await stack.runPayouts();
+      const unresolved = stack.database.db
+        .select()
+        .from(schema.payoutJobs)
+        .all()
+        .filter((job) => job.status !== "confirmed").length;
+      if (unresolved === 0) break;
       stack.advance(60_000);
     }
-    const failedPayouts = stack.database.db
+    const jobsAfterRejection = stack.database.db
       .select()
       .from(schema.payoutJobs)
+      .all();
+    const payoutRowsAfterRejection = stack.database.db
+      .select()
+      .from(schema.ledger)
       .all()
-      .filter((job) => job.status === "failed").length;
+      .filter((row) => row.refType === "payout");
+    const payoutRecoveryConverged =
+      jobsAfterRejection.every((job) => job.status === "confirmed") &&
+      jobsAfterRejection.every(
+        (job) =>
+          payoutRowsAfterRejection.filter((row) => row.refId === job.id)
+            .length === 1,
+      );
     faults.payout_rejection_recovery = {
       injected: true,
-      converged: failedPayouts === 0,
-      detail: "one rejected prepared batch was retried with durable bytes",
+      converged: payoutRecoveryConverged,
+      detail:
+        "one rejected prepared batch converged to confirmed with a single debit per job",
     };
 
     stack.rail.control.setHealth(false);
@@ -439,10 +457,10 @@ export async function runRelease3Soak(
       usdcMicroUsdc: actualTreasuryBalance.usdcMicroUsdc - 1_000,
     });
     const driftedReconciliation = await stack.reconcile("scheduled");
-    stack.rail.control.setBalances(
-      stack.rail.treasuryAddress,
-      actualTreasuryBalance,
-    );
+    // Clear the override instead of pinning the pre-drift snapshot: payouts
+    // recovering from the injected rejection legitimately debit the chain
+    // after this point, and a pinned balance would mask them.
+    stack.rail.control.setBalances(stack.rail.treasuryAddress, {});
     const cleanReconciliation = await stack.reconcile("admin");
     faults.reconciliation = {
       injected: true,

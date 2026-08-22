@@ -19,8 +19,11 @@ export type ScriptedSettle =
 export type ScriptedSubmit =
   | { readonly ok: true }
   | {
+      // `applied: true` models a node rejecting the POST (e.g. "already in
+      // the pool") after an earlier broadcast of the same bytes landed.
       readonly ok: false;
       readonly reason: "rejected";
+      readonly applied?: boolean;
       readonly detail?: string;
     }
   | {

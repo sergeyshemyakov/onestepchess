@@ -574,11 +574,31 @@ async function submitPrepared(
         refIds: [job.id],
       });
     } else if (result.reason === "rejected") {
+      // A rejection can be a duplicate POST of bytes that already landed via
+      // a crash-resubmit (same failure as the 2026-08-22 payout incident), so
+      // clearing the durable bytes is safe only when the txid is provably
+      // absent from the chain. Anything visible — or unknowable — is treated
+      // as submitted and left to recovery's chain-verified confirm/expire.
+      let bytesProvablyAbsent = false;
+      if (job.txid !== null) {
+        try {
+          const status = await deps.rail.getTransactionStatus(job.txid);
+          bytesProvablyAbsent = status.status === "not_found";
+        } catch (error) {
+          deps.logger.warn(
+            { err: error, job: job.id },
+            "funding rejection triage unavailable",
+          );
+        }
+      }
       await deps.coordinator.dispatch({
-        type: "FundingDiscarded",
-        payload: { jobId: job.id, safeToReset: true },
+        type: bytesProvablyAbsent ? "FundingDiscarded" : "FundingSubmitted",
+        payload: bytesProvablyAbsent
+          ? { jobId: job.id, safeToReset: true }
+          : { jobId: job.id },
         refIds: [job.id],
       });
+      if (!bytesProvablyAbsent) schedule(deps.now() + POLL_MS);
     } else {
       await deps.coordinator.dispatch({
         type: "FundingSubmitted",

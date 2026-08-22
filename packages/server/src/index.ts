@@ -51,6 +51,7 @@ import { backfillPoints } from "./incentives/points.js";
 import { PublicStats } from "./incentives/stats.js";
 import { createLogger } from "./logger.js";
 import { Metrics, registerMetricsRoute } from "./metrics.js";
+import { nonOverlapping } from "./non-overlapping.js";
 import { OperationalAlerts } from "./operations/alerts.js";
 import {
   OperationalState,
@@ -383,14 +384,14 @@ export async function main(): Promise<void> {
       scheduleRecovery(Date.now() + 1_000);
     }
   };
-  const runPayouts = async (): Promise<void> => {
+  const runPayouts = nonOverlapping(async () => {
     try {
       await runPayoutExecutor(payoutDeps);
     } catch (error) {
       logger.error({ err: error }, "payout executor pass failed");
     }
-  };
-  const runFunding = async (): Promise<void> => {
+  });
+  const runFunding = nonOverlapping(async () => {
     try {
       await runFundingExecutor(fundingDeps);
     } catch (error) {
@@ -399,7 +400,7 @@ export async function main(): Promise<void> {
         "starter-stake funding executor pass failed",
       );
     }
-  };
+  });
   // Warm AVM fee-payer state and persist only the facilitator pause cause
   // before recovery. Recovery remains live while discretionary funding sees
   // the resulting pause through its send guard.

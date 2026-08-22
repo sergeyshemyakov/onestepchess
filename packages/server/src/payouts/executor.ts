@@ -306,8 +306,27 @@ export async function runPayoutExecutor(
       });
     } else if (result.reason === "rejected") {
       deps.metrics?.recordFacilitatorError();
+      // A rejection can be a duplicate POST of bytes that already landed via
+      // a crash-resubmit or a concurrent pass (the 2026-08-22 double payout),
+      // so discarding is safe only when every txid is provably absent from
+      // the chain. Anything visible — or unknowable — is treated as submitted
+      // and left to phase 3's chain-verified confirm/expire logic.
+      let bytesProvablyAbsent = true;
+      for (const job of jobs) {
+        if (job.txid === null) continue;
+        try {
+          const status = await deps.rail.getTransactionStatus(job.txid);
+          if (status.status !== "not_found") {
+            bytesProvablyAbsent = false;
+            break;
+          }
+        } catch {
+          bytesProvablyAbsent = false;
+          break;
+        }
+      }
       await deps.coordinator.dispatch({
-        type: "PayoutBatchDiscarded",
+        type: bytesProvablyAbsent ? "PayoutBatchDiscarded" : "PayoutSubmitted",
         payload: { batchId: batch.id },
         refIds: [batch.id],
       });

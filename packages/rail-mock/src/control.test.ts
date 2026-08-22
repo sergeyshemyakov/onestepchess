@@ -1,6 +1,10 @@
 import { RailError } from "@onestepchess/core";
 import { describe, expect, it, vi } from "vitest";
-import { buildMockHeader, createMockRail } from "./index.js";
+import {
+  buildMockHeader,
+  createMockRail,
+  createMockRailState,
+} from "./index.js";
 
 const RESOURCE = "https://osc.example/api/v1/moves";
 
@@ -92,6 +96,29 @@ describe("rail-mock control surface", () => {
     await expect(
       rail.settle(paidB.header, paidB.challenge.required),
     ).resolves.toMatchObject({ ok: true });
+  });
+
+  it("a rejected submit with applied=true still lands the prepared bytes", async () => {
+    const state = createMockRailState({ usdcMicroUsdc: 1_000_000 });
+    const rail = createMockRail({ state, treasuryAddress: "MOCK_TREASURY" });
+    const prepared = await rail.preparePayouts([
+      { jobId: "dup-job", recipient: "WINNER", amountMicroUsdc: 500 },
+    ]);
+    rail.control.queueSubmitPrepared({
+      ok: false,
+      reason: "rejected",
+      applied: true,
+    });
+    await expect(rail.submitPrepared(prepared)).resolves.toEqual({
+      ok: false,
+      reason: "rejected",
+    });
+    const balances = await rail.getBalances("MOCK_TREASURY");
+    expect(balances.usdcMicroUsdc).toBe(1_000_000 - 500);
+    const txid = prepared.txids[0]?.txid ?? "";
+    await expect(rail.getTransactionStatus(txid)).resolves.toMatchObject({
+      status: "confirmed",
+    });
   });
 
   it("sticky and per-outcome latency use the injected sleep primitive", async () => {
