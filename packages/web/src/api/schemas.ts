@@ -66,6 +66,8 @@ export const metaSchema = z.object({
     championship: z.boolean(),
     custom: z.string(),
   }),
+  // Tolerates servers that predate the flag — the pane simply stays dark.
+  bonusEnabled: z.boolean().default(false),
   // Present only when the server enables public stats (F-W13 strip gating).
   stats: z
     .object({

@@ -54,6 +54,7 @@ const agentKitExamples = {
     status: { mode: "running", banner: "mock staging — no real USDC" },
     turnstileSiteKey: "",
     banners: { tower: false, championship: false, custom: "" },
+    bonusEnabled: true,
     rules: "One move at a time.",
     docs: {
       llms: "https://osc.example/llms.txt",

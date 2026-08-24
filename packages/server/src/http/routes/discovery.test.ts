@@ -71,6 +71,18 @@ describe("discovery meta and profile (F12)", () => {
     on.opened.sqlite.close();
   });
 
+  it("meta_bonus_enabled_reflects_the_bonus_config_flag", async () => {
+    const on = setup();
+    const onBody = await (await on.app.request("/api/v1/meta")).json();
+    expect(onBody.bonusEnabled).toBe(true);
+    on.opened.sqlite.close();
+
+    const off = setup({ config: { BONUS_ENABLED: false } });
+    const offBody = await (await off.app.request("/api/v1/meta")).json();
+    expect(offBody.bonusEnabled).toBe(false);
+    off.opened.sqlite.close();
+  });
+
   it("meta_banners_custom_carries_the_configured_message", async () => {
     const { app, opened } = setup({
       config: { CUSTOM_BANNER_TEXT: "maintenance sunday 06:00 UTC" },

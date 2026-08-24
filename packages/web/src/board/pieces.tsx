@@ -203,6 +203,21 @@ export function KnightMark(props: { readonly size?: number }) {
   );
 }
 
+export function QueenMark(props: { readonly size?: number }) {
+  const size = props.size ?? 22;
+  return (
+    <svg
+      className="pc"
+      viewBox="0 0 16 16"
+      width={size}
+      height={size}
+      aria-hidden="true"
+    >
+      <path d={cachedPath(PIX.q, "q", false)} fill="currentColor" />
+    </svg>
+  );
+}
+
 export function AlgorandMark(props: { readonly size?: number }) {
   const size = props.size ?? 15;
   return (

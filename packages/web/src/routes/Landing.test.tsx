@@ -427,6 +427,30 @@ it("splits the landing into functional + decorative panes with a tower banner st
   ).toBe("/start");
 });
 
+it("guest_receipt_shows_welcome_bonus_pane_when_bonus_enabled", async () => {
+  const view = renderLanding(guestClient(), {
+    ...metaFixture,
+    bonusEnabled: true,
+  });
+  await reachConfirm(view);
+  fireEvent.click(screen.getByRole("button", { name: /Y — make it so/ }));
+  await screen.findByText(/get an Algorand wallet to see how it ends/);
+  const pane = screen.getByTestId("bonus-pane");
+  expect(within(pane).getByText(/200 PLAYERS/)).not.toBeNull();
+  expect(within(pane).getByText(/everything is on us!/)).not.toBeNull();
+});
+
+it("guest_receipt_hides_welcome_bonus_pane_when_bonus_disabled", async () => {
+  const view = renderLanding(guestClient(), {
+    ...metaFixture,
+    bonusEnabled: false,
+  });
+  await reachConfirm(view);
+  fireEvent.click(screen.getByRole("button", { name: /Y — make it so/ }));
+  await screen.findByText(/get an Algorand wallet to see how it ends/);
+  expect(screen.queryByTestId("bonus-pane")).toBeNull();
+});
+
 it("landing_appbar_hides_the_boards_and_archive_nav", async () => {
   renderLanding(guestClient());
   await screen.findByRole("button", { name: /▸ LOG IN/ });
