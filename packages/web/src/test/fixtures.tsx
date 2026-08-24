@@ -42,6 +42,7 @@ export const metaFixture: Meta = {
   status: { mode: "running", banner: null },
   turnstileSiteKey: "",
   banners: { tower: true, championship: true, custom: "" },
+  bonusEnabled: false,
   rules: "one move at a time.",
   docs: {
     llms: "http://localhost:3000/llms.txt",

@@ -80,6 +80,7 @@ export function registerDiscoveryRoutes(
         championship: config.CHAMP_BANNER_ENABLED,
         custom: config.CUSTOM_BANNER_TEXT,
       },
+      bonusEnabled: config.BONUS_ENABLED,
       // The stats strip ships dark; present only when PUBLIC_STATS_ENABLED and
       // the boot-rebuilt counters are wired (F16 step 4).
       ...(config.PUBLIC_STATS_ENABLED && deps.publicStats !== undefined

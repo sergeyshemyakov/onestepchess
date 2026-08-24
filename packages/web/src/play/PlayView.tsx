@@ -11,6 +11,7 @@ import {
   targetsFor,
 } from "../board/moves.js";
 import { PromotionPicker } from "../board/PromotionPicker.jsx";
+import { QueenMark } from "../board/pieces.jsx";
 import { isCheck, kingSquare } from "../lib/check.js";
 import { parseUci, sideToMove } from "../lib/fen.js";
 import {
@@ -543,7 +544,11 @@ function ConfirmMorph(props: {
         ) : null}
 
         {state.phase === "RECEIPT" && state.receipt !== undefined ? (
-          <Receipt flow={props.flow} onQuickSetup={props.onQuickSetup} />
+          <Receipt
+            flow={props.flow}
+            bonusEnabled={props.meta.bonusEnabled}
+            onQuickSetup={props.onQuickSetup}
+          />
         ) : null}
       </div>
     </div>
@@ -554,6 +559,7 @@ function ConfirmMorph(props: {
  * correlate two claims to one game (D16). */
 function Receipt(props: {
   readonly flow: PlayFlow;
+  readonly bonusEnabled: boolean;
   readonly onQuickSetup?: () => void;
 }) {
   const { state, send } = props.flow;
@@ -597,7 +603,10 @@ function Receipt(props: {
         )}
       </div>
       {state.guest === true ? (
-        <OnboardingDoors onQuickSetup={props.onQuickSetup} />
+        <>
+          {props.bonusEnabled ? <BonusPane /> : null}
+          <OnboardingDoors onQuickSetup={props.onQuickSetup} />
+        </>
       ) : (
         <p className="console receipt-notice">
           &gt; you will be notified when the game ends
@@ -705,6 +714,21 @@ function LoginWall(props: {
  * the game, so the guest is never asked whether they own one. QUICK SETUP
  * opens lute.app in a new tab; the host swaps in a Lute connect prompt so
  * the freshly created wallet has somewhere to land. */
+function BonusPane() {
+  return (
+    <div className="bonuspane" data-testid="bonus-pane">
+      <h4>WELCOME BONUS</h4>
+      <QueenMark size={44} />
+      <div>
+        <p className="bonus-headline vt">
+          LOG IN NOW TO BE ONE OF <b>200 PLAYERS</b> TO RECEIVE A WELCOME BONUS
+        </p>
+        <p className="console bonus-sub">&gt; everything is on us!</p>
+      </div>
+    </div>
+  );
+}
+
 function OnboardingDoors(props: { readonly onQuickSetup?: () => void }) {
   return (
     <div className="modal-actions pair" data-testid="onboarding-doors">

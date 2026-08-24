@@ -949,6 +949,54 @@ svg.pc {
   display: flex;
   gap: 8px;
 }
+/* Guest-receipt welcome-bonus pane: the one accent-colored surface in the
+ * MOVED sheet — everything else stays phosphor so the pane owns the eye. */
+.bonuspane {
+  border: 1px dashed var(--accent);
+  margin-top: 14px;
+  padding: 12px;
+  position: relative;
+  color: var(--accent);
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.bonuspane h4 {
+  position: absolute;
+  top: -8px;
+  left: 10px;
+  background: var(--bg);
+  padding: 0 8px;
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  font-weight: 400;
+  white-space: nowrap;
+  color: var(--accent);
+}
+.bonuspane svg.pc {
+  width: 44px;
+  height: 44px;
+  flex: none;
+  color: var(--accent);
+  filter: drop-shadow(
+    0 0 4px color-mix(in oklab, currentColor 65%, transparent)
+  );
+}
+.bonuspane .bonus-headline {
+  font-size: 21px;
+  line-height: 1.15;
+  text-shadow:
+    0 0 1px currentColor,
+    0 0 9px color-mix(in oklab, currentColor 55%, transparent);
+}
+.bonuspane .bonus-headline b {
+  font-weight: 400;
+  color: color-mix(in oklab, var(--accent) 45%, white);
+}
+.bonuspane .bonus-sub {
+  margin-top: 4px;
+  color: color-mix(in oklab, var(--accent) 62%, black);
+}
 /* Lute quick-setup CTAs stand alone in the sheet — give them air. */
 .lutecta {
   margin: 24px 0 20px;

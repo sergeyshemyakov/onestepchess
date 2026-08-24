@@ -365,6 +365,7 @@ const metaResponse = z.object({
     championship: z.boolean(),
     custom: z.string(),
   }),
+  bonusEnabled: z.boolean(),
   // Present only when PUBLIC_STATS_ENABLED (F16 step 4).
   stats: z
     .object({
