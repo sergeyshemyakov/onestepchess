@@ -122,6 +122,25 @@ describe("Server robustness F2 — per-dependency rail circuit breaker (spec 202
   });
 });
 
+describe("Guard over a frozen rail — createAvmRail freezes its instance", () => {
+  it("frozen_rail_methods_and_properties_work_through_both_guard_handles", async () => {
+    // Proxy get-trap invariant: a frozen target's data properties must be
+    // returned verbatim, so the guard must not proxy the rail object itself
+    // (2026-08-27 outage: every guarded call threw TypeError before I/O).
+    const inner = Object.freeze(createMockRail());
+    const guard = createGuardedRail({
+      rail: inner,
+      now: () => 1_000_000,
+      maxConcurrent: () => 16,
+    });
+    await expect(guard.rail.health()).resolves.toBe(true);
+    await expect(
+      guard.priorityRail.getBalances(inner.treasuryAddress),
+    ).resolves.toMatchObject({ usdcMicroUsdc: expect.any(Number) });
+    expect(guard.rail.treasuryAddress).toBe(inner.treasuryAddress);
+  });
+});
+
 describe("Server robustness F2 review fixes — outcome classification and provenance", () => {
   it("in_band_unavailable_results_trip_the_breaker", async () => {
     const { inner, guard } = setup();
