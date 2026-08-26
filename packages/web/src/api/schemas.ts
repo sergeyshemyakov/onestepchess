@@ -102,6 +102,7 @@ export const bonusStatusSchema = z.enum([
   "claimed",
   "opted_in",
   "funded",
+  "expired",
 ]);
 export type BonusStatus = z.infer<typeof bonusStatusSchema>;
 

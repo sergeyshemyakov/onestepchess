@@ -181,8 +181,20 @@ const preparedSubmissionSchema = z.discriminatedUnion("kind", [
 
 export type AvmRailConfig = z.input<typeof configSchema>;
 
+/** Emitted when an upstream endpoint returns a body that fails JSON parsing
+ * or schema validation — the body is otherwise unobservable after the fact
+ * (F5, spec 2026-08-26). `bodyPrefix` is truncated and mnemonic-redacted. */
+export type RailDiagnostic = {
+  readonly kind: "malformed_response";
+  readonly url: string;
+  readonly status: number;
+  readonly bodyPrefix: string;
+  readonly issue: string;
+};
+
 export type AvmRailDependencies = {
   readonly fetch?: typeof globalThis.fetch;
+  readonly onDiagnostic?: (event: RailDiagnostic) => void;
 };
 
 type PublicConfig = Omit<
@@ -199,8 +211,11 @@ function contract(message: string): RailError {
   return new RailError("CONTRACT", message);
 }
 
-function unavailable(message: string): RailError {
-  return new RailError("UNAVAILABLE", message);
+function unavailable(
+  message: string,
+  dependency?: "algod" | "indexer" | "facilitator",
+): RailError {
+  return new RailError("UNAVAILABLE", message, dependency);
 }
 
 function base64Json(value: unknown): string {
@@ -261,17 +276,7 @@ function sameRequirement(
   );
 }
 
-async function parseJson<T>(
-  response: Response,
-  schema: z.ZodType<T>,
-): Promise<T | null> {
-  try {
-    const result = schema.safeParse(await response.json());
-    return result.success ? result.data : null;
-  } catch {
-    return null;
-  }
-}
+const DIAGNOSTIC_BODY_PREFIX_CHARS = 300;
 
 export function createAvmRail(
   input: AvmRailConfig,
@@ -326,6 +331,45 @@ export function createAvmRail(
       ...init,
       signal: AbortSignal.timeout(config.requestTimeoutMs),
     });
+  }
+
+  // The body is read as text exactly once so the raw bytes are available for
+  // the diagnostic; callers turning the null into a RailError must not re-log
+  // the body (F5, spec 2026-08-26).
+  async function parseJson<T>(
+    response: Response,
+    schema: z.ZodType<T>,
+  ): Promise<T | null> {
+    let raw: string;
+    try {
+      raw = await response.text();
+    } catch {
+      return null;
+    }
+    const diagnose = (issue: string): void => {
+      dependencies.onDiagnostic?.({
+        kind: "malformed_response",
+        url: response.url,
+        status: response.status,
+        bodyPrefix: redactDetail(raw).slice(0, DIAGNOSTIC_BODY_PREFIX_CHARS),
+        issue,
+      });
+    };
+    let payload: unknown;
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      diagnose("invalid JSON");
+      return null;
+    }
+    const result = schema.safeParse(payload);
+    if (result.success) return result.data;
+    diagnose(
+      result.error.issues
+        .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.code}`)
+        .join("; "),
+    );
+    return null;
   }
 
   async function responseDetail(
@@ -590,13 +634,14 @@ export function createAvmRail(
         endpoint(config.algodUrl, "/v2/transactions/params"),
         { headers: { accept: "application/json" } },
       );
-      if (!response.ok) throw unavailable("Algod suggested params unavailable");
+      if (!response.ok)
+        throw unavailable("Algod suggested params unavailable", "algod");
       const result = await parseJson(response, suggestedParamsSchema);
       if (result === null)
-        throw unavailable("Algod suggested params malformed");
+        throw unavailable("Algod suggested params malformed", "algod");
       const firstValid = result["last-round"];
       if (firstValid > Number.MAX_SAFE_INTEGER - MAX_VALIDITY_WINDOW) {
-        throw unavailable("Algod suggested validity window is unsafe");
+        throw unavailable("Algod suggested validity window is unsafe", "algod");
       }
       const lastValid = firstValid + MAX_VALIDITY_WINDOW;
       const genesisHash = result["genesis-hash"];
@@ -624,7 +669,7 @@ export function createAvmRail(
       };
     } catch (error) {
       if (error instanceof RailError) throw error;
-      throw unavailable("Algod suggested params unavailable");
+      throw unavailable("Algod suggested params unavailable", "algod");
     }
   }
 
@@ -817,8 +862,21 @@ export function createAvmRail(
     try {
       return await request(url, { headers: { accept: "application/json" } });
     } catch {
-      throw unavailable("Chain query unavailable");
+      // Tag which upstream actually failed so the server's per-dependency
+      // circuit breaker can attribute mixed-upstream methods correctly
+      // (F2 review, spec 2026-08-26).
+      throw new RailError(
+        "UNAVAILABLE",
+        "Chain query unavailable",
+        dependencyFor(url),
+      );
     }
+  }
+
+  function dependencyFor(url: string): "algod" | "indexer" | "facilitator" {
+    if (url.startsWith(config.indexerUrl)) return "indexer";
+    if (url.startsWith(config.facilitatorUrl)) return "facilitator";
+    return "algod";
   }
 
   async function getTransactionStatus(txid: string): Promise<TxStatus> {
@@ -831,13 +889,14 @@ export function createAvmRail(
     if (pending.ok) {
       const result = await parseJson(pending, pendingSchema);
       if (result === null)
-        throw unavailable("Algod pending response malformed");
+        throw unavailable("Algod pending response malformed", "algod");
       const confirmedRound = result["confirmed-round"] ?? 0;
       return confirmedRound > 0
         ? { status: "confirmed", confirmedRound }
         : { status: "pending" };
     }
-    if (pending.status !== 404) throw unavailable("Algod pending query failed");
+    if (pending.status !== 404)
+      throw unavailable("Algod pending query failed", "algod");
 
     const indexed = await getJsonResponse(
       endpoint(
@@ -848,7 +907,7 @@ export function createAvmRail(
     if (indexed.ok) {
       const result = await parseJson(indexed, indexedStatusSchema);
       if (result === null) {
-        throw unavailable("Indexer transaction response malformed");
+        throw unavailable("Indexer transaction response malformed", "indexer");
       }
       return {
         status: "confirmed",
@@ -856,15 +915,16 @@ export function createAvmRail(
       };
     }
     if (indexed.status !== 404) {
-      throw unavailable("Indexer transaction query failed");
+      throw unavailable("Indexer transaction query failed", "indexer");
     }
 
     const status = await getJsonResponse(
       endpoint(config.algodUrl, "/v2/status"),
     );
-    if (!status.ok) throw unavailable("Algod status query failed");
+    if (!status.ok) throw unavailable("Algod status query failed", "algod");
     const result = await parseJson(status, statusSchema);
-    if (result === null) throw unavailable("Algod status response malformed");
+    if (result === null)
+      throw unavailable("Algod status response malformed", "algod");
     return { status: "not_found", currentRound: result["last-round"] };
   }
 
@@ -881,9 +941,10 @@ export function createAvmRail(
     url.searchParams.set("address-role", "sender");
     url.searchParams.set("note-prefix", expectedNote);
     const response = await getJsonResponse(url.toString());
-    if (!response.ok) throw unavailable("Indexer note query failed");
+    if (!response.ok) throw unavailable("Indexer note query failed", "indexer");
     const result = await parseJson(response, noteSearchSchema);
-    if (result === null) throw unavailable("Indexer note response malformed");
+    if (result === null)
+      throw unavailable("Indexer note response malformed", "indexer");
     const match = result.transactions
       .filter((item) => item.sender === sender && item.note === expectedNote)
       .sort(
@@ -930,9 +991,10 @@ export function createAvmRail(
       endpoint(config.algodUrl, `/v2/accounts/${encodeURIComponent(address)}`),
     );
     if (response.status === 404) return null;
-    if (!response.ok) throw unavailable("Algod account query failed");
+    if (!response.ok) throw unavailable("Algod account query failed", "algod");
     const result = await parseJson(response, accountSchema);
-    if (result === null) throw unavailable("Algod account response malformed");
+    if (result === null)
+      throw unavailable("Algod account response malformed", "algod");
     return result;
   }
 

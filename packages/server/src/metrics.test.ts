@@ -159,3 +159,26 @@ describe("/api/v1/metrics (§6.3)", () => {
     ).toBe(1);
   });
 });
+
+describe("Server robustness F7 — silent states become observable (spec 2026-08-26)", () => {
+  it("snapshot_reports_rail_unhealthy_seconds_and_funding_gauges", () => {
+    const ctx = setup();
+    ctx.metrics.recordRailUnhealthySeconds(90);
+    const snapshot = ctx.metrics.snapshot({
+      mode: "running",
+      gamesActive: 0,
+      gamesEndspiel: 0,
+      claimsOpen: 0,
+      sseClients: 0,
+      fundingGauges: {
+        bonusesAwaitingOptIn: 1,
+        fundingJobsFailed: 2,
+        fundingJobsBlocked: { usdc_balance: 1 },
+      },
+    });
+    expect(snapshot.railUnhealthySeconds24h).toBe(90);
+    expect(snapshot.bonusesAwaitingOptIn).toBe(1);
+    expect(snapshot.fundingJobsFailed).toBe(2);
+    expect(snapshot.fundingJobsBlocked).toEqual({ usdc_balance: 1 });
+  });
+});

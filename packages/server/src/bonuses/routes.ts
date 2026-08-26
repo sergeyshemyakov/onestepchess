@@ -27,6 +27,8 @@ export type BonusRouteDeps = SessionAuthDeps & {
   readonly rail: PaymentRail;
   readonly config: () => ServerConfig;
   readonly trustProxyHops: number;
+  /** Wakes the funding scheduler after a claim creates work (F1). */
+  readonly onFundingWork?: () => void;
 };
 
 function claimedBonus(deps: BonusRouteDeps, player: string): void {
@@ -133,6 +135,7 @@ export function registerBonusRoutes(
         refIds: [session.address],
       });
     }
+    deps.onFundingWork?.();
     return c.json({
       bonus: {
         status: result.result.status,

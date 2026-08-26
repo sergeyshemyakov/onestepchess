@@ -425,7 +425,9 @@ describe("staked claim moves (F4)", () => {
 
     const pending = await moveRequest(stack, claim, "alice", header);
     expect(pending.status).toBe(202);
-    expect(await recoverSettlingIntents(stack.recoveryDeps)).toBeNull();
+    expect(await recoverSettlingIntents(stack.recoveryDeps)).toMatchObject({
+      nextRecoveryAt: null,
+    });
     const replay = await moveRequest(stack, claim, "alice", header);
 
     expect(replay.status).toBe(200);
@@ -454,11 +456,13 @@ describe("staked claim moves (F4)", () => {
     });
 
     expect((await moveRequest(stack, claim, "alice", header)).status).toBe(202);
-    expect(await recoverSettlingIntents(stack.recoveryDeps)).toBe(
-      stack.now() + 1_000,
-    );
+    expect(await recoverSettlingIntents(stack.recoveryDeps)).toMatchObject({
+      nextRecoveryAt: stack.now() + 1_000,
+    });
     stack.setNow(stack.now() + 2_000);
-    expect(await recoverSettlingIntents(stack.recoveryDeps)).toBeNull();
+    expect(await recoverSettlingIntents(stack.recoveryDeps)).toMatchObject({
+      nextRecoveryAt: null,
+    });
 
     expect(
       stack.database.db

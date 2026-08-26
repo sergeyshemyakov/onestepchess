@@ -61,6 +61,16 @@ export type MetricsSnapshot = {
   readonly sseClients: number;
   readonly quotaRejections24h: number;
   readonly authFailures24h: number;
+  readonly railUnhealthySeconds24h: number;
+  readonly bonusesAwaitingOptIn: number;
+  readonly fundingJobsFailed: number;
+  readonly fundingJobsBlocked: Record<string, number>;
+};
+
+export type FundingGaugesSnapshot = {
+  readonly bonusesAwaitingOptIn: number;
+  readonly fundingJobsFailed: number;
+  readonly fundingJobsBlocked: Record<string, number>;
 };
 
 /** In-memory counters for `GET /api/v1/metrics` (server spec §6.3). Rolling-24h
@@ -79,6 +89,10 @@ export class Metrics {
   private readonly settleLatencies = new RollingWindow<{
     readonly at: number;
     readonly ms: number;
+  }>((entry) => entry.at);
+  private readonly railUnhealthy = new RollingWindow<{
+    readonly at: number;
+    readonly seconds: number;
   }>((entry) => entry.at);
   private payoutsSubmitted = 0;
   private payoutsFailed = 0;
@@ -119,6 +133,11 @@ export class Metrics {
     this.record(this.authFailures);
   }
 
+  recordRailUnhealthySeconds(seconds: number): void {
+    const at = this.now();
+    this.railUnhealthy.add({ at, seconds: Math.max(0, seconds) }, at - DAY_MS);
+  }
+
   recordPayoutQueued(count = 1): void {
     this.payoutsPending += count;
   }
@@ -142,6 +161,7 @@ export class Metrics {
     readonly gamesEndspiel: number;
     readonly claimsOpen: number;
     readonly sseClients: number;
+    readonly fundingGauges?: FundingGaugesSnapshot;
   }): MetricsSnapshot {
     const now = this.now();
     const cutoff = now - DAY_MS;
@@ -180,6 +200,12 @@ export class Metrics {
       sseClients: gauges.sseClients,
       quotaRejections24h: this.quotaRejections.count(cutoff),
       authFailures24h: this.authFailures.count(cutoff),
+      railUnhealthySeconds24h: this.railUnhealthy
+        .values(cutoff)
+        .reduce((sum, entry) => sum + entry.seconds, 0),
+      bonusesAwaitingOptIn: gauges.fundingGauges?.bonusesAwaitingOptIn ?? 0,
+      fundingJobsFailed: gauges.fundingGauges?.fundingJobsFailed ?? 0,
+      fundingJobsBlocked: gauges.fundingGauges?.fundingJobsBlocked ?? {},
     };
   }
 
@@ -210,6 +236,7 @@ export type MetricsRouteDeps = {
   readonly clientCount: () => number;
   readonly mode: () => Mode;
   readonly adminToken: string | undefined;
+  readonly fundingGauges?: () => FundingGaugesSnapshot;
 };
 
 export function registerMetricsRoute(
@@ -239,6 +266,9 @@ export function registerMetricsRoute(
         gamesEndspiel,
         claimsOpen: deps.views.openClaims.size,
         sseClients: deps.clientCount(),
+        ...(deps.fundingGauges === undefined
+          ? {}
+          : { fundingGauges: deps.fundingGauges() }),
       }),
     );
   });

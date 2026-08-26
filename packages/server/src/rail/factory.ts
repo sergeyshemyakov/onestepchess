@@ -1,5 +1,5 @@
 import type { PaymentRail } from "@onestepchess/core";
-import { createAvmRail } from "@onestepchess/rail-avm";
+import { createAvmRail, type RailDiagnostic } from "@onestepchess/rail-avm";
 import { createMockRail, type MockRailState } from "@onestepchess/rail-mock";
 import type { ServerConfig, ServerEnv } from "../config.js";
 
@@ -9,6 +9,7 @@ export type PaymentRailFactoryOptions = {
   readonly storedBookMicroUsdc?: number;
   readonly fetch?: typeof globalThis.fetch;
   readonly mockState?: MockRailState;
+  readonly onDiagnostic?: (event: RailDiagnostic) => void;
 };
 
 /** Selects exactly one final rail from the already-validated profile. Secret
@@ -43,6 +44,11 @@ export function createPaymentRail(
       treasuryMnemonic: mnemonic,
       bonusMnemonic,
     },
-    options.fetch === undefined ? {} : { fetch: options.fetch },
+    {
+      ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+      ...(options.onDiagnostic === undefined
+        ? {}
+        : { onDiagnostic: options.onDiagnostic }),
+    },
   );
 }

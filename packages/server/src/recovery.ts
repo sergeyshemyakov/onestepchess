@@ -7,11 +7,20 @@ import { schema } from "./db/open.js";
  * is definitively failed so the normal expiry command can release its slot. */
 const RECOVERY_POLL_MS = 1_000;
 
+export type SettlingSweepResult = {
+  readonly nextRecoveryAt: number | null;
+  /** Rail consultations that errored this pass. Zero means every stranded
+   * intent's chain status was actually determined — the boot gate's
+   * clearing condition (F3, spec 2026-08-26). */
+  readonly errorCount: number;
+};
+
 export async function recoverSettlingIntents(
   deps: ClaimDeps,
   logger?: { error(obj: object, msg: string): void },
-): Promise<number | null> {
+): Promise<SettlingSweepResult> {
   const now = deps.now();
+  let errorCount = 0;
   let nextRecoveryAt: number | null = null;
   const schedule = (at: number): void => {
     nextRecoveryAt =
@@ -83,6 +92,7 @@ export async function recoverSettlingIntents(
           : now + RECOVERY_POLL_MS,
       );
     } catch (error) {
+      errorCount += 1;
       logger?.error(
         { err: error, intentId: intent.id },
         "payment intent recovery failed; will retry",
@@ -101,7 +111,52 @@ export async function recoverSettlingIntents(
       type: "ExpireClaim",
       payload: { claimId: claim.id },
     });
-  return nextRecoveryAt;
+  return { nextRecoveryAt, errorCount };
+}
+
+/** Boot-gate recovery (F3, spec 2026-08-26): repeats the settling-intent
+ * sweep until one pass completes with zero rail errors, then recovers
+ * unresolved terminal games. Returns false only when `shouldContinue` asks
+ * it to stop (shutdown) — against a permanently-down rail it retries
+ * indefinitely, keeping the boot pause cause active. */
+export async function completeBootRecovery(
+  deps: ClaimDeps,
+  options: {
+    readonly logger: { error(obj: object, msg: string): void };
+    readonly retryDelayMs: number;
+    readonly sleep?: (ms: number) => Promise<void>;
+    readonly shouldContinue?: () => boolean;
+  },
+): Promise<boolean> {
+  const sleep =
+    options.sleep ??
+    ((ms: number) =>
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, ms);
+        timer.unref?.();
+      }));
+  while (options.shouldContinue?.() ?? true) {
+    const sweep = await recoverSettlingIntents(deps, options.logger);
+    if (sweep.errorCount === 0) {
+      // An empty sweep makes no rail call at all, so a zero error count is
+      // not yet proof the chain is reachable — a treasury balance read is
+      // the explicit canary (F3 review, spec 2026-08-26).
+      try {
+        await deps.rail.getBalances(deps.rail.treasuryAddress);
+      } catch (error) {
+        options.logger.error(
+          { err: error },
+          "boot canary failed; gate stays closed",
+        );
+        await sleep(options.retryDelayMs);
+        continue;
+      }
+      await recoverUnresolvedTerminalGames(deps);
+      return true;
+    }
+    await sleep(options.retryDelayMs);
+  }
+  return false;
 }
 
 export async function recoverUnresolvedTerminalGames(

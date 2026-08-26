@@ -28,8 +28,18 @@ export type ReconciliationReport = {
 };
 
 export class OperationalState {
-  facilitator = { healthy: true, lastCheckAt: null as number | null };
+  facilitator = {
+    healthy: true,
+    lastCheckAt: null as number | null,
+    consecutiveFailures: 0,
+    alerted: false,
+    unhealthySince: null as number | null,
+  };
 }
+
+/** Alerts debounce to this many consecutive failed probes; the pause cause
+ * still activates on the first failure (F6, spec 2026-08-26). */
+export const FACILITATOR_ALERT_AFTER_FAILURES = 3;
 
 /** The chain balance is read before the book, and balance queries can trail a
  * facilitator-confirmed transaction by a few rounds — so ledger entries booked
@@ -47,6 +57,9 @@ export type ReconciliationDeps = {
   readonly alerts: OperationalAlerts;
   readonly state: OperationalState;
   readonly secrets?: readonly string[];
+  readonly metrics?: {
+    recordRailUnhealthySeconds(seconds: number): void;
+  };
 };
 
 function scalar(value: unknown): number {
@@ -336,16 +349,34 @@ export function registerOperationalCommands(deps: ReconciliationDeps): void {
       ctx,
       payload: { readonly healthy: boolean; readonly checkedAt: number },
     ) => {
-      const before = deps.state.facilitator.healthy;
+      const previous = deps.state.facilitator;
+      const consecutiveFailures = payload.healthy
+        ? 0
+        : previous.consecutiveFailures + 1;
+      const shouldAlertUnhealthy =
+        !payload.healthy &&
+        !previous.alerted &&
+        consecutiveFailures >= FACILITATOR_ALERT_AFTER_FAILURES;
+      const shouldAlertRecovered = payload.healthy && previous.alerted;
+      if (payload.healthy && previous.unhealthySince !== null) {
+        deps.metrics?.recordRailUnhealthySeconds(
+          Math.round((payload.checkedAt - previous.unhealthySince) / 1_000),
+        );
+      }
       deps.state.facilitator = {
         healthy: payload.healthy,
         lastCheckAt: payload.checkedAt,
+        consecutiveFailures,
+        alerted: shouldAlertUnhealthy || (previous.alerted && !payload.healthy),
+        unhealthySince: payload.healthy
+          ? null
+          : (previous.unhealthySince ?? payload.checkedAt),
       };
       updatePauseCause(deps.db, ctx, {
         cause: "facilitator",
         active: !payload.healthy,
       });
-      if (before !== payload.healthy) {
+      if (shouldAlertUnhealthy || shouldAlertRecovered) {
         ctx.afterCommit(() => {
           void deps.alerts.emit(
             payload.healthy ? "facilitator_recovered" : "facilitator_unhealthy",

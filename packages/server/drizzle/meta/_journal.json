@@ -36,6 +36,20 @@
       "when": 1785484800000,
       "tag": "0004_release4_starter_stake",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1787788800000,
+      "tag": "0005_bonus_optin_expiry",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1787788800001,
+      "tag": "0006_claim_expiring_flag",
+      "breakpoints": true
     }
   ]
 }

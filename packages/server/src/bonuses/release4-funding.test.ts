@@ -17,13 +17,17 @@ import {
   runReconciliation,
 } from "../operations/reconciliation.js";
 import {
+  createFundingScheduler,
   type FundingExecutorDeps,
+  FundingGauges,
   hasAlgoFundingCapacity,
   rearmBonusFunding,
   registerFundingCommands,
+  reviveExpiredBonus,
   runFundingExecutor,
 } from "./funding.js";
 import { registerBonusCommands } from "./lifecycle.js";
+import { runBonusWatcher } from "./watcher.js";
 
 const INITIAL_USDC = 10_000_000;
 const INITIAL_ALGO = 10_000_000;
@@ -163,6 +167,8 @@ function seedBonus(
       usdcAmount: stack.config().BONUS_USDC_MICRO,
       claimIp: "203.0.113.20",
       claimedAt: stack.now(),
+      optInDeadlineAt:
+        stack.now() + stack.config().BONUS_OPTIN_EXPIRY_DAYS * 86_400_000,
       ...(status === "claimed" ? {} : { optedInAt: stack.now() }),
       ...(status === "funded"
         ? { fundedAt: stack.now(), usdcTxid: "already-funded" }
@@ -888,5 +894,318 @@ describe("Release 4 recoverable starter-stake funding (#99)", () => {
     );
     expect(reconciliation.ok).toBe(true);
     expect(reconciliation.driftMicroUsdc).toBe(0);
+  });
+});
+
+describe("Server robustness F1 — funding executor must not spin (spec 2026-08-26)", () => {
+  const DAY_MS = 86_400_000;
+
+  function makeConfirmedAlgoJob(stack: Stack, account: algosdk.Account) {
+    return insertPreparedJob(stack, account, "algo", "submitted").then(
+      ({ id }) => {
+        stack.database.db
+          .update(schema.fundingJobs)
+          .set({ status: "confirmed", updatedAt: stack.now() })
+          .where(eq(schema.fundingJobs.id, id))
+          .run();
+        return id;
+      },
+    );
+  }
+
+  it("funding_pass_dispatches_nothing_for_an_opted_in_bonus_with_an_existing_usdc_job", async () => {
+    const stack = setup();
+    const account = algosdk.generateAccount();
+    seedBonus(stack, account, "opted_in");
+    const jobId = insertPendingJob(stack, account, "usdc");
+    stack.database.db
+      .update(schema.fundingJobs)
+      .set({ nextAttemptAt: stack.now() + 60_000 })
+      .where(eq(schema.fundingJobs.id, jobId))
+      .run();
+    const dispatch = vi.spyOn(stack.coordinator, "dispatch");
+    await runFundingExecutor(stack.deps);
+    const types = dispatch.mock.calls.map(([command]) => command.type);
+    expect(types).not.toContain("FundingJobCreated");
+  });
+
+  it("funding_pass_makes_no_chain_calls_for_a_claimed_bonus_waiting_on_opt_in", async () => {
+    const stack = setup();
+    const account = algosdk.generateAccount();
+    seedBonus(stack, account, "claimed");
+    await makeConfirmedAlgoJob(stack, account);
+    const balances = vi.spyOn(stack.rail, "getBalances");
+    const accountInfo = vi.spyOn(stack.rail, "getAccountInfo");
+    await runFundingExecutor(stack.deps);
+    expect(balances).not.toHaveBeenCalled();
+    expect(accountInfo).not.toHaveBeenCalled();
+  });
+
+  it("pending_job_with_a_future_next_attempt_is_not_prepared_before_it_is_due", async () => {
+    const stack = setup();
+    const account = algosdk.generateAccount();
+    seedBonus(stack, account, "opted_in");
+    const jobId = insertPendingJob(stack, account, "usdc");
+    const dueAt = stack.now() + 30_000;
+    stack.database.db
+      .update(schema.fundingJobs)
+      .set({ nextAttemptAt: dueAt })
+      .where(eq(schema.fundingJobs.id, jobId))
+      .run();
+    const prepare = vi.spyOn(stack.rail, "prepareFunding");
+    const nextDue = await runFundingExecutor(stack.deps);
+    expect(prepare).not.toHaveBeenCalled();
+    expect(nextDue).toBe(dueAt);
+  });
+
+  it("watcher_expires_a_claimed_bonus_past_its_opt_in_deadline_exactly_once", async () => {
+    const stack = setup();
+    const account = algosdk.generateAccount();
+    const address = account.addr.toString();
+    seedBonus(stack, account, "claimed");
+    await makeConfirmedAlgoJob(stack, account);
+    stack.rail.control.setAccountInfo(address, { optedInUsdc: false });
+    stack.setNow(stack.now() + 2 * DAY_MS);
+    const emit = vi.spyOn(stack.alerts, "emit");
+    const watcherDeps = {
+      coordinator: stack.coordinator,
+      db: stack.database.db,
+      rail: stack.rail,
+      now: stack.now,
+    };
+    await runBonusWatcher(watcherDeps);
+    const bonus = stack.database.db
+      .select()
+      .from(schema.bonuses)
+      .where(eq(schema.bonuses.player, address))
+      .get();
+    expect(bonus?.status).toBe("expired");
+    const expiredAlerts = emit.mock.calls.filter(
+      ([type]) => type === "bonus_optin_expired",
+    );
+    expect(expiredAlerts).toHaveLength(1);
+    const accountInfo = vi.spyOn(stack.rail, "getAccountInfo");
+    await runBonusWatcher(watcherDeps);
+    expect(accountInfo).not.toHaveBeenCalled();
+    expect(
+      emit.mock.calls.filter(([type]) => type === "bonus_optin_expired"),
+    ).toHaveLength(1);
+  });
+
+  it("claimed_bonus_past_deadline_with_an_in_flight_job_is_not_expired", async () => {
+    const stack = setup();
+    const account = algosdk.generateAccount();
+    const address = account.addr.toString();
+    seedBonus(stack, account, "claimed");
+    await insertPreparedJob(stack, account, "algo", "submitted");
+    stack.rail.control.setAccountInfo(address, { optedInUsdc: false });
+    stack.setNow(stack.now() + 2 * DAY_MS);
+    await runBonusWatcher({
+      coordinator: stack.coordinator,
+      db: stack.database.db,
+      rail: stack.rail,
+      now: stack.now,
+    });
+    const bonus = stack.database.db
+      .select()
+      .from(schema.bonuses)
+      .where(eq(schema.bonuses.player, address))
+      .get();
+    expect(bonus?.status).toBe("claimed");
+  });
+
+  it("watcher_opt_in_observation_cancels_the_pending_algo_leg_and_reports_an_advance", async () => {
+    const stack = setup();
+    const account = algosdk.generateAccount();
+    const address = account.addr.toString();
+    seedBonus(stack, account, "claimed");
+    insertPendingJob(stack, account, "algo");
+    stack.rail.control.setAccountInfo(address, { optedInUsdc: true });
+    const advanced = await runBonusWatcher({
+      coordinator: stack.coordinator,
+      db: stack.database.db,
+      rail: stack.rail,
+      now: stack.now,
+    });
+    expect(advanced).toBe(1);
+    const bonus = stack.database.db
+      .select()
+      .from(schema.bonuses)
+      .where(eq(schema.bonuses.player, address))
+      .get();
+    expect(bonus?.status).toBe("opted_in");
+    expect(
+      stack.database.db
+        .select()
+        .from(schema.fundingJobs)
+        .where(eq(schema.fundingJobs.player, address))
+        .all(),
+    ).toHaveLength(0);
+  });
+
+  it("admin_revive_returns_an_expired_bonus_to_claimed_with_a_fresh_deadline", async () => {
+    const stack = setup();
+    const account = algosdk.generateAccount();
+    const address = account.addr.toString();
+    seedBonus(stack, account, "claimed");
+    stack.database.db
+      .update(schema.bonuses)
+      .set({ status: "expired" })
+      .where(eq(schema.bonuses.player, address))
+      .run();
+    stack.setNow(stack.now() + 5 * DAY_MS);
+    const result = await reviveExpiredBonus(stack.deps, address, "admin:test");
+    expect(result.status).toBe("claimed");
+    const bonus = stack.database.db
+      .select()
+      .from(schema.bonuses)
+      .where(eq(schema.bonuses.player, address))
+      .get();
+    expect(bonus?.status).toBe("claimed");
+    expect(bonus?.optInDeadlineAt).toBe(
+      stack.now() + stack.config().BONUS_OPTIN_EXPIRY_DAYS * DAY_MS,
+    );
+    const again = await reviveExpiredBonus(stack.deps, address, "admin:test");
+    expect(again.status).toBe("not_expired");
+  });
+
+  it("funding_scheduler_honors_next_due_caps_the_delay_and_reruns_on_kick", async () => {
+    vi.useFakeTimers();
+    try {
+      const runs: number[] = [];
+      const nextDues: (number | null)[] = [Date.now() + 5_000, null, null];
+      const scheduler = createFundingScheduler({
+        run: async () => {
+          runs.push(Date.now());
+          return nextDues.shift() ?? null;
+        },
+        now: Date.now,
+        maxDelayMs: 60_000,
+      });
+      await scheduler.kick();
+      expect(runs).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(runs).toHaveLength(2);
+      // null nextDue → sleeps the capped max, not forever
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(runs).toHaveLength(3);
+      await scheduler.kick();
+      expect(runs).toHaveLength(4);
+      scheduler.stop();
+      await vi.advanceTimersByTimeAsync(600_000);
+      expect(runs).toHaveLength(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("Server robustness F7 — funding waiting states are observable (spec 2026-08-26)", () => {
+  it("guard_blocked_job_warns_once_per_reason_and_gauges_reflect_funding_state", async () => {
+    const stack = setup();
+    const gauges = new FundingGauges();
+    const deps = { ...stack.deps, gauges };
+    const warn = vi.spyOn(stack.deps.logger, "warn");
+    const blocked = algosdk.generateAccount();
+    seedBonus(stack, blocked, "opted_in");
+    insertPendingJob(stack, blocked, "usdc");
+    const waiting = algosdk.generateAccount();
+    seedBonus(stack, waiting, "claimed");
+    await insertPreparedJob(stack, waiting, "algo", "submitted").then(
+      ({ id }) => {
+        stack.database.db
+          .update(schema.fundingJobs)
+          .set({
+            status: "failed",
+            payloadB64: null,
+            txid: null,
+            lastValidRound: null,
+          })
+          .where(eq(schema.fundingJobs.id, id))
+          .run();
+      },
+    );
+    stack.rail.control.setBalances(stack.rail.bonusAddress, {
+      usdcMicroUsdc: 0,
+    });
+    await runFundingExecutor(deps);
+    await runFundingExecutor(deps);
+    const guardWarns = warn.mock.calls.filter(
+      ([, message]) => message === "funding blocked by send guard",
+    );
+    expect(guardWarns).toHaveLength(1);
+    expect(guardWarns[0]?.[0]).toMatchObject({ reason: "usdc_balance" });
+    const snapshot = gauges.snapshot();
+    expect(snapshot.fundingJobsBlocked).toEqual({ usdc_balance: 1 });
+    expect(snapshot.bonusesAwaitingOptIn).toBe(1);
+    expect(snapshot.fundingJobsFailed).toBe(1);
+    // Reason transition warns again; unchanged reason stays quiet.
+    stack.rail.control.setBalances(stack.rail.bonusAddress, {
+      usdcMicroUsdc: 0,
+      algoMicroAlgo: 0,
+    });
+    await runFundingExecutor(deps);
+    expect(
+      warn.mock.calls.filter(
+        ([, message]) => message === "funding blocked by send guard",
+      ),
+    ).toHaveLength(1);
+  });
+});
+
+describe("Server robustness F1 review fix — expiry requires a resolved ALGO leg", () => {
+  it("past_deadline_bonus_with_a_failed_algo_leg_is_not_expired", async () => {
+    const stack = setup();
+    const account = algosdk.generateAccount();
+    const address = account.addr.toString();
+    seedBonus(stack, account, "claimed");
+    const jobId = insertPendingJob(stack, account, "algo");
+    stack.database.db
+      .update(schema.fundingJobs)
+      .set({ status: "failed" })
+      .where(eq(schema.fundingJobs.id, jobId))
+      .run();
+    stack.rail.control.setAccountInfo(address, { optedInUsdc: false });
+    stack.setNow(stack.now() + 2 * 86_400_000);
+    await runBonusWatcher({
+      coordinator: stack.coordinator,
+      db: stack.database.db,
+      rail: stack.rail,
+      now: stack.now,
+    });
+    expect(
+      stack.database.db
+        .select({ status: schema.bonuses.status })
+        .from(schema.bonuses)
+        .where(eq(schema.bonuses.player, address))
+        .get()?.status,
+    ).toBe("claimed");
+  });
+
+  it("past_deadline_bonus_with_a_skipped_algo_leg_expires", async () => {
+    const stack = setup();
+    const account = algosdk.generateAccount();
+    const address = account.addr.toString();
+    seedBonus(stack, account, "claimed");
+    stack.database.db
+      .update(schema.bonuses)
+      .set({ algoSkippedAt: stack.now() })
+      .where(eq(schema.bonuses.player, address))
+      .run();
+    stack.rail.control.setAccountInfo(address, { optedInUsdc: false });
+    stack.setNow(stack.now() + 2 * 86_400_000);
+    await runBonusWatcher({
+      coordinator: stack.coordinator,
+      db: stack.database.db,
+      rail: stack.rail,
+      now: stack.now,
+    });
+    expect(
+      stack.database.db
+        .select({ status: schema.bonuses.status })
+        .from(schema.bonuses)
+        .where(eq(schema.bonuses.player, address))
+        .get()?.status,
+    ).toBe("expired");
   });
 });

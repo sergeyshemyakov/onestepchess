@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Move } from "@onestepchess/core";
+import { type Move, RailError } from "@onestepchess/core";
 import { Hono } from "hono";
 import type { Logger } from "../logger.js";
 
@@ -89,7 +89,18 @@ export type AppDeps = {
   readonly mode: () => "running" | "paused";
   /** Optional observer for typed error responses (metrics counters). */
   readonly onAppError?: (code: ErrorCode) => void;
+  /** Warming guard (F3, spec 2026-08-26): while true, mutating requests are
+   * rejected with PAUSED; reads and the admin controls below stay available.
+   * The listener can then start before boot recovery has finished. */
+  readonly bootActive?: () => boolean;
 };
+
+/** Mutations an operator may need while the server is still warming up. */
+const BOOT_WRITE_ALLOWLIST = [
+  "/api/v1/admin/config",
+  "/api/v1/admin/pause",
+  "/api/v1/admin/resume",
+];
 
 export function createApp(deps: AppDeps): Hono<AppEnv> {
   const docs = (code: ErrorCode) =>
@@ -103,6 +114,22 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     c.header("x-request-id", requestId);
     await next();
   });
+
+  if (deps.bootActive !== undefined) {
+    const bootActive = deps.bootActive;
+    app.use(async (c, next) => {
+      if (!bootActive()) return next();
+      const method = c.req.method;
+      if (method === "GET" || method === "HEAD" || method === "OPTIONS") {
+        return next();
+      }
+      if (BOOT_WRITE_ALLOWLIST.includes(c.req.path)) return next();
+      throw new AppError("PAUSED", {
+        hint: "server is warming up; retry shortly",
+        retryAfterSeconds: 5,
+      });
+    });
+  }
 
   app.onError((error, c) => {
     if (error instanceof AppError) {
@@ -124,6 +151,20 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
           ...(legalMoves !== undefined ? { legalMoves } : {}),
         },
         ERROR_STATUS[error.code],
+      );
+    }
+    // Upstream unavailability (breaker open, saturation, chain timeouts) is a
+    // retryable dependency failure, not a server bug — the incident of
+    // 2026-08-26 surfaced these as opaque 500s (F2, spec 2026-08-26).
+    if (error instanceof RailError && error.code === "UNAVAILABLE") {
+      c.header("Retry-After", "5");
+      return c.json(
+        {
+          error: "DEPENDENCY_UNAVAILABLE",
+          hint: "a chain dependency is unavailable; retry shortly",
+          docs: docs("DEPENDENCY_UNAVAILABLE"),
+        },
+        503,
       );
     }
     const requestId = c.get("requestId");

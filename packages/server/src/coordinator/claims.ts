@@ -335,22 +335,15 @@ export function registerClaimCommands(deps: ClaimDeps): void {
         });
         return false;
       }
-      const payloadJson = JSON.stringify({
-        claimId: claim.id,
-        deadline: new Date(claim.deadline).toISOString(),
-      });
-      const existing = deps.db
-        .select({ id: schema.events.id })
-        .from(schema.events)
-        .where(
-          and(
-            eq(schema.events.player, claim.player),
-            eq(schema.events.type, "claim_expiring"),
-            eq(schema.events.payloadJson, payloadJson),
-          ),
-        )
-        .get();
-      if (existing !== undefined) return false;
+      // Dedup via a durable flag on the claim row: the previous events-table
+      // lookup was an unindexed full scan inside this synchronous transaction
+      // and froze the event loop for seconds at scale (F4, spec 2026-08-26).
+      if (claim.expiringNotifiedAt !== null) return false;
+      deps.db
+        .update(schema.claims)
+        .set({ expiringNotifiedAt: ctx.now })
+        .where(eq(schema.claims.id, claim.id))
+        .run();
       ctx.appendEvent("claim_expiring", claim.player, {
         claimId: claim.id,
         deadline: new Date(claim.deadline).toISOString(),

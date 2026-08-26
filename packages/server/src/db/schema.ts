@@ -110,6 +110,7 @@ export const claims = sqliteTable(
     fenAfter: text("fen_after"),
     nudgeDueAt: integer("nudge_due_at"),
     nudgeSentAt: integer("nudge_sent_at"),
+    expiringNotifiedAt: integer("expiring_notified_at"),
   },
   (table) => [
     uniqueIndex("claims_open_game")
@@ -225,7 +226,7 @@ export const bonuses = sqliteTable(
       .primaryKey()
       .references(() => players.address),
     status: text("status", {
-      enum: ["claimed", "opted_in", "funded"],
+      enum: ["claimed", "opted_in", "funded", "expired"],
     })
       .notNull()
       .default("claimed"),
@@ -237,6 +238,8 @@ export const bonuses = sqliteTable(
     attempts: integer("attempts").notNull().default(0),
     nextAttemptAt: integer("next_attempt_at"),
     claimedAt: integer("claimed_at").notNull(),
+    optInDeadlineAt: integer("opt_in_deadline_at").notNull(),
+    algoSkippedAt: integer("algo_skipped_at"),
     optedInAt: integer("opted_in_at"),
     fundedAt: integer("funded_at"),
   },
@@ -296,13 +299,17 @@ export const ledgerBalances = sqliteTable("ledger_balances", {
   balanceMicrousdc: integer("balance_microusdc").notNull(),
 });
 
-export const events = sqliteTable("events", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  ts: integer("ts").notNull(),
-  player: text("player"),
-  type: text("type").notNull(),
-  payloadJson: text("payload_json").notNull(),
-});
+export const events = sqliteTable(
+  "events",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    ts: integer("ts").notNull(),
+    player: text("player"),
+    type: text("type").notNull(),
+    payloadJson: text("payload_json").notNull(),
+  },
+  (table) => [index("events_ts").on(table.ts)],
+);
 
 export const authNonces = sqliteTable("auth_nonces", {
   address: text("address").primaryKey(),

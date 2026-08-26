@@ -61,6 +61,10 @@ const CONFIG_DESCRIPTIONS = {
   BONUS_DAILY_CAP: "Starter-stake claims allowed per UTC day.",
   BONUS_MAX_ATTEMPTS: "Maximum attempts for each starter-stake transfer.",
   BONUS_WATCH_INTERVAL_SECONDS: "Seconds between starter-stake funding checks.",
+  BONUS_OPTIN_EXPIRY_DAYS:
+    "Days a claimed starter stake waits for USDC opt-in before expiring.",
+  RAIL_MAX_CONCURRENT_CALLS:
+    "Cap on concurrent outbound chain/facilitator calls (part is reserved for probes and recovery).",
   POINTS_ENABLED:
     "Whether players earn points (move, win, and referral awards).",
   POINTS_MOVE: "Points awarded for a settled staked move.",
