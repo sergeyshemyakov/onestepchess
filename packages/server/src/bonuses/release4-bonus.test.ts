@@ -26,6 +26,7 @@ import {
   registerHumanRoutes,
 } from "../http/routes/human.js";
 import { createLogger } from "../logger.js";
+import { registerFundingCommands } from "./funding.js";
 import {
   bonusProfileStatus,
   evaluateBonusEligibility,
@@ -73,18 +74,28 @@ function setup(overrides: Record<string, unknown> = {}) {
     rng: () => 0.5,
   };
   registerBonusCommands({ coordinator, db: database.db, config: () => config });
+  registerFundingCommands({
+    coordinator,
+    db: database.db,
+    rail,
+    config: () => config,
+    now: () => now,
+    logger: createLogger({ level: "silent" }),
+  });
   const app = createApp({
     logger: createLogger({ level: "silent" }),
     publicBaseUrl: BASE_URL,
     mode: () => "running",
   });
   registerHumanRoutes(app, deps);
-  registerBonusRoutes(app, deps);
+  const onFundingWork = vi.fn();
+  registerBonusRoutes(app, { ...deps, onFundingWork });
   return {
     app,
     database,
     coordinator,
     deps,
+    onFundingWork,
     rail,
     now: () => now,
     setNow(value: number) {
@@ -240,6 +251,7 @@ function seedClaimedBonus(stack: Stack, account: algosdk.Account): void {
       usdcAmount: 200_000,
       claimIp: "203.0.113.1",
       claimedAt: stack.now(),
+      optInDeadlineAt: stack.now() + 86_400_000,
     })
     .run();
 }
@@ -728,6 +740,33 @@ describe("Release 4 starter-stake claim and opt-in (#98)", () => {
       .all();
     expect(bonusEvents).toHaveLength(1);
     expect(bonusEvents[0]?.player).toBe(human.addr.toString());
+  });
+
+  it("successful_bonus_claim_kicks_the_funding_executor", async () => {
+    const stack = setup();
+    const human = algosdk.generateAccount();
+    const agent = algosdk.generateAccount();
+    seedPlayer(stack, human);
+    seedPlayer(stack, agent, "agent");
+    seedDemo(stack, human.addr.toString());
+    stack.rail.control.setAccountInfo(human.addr.toString(), {
+      optedInUsdc: false,
+    });
+    const rejected = await stack.app.request("/api/v1/my/bonus/claim", {
+      method: "POST",
+      headers: authorization(stack, agent),
+    });
+    expect(rejected.status).not.toBe(200);
+    expect(stack.onFundingWork).not.toHaveBeenCalled();
+    const claimed = await stack.app.request("/api/v1/my/bonus/claim", {
+      method: "POST",
+      headers: {
+        ...authorization(stack, human),
+        "x-forwarded-for": "198.51.100.7",
+      },
+    });
+    expect(claimed.status).toBe(200);
+    expect(stack.onFundingWork).toHaveBeenCalledTimes(1);
   });
 });
 

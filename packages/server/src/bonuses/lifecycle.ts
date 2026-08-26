@@ -128,7 +128,7 @@ export function bonusProfileStatus(
   playerAddress: string,
   now: number,
 ): {
-  readonly status: "available" | "claimed" | "opted_in" | "funded";
+  readonly status: "available" | "claimed" | "opted_in" | "funded" | "expired";
   readonly algoTxid?: string;
   readonly algoReady?: boolean;
 } | null {
@@ -186,6 +186,7 @@ export function registerBonusCommands(deps: BonusLifecycleDeps): void {
           usdcAmount: config.BONUS_USDC_MICRO,
           claimIp: payload.claimIp,
           claimedAt: ctx.now,
+          optInDeadlineAt: ctx.now + config.BONUS_OPTIN_EXPIRY_DAYS * DAY_MS,
         })
         .run();
       ctx.appendEvent("bonus_updated", payload.player, { status: "claimed" });

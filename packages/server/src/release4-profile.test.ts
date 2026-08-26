@@ -367,7 +367,9 @@ describe("Release 4 server profiles and immutable identity (#97)", () => {
     const pending = recoveryStack(2_000);
     await pending.seed();
     pending.rail.control.setTxStatus("recovery-payment", { status: "pending" });
-    expect(await recoverSettlingIntents(pending)).toBe(pending.now() + 1_000);
+    expect(await recoverSettlingIntents(pending)).toMatchObject({
+      nextRecoveryAt: pending.now() + 1_000,
+    });
 
     const within = recoveryStack(2_000);
     await within.seed();
@@ -375,7 +377,9 @@ describe("Release 4 server profiles and immutable identity (#97)", () => {
       status: "not_found",
       currentRound: 2_000,
     });
-    expect(await recoverSettlingIntents(within)).toBe(within.now() + 1_000);
+    expect(await recoverSettlingIntents(within)).toMatchObject({
+      nextRecoveryAt: within.now() + 1_000,
+    });
 
     const expired = recoveryStack(2_000);
     await expired.seed();
@@ -410,7 +414,9 @@ describe("Release 4 server profiles and immutable identity (#97)", () => {
     const outage = recoveryStack(2_000);
     await outage.seed();
     outage.rail.control.failQueries(["status"]);
-    expect(await recoverSettlingIntents(outage)).toBe(outage.now() + 1_000);
+    expect(await recoverSettlingIntents(outage)).toMatchObject({
+      nextRecoveryAt: outage.now() + 1_000,
+    });
     expect(outage.db.select().from(schema.paymentIntents).get()?.status).toBe(
       "settling",
     );
@@ -423,7 +429,9 @@ describe("Release 4 server profiles and immutable identity (#97)", () => {
       status: "not_found",
       currentRound: 99_999,
     });
-    expect(await recoverSettlingIntents(stack)).toBe(stack.now() + 1_000);
+    expect(await recoverSettlingIntents(stack)).toMatchObject({
+      nextRecoveryAt: stack.now() + 1_000,
+    });
     stack.setNow(stack.now() + 2_000);
     await recoverSettlingIntents(stack);
     expect(stack.db.select().from(schema.paymentIntents).get()?.status).toBe(

@@ -6,6 +6,10 @@ export class RailError extends Error {
   constructor(
     readonly code: "CONTRACT" | "NOT_READY" | "UNAVAILABLE",
     message: string,
+    /** Which upstream actually failed, when the rail can tell — lets a
+     * per-dependency circuit breaker attribute mixed-upstream methods
+     * (e.g. getTransactionStatus falls back from algod to the indexer). */
+    readonly dependency?: "algod" | "indexer" | "facilitator",
   ) {
     super(message);
     this.name = "RailError";

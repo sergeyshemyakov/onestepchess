@@ -16,6 +16,7 @@ import { CoordinatorViews } from "./coordinator/views.js";
 import { type OpenedDatabase, openDatabase, schema } from "./db/open.js";
 import { createLogger } from "./logger.js";
 import {
+  completeBootRecovery,
   recoverSettlingIntents,
   recoverUnresolvedTerminalGames,
 } from "./recovery.js";
@@ -132,7 +133,9 @@ describe("paid-move boot recovery (F1)", () => {
       .where(eq(schema.claims.id, claim.id))
       .run();
 
-    expect(await recoverSettlingIntents(stack)).toBe(stack.now() + 1_000);
+    expect(await recoverSettlingIntents(stack)).toMatchObject({
+      nextRecoveryAt: stack.now() + 1_000,
+    });
     expect(
       stack.db
         .select({ status: schema.claims.status })
@@ -142,7 +145,9 @@ describe("paid-move boot recovery (F1)", () => {
     ).toEqual({ status: "open" });
 
     stack.setNow(stack.now() + 2_000);
-    expect(await recoverSettlingIntents(stack)).toBeNull();
+    expect(await recoverSettlingIntents(stack)).toMatchObject({
+      nextRecoveryAt: null,
+    });
     expect(
       stack.db
         .select({ status: schema.paymentIntents.status })
@@ -166,7 +171,9 @@ describe("paid-move boot recovery (F1)", () => {
       confirmedRound: 42,
     });
 
-    expect(await recoverSettlingIntents(stack)).toBeNull();
+    expect(await recoverSettlingIntents(stack)).toMatchObject({
+      nextRecoveryAt: null,
+    });
 
     expect(
       stack.db
@@ -205,5 +212,84 @@ describe("paid-move boot recovery (F1)", () => {
     await recoverUnresolvedTerminalGames(stack);
 
     expect(stack.coordinator.stats.commands - before).toBe(1);
+  });
+});
+
+describe("Server robustness F3 — boot gate on error-free recovery (spec 2026-08-26)", () => {
+  it("sweep_reports_rail_errors_so_the_boot_gate_can_hold", async () => {
+    const stack = setup();
+    await settlingIntent(stack);
+    stack.rail.control.failQueries();
+    const failed = await recoverSettlingIntents(stack);
+    expect(failed.errorCount).toBeGreaterThan(0);
+    stack.rail.control.restoreQueries();
+    stack.rail.control.setTxStatus("mockpay_recovery", {
+      status: "confirmed",
+      confirmedRound: 42,
+    });
+    const clean = await recoverSettlingIntents(stack);
+    expect(clean.errorCount).toBe(0);
+  });
+
+  it("boot_recovery_completes_only_after_an_error_free_sweep", async () => {
+    const stack = setup();
+    await settlingIntent(stack);
+    stack.rail.control.failQueries();
+    let retries = 0;
+    const completed = await completeBootRecovery(stack, {
+      logger: createLogger({ level: "silent" }),
+      retryDelayMs: 0,
+      sleep: async () => {
+        retries += 1;
+        if (retries === 3) {
+          stack.rail.control.restoreQueries();
+          stack.rail.control.setTxStatus("mockpay_recovery", {
+            status: "confirmed",
+            confirmedRound: 42,
+          });
+        }
+      },
+    });
+    expect(completed).toBe(true);
+    expect(retries).toBeGreaterThanOrEqual(3);
+  });
+
+  it("boot_recovery_stops_without_completing_when_asked_to_shut_down", async () => {
+    const stack = setup();
+    await settlingIntent(stack);
+    stack.rail.control.failQueries();
+    let passes = 0;
+    const completed = await completeBootRecovery(stack, {
+      logger: createLogger({ level: "silent" }),
+      retryDelayMs: 0,
+      sleep: async () => {
+        passes += 1;
+      },
+      shouldContinue: () => passes < 2,
+    });
+    expect(completed).toBe(false);
+  });
+});
+
+describe("Server robustness F3 review fix — empty sweep still requires a rail canary", () => {
+  it("empty_sweep_does_not_clear_the_gate_while_the_rail_is_down", async () => {
+    const stack = setup();
+    stack.rail.control.failQueries();
+    let passes = 0;
+    const stopped = await completeBootRecovery(stack, {
+      logger: createLogger({ level: "silent" }),
+      retryDelayMs: 0,
+      sleep: async () => {
+        passes += 1;
+      },
+      shouldContinue: () => passes < 3,
+    });
+    expect(stopped).toBe(false);
+    stack.rail.control.restoreQueries();
+    const completed = await completeBootRecovery(stack, {
+      logger: createLogger({ level: "silent" }),
+      retryDelayMs: 0,
+    });
+    expect(completed).toBe(true);
   });
 });

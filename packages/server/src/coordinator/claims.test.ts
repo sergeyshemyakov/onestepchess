@@ -555,3 +555,51 @@ describe("referral award through the settled move path (F15 step 4)", () => {
     ).toEqual({ n: 0 });
   });
 });
+
+describe("Server robustness F4 — claim-expiring dedup without events scan (spec 2026-08-26)", () => {
+  it("claim_expiring_notification_dedups_via_durable_claim_flag_not_events_scan", async () => {
+    const stack = setup();
+    await player(stack, "F4-PLAYER");
+    const opened = await claim(stack, "F4-PLAYER");
+    const claimId = opened.claim?.id;
+    if (claimId === undefined) throw new Error("claim not created");
+    const record = stack.database.db
+      .select()
+      .from(schema.claims)
+      .where(eq(schema.claims.id, claimId))
+      .get();
+    if (record === undefined) throw new Error("claim row missing");
+    vi.setSystemTime(record.deadline - 1_000);
+    await stack.coordinator.dispatch({
+      type: "ClaimExpiring",
+      payload: { claimId },
+      refIds: [claimId],
+    });
+    await stack.coordinator.dispatch({
+      type: "ClaimExpiring",
+      payload: { claimId },
+      refIds: [claimId],
+    });
+    const expiringEvents = stack.database.sqlite
+      .prepare("SELECT count(*) AS n FROM events WHERE type = 'claim_expiring'")
+      .get() as { n: number };
+    expect(expiringEvents.n).toBe(1);
+    const flagged = stack.database.db
+      .select({ expiringNotifiedAt: schema.claims.expiringNotifiedAt })
+      .from(schema.claims)
+      .where(eq(schema.claims.id, claimId))
+      .get();
+    expect(flagged?.expiringNotifiedAt).not.toBeNull();
+    // Dedup must survive without the event log: prune it and re-fire.
+    stack.database.sqlite.exec("DELETE FROM events");
+    await stack.coordinator.dispatch({
+      type: "ClaimExpiring",
+      payload: { claimId },
+      refIds: [claimId],
+    });
+    const afterPrune = stack.database.sqlite
+      .prepare("SELECT count(*) AS n FROM events WHERE type = 'claim_expiring'")
+      .get() as { n: number };
+    expect(afterPrune.n).toBe(0);
+  });
+});

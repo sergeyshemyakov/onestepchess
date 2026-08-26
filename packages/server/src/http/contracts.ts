@@ -188,7 +188,7 @@ const profile = playerView.extend({
     .optional(),
   bonus: z
     .object({
-      status: z.enum(["available", "claimed", "opted_in", "funded"]),
+      status: z.enum(["available", "claimed", "opted_in", "funded", "expired"]),
       algoTxid: z.string().optional(),
       algoReady: z.boolean().optional(),
     })

@@ -10,6 +10,8 @@ import {
 } from "./auth/turnstile.js";
 import { needsCatchUpBackup, nextBackupDelayMs, runBackup } from "./backup.js";
 import {
+  createFundingScheduler,
+  FundingGauges,
   registerFundingCommands,
   runFundingExecutor,
 } from "./bonuses/funding.js";
@@ -65,10 +67,8 @@ import {
   runPayoutExecutor,
 } from "./payouts/executor.js";
 import { createPaymentRail } from "./rail/factory.js";
-import {
-  recoverSettlingIntents,
-  recoverUnresolvedTerminalGames,
-} from "./recovery.js";
+import { createGuardedRail } from "./rail/guard.js";
+import { completeBootRecovery, recoverSettlingIntents } from "./recovery.js";
 
 export * from "./admin/auth.js";
 export * from "./admin/cache.js";
@@ -134,6 +134,11 @@ const POOL_TICK_INTERVAL_MS = 60_000;
 const PAYOUT_TICK_INTERVAL_MS = 2_000;
 const NUDGE_TICK_INTERVAL_MS = 60_000;
 const PRUNE_INTERVAL_MS = 86_400_000;
+/** Ceiling on funding-scheduler sleep so a missed kick can never park the
+ * executor forever (F1, spec 2026-08-26). */
+const FUNDING_MAX_SLEEP_MS = 60_000;
+/** Delay between boot-gate recovery sweeps while the rail errs (F3). */
+const BOOT_RECOVERY_RETRY_MS = 5_000;
 
 export async function main(): Promise<void> {
   let loaded: LoadedConfig;
@@ -177,6 +182,9 @@ export async function main(): Promise<void> {
       env: loaded.env,
       config,
       storedBookMicroUsdc: storedBook,
+      onDiagnostic: (event) => {
+        logger.warn({ rail: event }, "rail response malformed");
+      },
     });
   } catch (error) {
     logger.fatal(
@@ -186,6 +194,17 @@ export async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
+  // Per-dependency circuit breaker + concurrency cap around every outbound
+  // rail call (F2, spec 2026-08-26). Request traffic uses the capped handle;
+  // probes, reconciliation, and recovery use the priority handle so they can
+  // canary an open breaker and are never starved by request load.
+  const railGuard = createGuardedRail({
+    rail,
+    now: Date.now,
+    maxConcurrent: () => config.RAIL_MAX_CONCURRENT_CALLS,
+  });
+  const priorityRail = railGuard.priorityRail;
+  rail = railGuard.rail;
 
   const now = Date.now();
   if (
@@ -237,15 +256,17 @@ export async function main(): Promise<void> {
     void alerts.emit("boot_paused");
   }
   const operationalState = new OperationalState();
+  const metrics = new Metrics({ now: Date.now });
   const operationalDeps = {
     coordinator,
     db,
-    rail,
+    rail: priorityRail,
     config: () => config,
     now: Date.now,
     alerts,
     state: operationalState,
     secrets: secretValues(loaded.env),
+    metrics,
   } as const;
   registerOperationalCommands(operationalDeps);
   const events = new EventStreamService({
@@ -255,7 +276,6 @@ export async function main(): Promise<void> {
     now: Date.now,
     logger,
   });
-  const metrics = new Metrics({ now: Date.now });
   const publicStats = new PublicStats();
   const unsubscribeEvents = coordinator.onEvent((event) => {
     events.publish(event);
@@ -352,6 +372,7 @@ export async function main(): Promise<void> {
     alerts,
   } as const;
   registerPayoutCommands(payoutDeps);
+  const fundingGauges = new FundingGauges();
   const fundingDeps = {
     coordinator,
     db,
@@ -361,6 +382,7 @@ export async function main(): Promise<void> {
     logger,
     alerts,
     cache: adminCache,
+    gauges: fundingGauges,
   } as const;
   registerFundingCommands(fundingDeps);
   let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -377,8 +399,11 @@ export async function main(): Promise<void> {
   };
   const runRecovery = async (): Promise<void> => {
     try {
-      const nextRecoveryAt = await recoverSettlingIntents(claimDeps, logger);
-      if (nextRecoveryAt !== null) scheduleRecovery(nextRecoveryAt);
+      const sweep = await recoverSettlingIntents(
+        { ...claimDeps, rail: priorityRail },
+        logger,
+      );
+      if (sweep.nextRecoveryAt !== null) scheduleRecovery(sweep.nextRecoveryAt);
     } catch (error) {
       logger.error({ err: error }, "payment recovery failed; retrying");
       scheduleRecovery(Date.now() + 1_000);
@@ -391,32 +416,60 @@ export async function main(): Promise<void> {
       logger.error({ err: error }, "payout executor pass failed");
     }
   });
-  const runFunding = nonOverlapping(async () => {
-    try {
-      await runFundingExecutor(fundingDeps);
-    } catch (error) {
-      logger.error(
-        { err: error },
-        "starter-stake funding executor pass failed",
-      );
-    }
+  // The funding scheduler serializes passes and sleeps until each pass's own
+  // nextDue (capped), so idle bonuses cost nothing between kicks (F1, spec
+  // 2026-08-26). Work-creating events kick it: bonus claim, opt-in
+  // observation, admin retry/revive.
+  const fundingScheduler = createFundingScheduler({
+    run: async () => {
+      try {
+        return await runFundingExecutor(fundingDeps);
+      } catch (error) {
+        logger.error(
+          { err: error },
+          "starter-stake funding executor pass failed",
+        );
+        return null;
+      }
+    },
+    now: Date.now,
+    maxDelayMs: FUNDING_MAX_SLEEP_MS,
   });
-  // Warm AVM fee-payer state and persist only the facilitator pause cause
-  // before recovery. Recovery remains live while discretionary funding sees
-  // the resulting pause through its send guard.
-  await probeFacilitator(operationalDeps);
-  await runRecovery();
-  await recoverUnresolvedTerminalGames(claimDeps);
-  // Resume payout batches and pay out any freshly-recovered resolutions
-  // (F1 step 6) before serving.
-  await runPayouts();
-  await runBonusWatcher({ coordinator, db, rail });
-  await runFunding();
-  try {
-    await runReconciliation(operationalDeps, "boot");
-  } catch (error) {
-    logger.error({ err: error }, "boot reconciliation unavailable");
-  }
+  const runFunding = () => fundingScheduler.kick();
+  // Boot gate (F3, spec 2026-08-26): the network-bound recovery chain runs
+  // AFTER the listener starts (see below) so an upstream outage can never
+  // leave the site dark; until it clears, the `boot` pause cause plus the
+  // warming middleware keep every mutating route closed.
+  let bootGateActive = true;
+  let shuttingDown = false;
+  const runBootRecovery = async (): Promise<void> => {
+    // Warm AVM fee-payer state and persist only the facilitator pause cause
+    // before recovery. Recovery remains live while discretionary funding
+    // sees the resulting pause through its send guard.
+    await probeFacilitator(operationalDeps);
+    const completed = await completeBootRecovery(
+      { ...claimDeps, rail: priorityRail },
+      {
+        logger,
+        retryDelayMs: BOOT_RECOVERY_RETRY_MS,
+        shouldContinue: () => !shuttingDown,
+      },
+    );
+    if (!completed) return;
+    bootGateActive = false;
+    logger.info({}, "boot gate cleared");
+    // Arm the normal recovery scheduling for whatever the gate sweep left
+    // pending, then resume the discretionary executors.
+    void runRecovery();
+    await runPayouts();
+    await runBonusWatcher({ coordinator, db, rail, now: Date.now });
+    await runFunding();
+    try {
+      await runReconciliation(operationalDeps, "boot");
+    } catch (error) {
+      logger.error({ err: error }, "boot reconciliation unavailable");
+    }
+  };
   // Deterministic, idempotent points backfill of pre-incentive history (F15
   // step 6); a no-op once every terminal game already has its award rows.
   // Gated with the award sites: enabling POINTS_ENABLED later backfills the
@@ -438,20 +491,25 @@ export async function main(): Promise<void> {
     void coordinator.dispatch({ type: "PoolTick", payload: {} });
   }, POOL_TICK_INTERVAL_MS);
   poolInterval.unref();
+  // Money-moving background work must not run concurrently with mandatory
+  // boot recovery; the boot chain runs each once after the gate clears
+  // (F3 review, spec 2026-08-26).
   const payoutInterval = setInterval(() => {
+    if (bootGateActive) return;
     void runPayouts();
   }, PAYOUT_TICK_INTERVAL_MS);
   payoutInterval.unref();
   const bonusWatchInterval = setInterval(() => {
-    void runBonusWatcher({ coordinator, db, rail }).catch((error) => {
-      logger.error({ err: error }, "starter-stake watcher pass failed");
-    });
+    if (bootGateActive) return;
+    void runBonusWatcher({ coordinator, db, rail, now: Date.now })
+      .then((advanced) => {
+        if (advanced > 0) void fundingScheduler.kick();
+      })
+      .catch((error) => {
+        logger.error({ err: error }, "starter-stake watcher pass failed");
+      });
   }, config.BONUS_WATCH_INTERVAL_SECONDS * 1_000);
   bonusWatchInterval.unref();
-  const fundingInterval = setInterval(() => {
-    void runFunding();
-  }, PAYOUT_TICK_INTERVAL_MS);
-  fundingInterval.unref();
   const heartbeatInterval = setInterval(() => {
     events.heartbeat();
   }, config.SSE_HEARTBEAT_SECONDS * 1_000);
@@ -519,12 +577,16 @@ export async function main(): Promise<void> {
   }
   scheduleBackup();
 
-  const mode = (): "running" | "paused" => currentMode(db);
+  // The in-memory boot gate reads as paused so gameplay routes reject while
+  // recovery is still running behind the already-listening server (F3).
+  const mode = (): "running" | "paused" =>
+    bootGateActive ? "paused" : currentMode(db);
 
   const app = createApp({
     logger,
     publicBaseUrl: loaded.env.PUBLIC_BASE_URL,
     mode,
+    bootActive: () => bootGateActive,
     onAppError: (code) => {
       if (code === "QUOTA_OUT") metrics.recordQuotaRejection();
       else if (
@@ -585,7 +647,12 @@ export async function main(): Promise<void> {
   // Replay JSON is the one API response served compressed (server spec §6.6).
   app.use("/api/v1/games/:id/replay", jsonCompression());
   registerHumanRoutes(app, humanDeps);
-  registerBonusRoutes(app, humanDeps);
+  registerBonusRoutes(app, {
+    ...humanDeps,
+    onFundingWork: () => {
+      void fundingScheduler.kick();
+    },
+  });
   registerEventRoutes(app, { ...authDeps, events });
   registerDiscoveryRoutes(app, {
     db,
@@ -606,6 +673,7 @@ export async function main(): Promise<void> {
     clientCount: () => events.clientCount,
     mode,
     adminToken: loaded.env.ADMIN_TOKEN,
+    fundingGauges: () => fundingGauges.snapshot(),
   });
   registerAdminRoutes(app, {
     db,
@@ -625,6 +693,9 @@ export async function main(): Promise<void> {
     cache: adminCache,
     reconciliation: operationalDeps,
     funding: fundingDeps,
+    fundingKick: () => {
+      void fundingScheduler.kick();
+    },
   });
   // Static SPA fallback is registered last so its `*` route never shadows an
   // API, discovery, or `/llms.txt` route (server spec §6.6).
@@ -638,12 +709,16 @@ export async function main(): Promise<void> {
   const server = serve({ fetch: app.fetch, port: loaded.env.PORT }, (info) => {
     logger.info({ port: info.port, rail: loaded.env.RAIL }, "listening");
   });
+  void runBootRecovery().catch((error) => {
+    logger.error({ err: error }, "boot recovery failed");
+  });
 
   const shutdown = () => {
+    shuttingDown = true;
     clearInterval(poolInterval);
     clearInterval(payoutInterval);
     clearInterval(bonusWatchInterval);
-    clearInterval(fundingInterval);
+    fundingScheduler.stop();
     clearInterval(heartbeatInterval);
     clearInterval(nudgeInterval);
     clearInterval(pruneInterval);

@@ -285,7 +285,10 @@ describe("release-2 migration (0001_release2_human_reads)", () => {
     }
     expect(
       after.claims?.map((row) => {
-        const { fen_before, ...rest } = row as Record<string, unknown>;
+        const { fen_before, expiring_notified_at, ...rest } = row as Record<
+          string,
+          unknown
+        >;
         return rest;
       }),
     ).toEqual(snapshot.claims);
@@ -393,5 +396,125 @@ describe("release-2 migration (0001_release2_human_reads)", () => {
         .prepare("SELECT count(*) AS n FROM nickname_changes")
         .get(),
     ).toEqual({ n: 1 });
+  });
+});
+
+describe("robustness migration (0005_bonus_optin_expiry)", () => {
+  function release4Database(): string {
+    const dir = mkdtempSync(join(tmpdir(), "osc-r4-"));
+    const path = join(dir, "osc.sqlite");
+    const migrations = join(dir, "migrations");
+    mkdirSync(join(migrations, "meta"), { recursive: true });
+    const journal = JSON.parse(
+      readFileSync(join(drizzleDir, "meta", "_journal.json"), "utf8"),
+    ) as { entries: { idx: number; tag: string }[] };
+    journal.entries = journal.entries.filter((entry) => entry.idx <= 4);
+    for (const entry of journal.entries) {
+      copyFileSync(
+        join(drizzleDir, `${entry.tag}.sql`),
+        join(migrations, `${entry.tag}.sql`),
+      );
+    }
+    writeFileSync(
+      join(migrations, "meta", "_journal.json"),
+      JSON.stringify(journal),
+    );
+    const sqlite = new Database(path);
+    migrate(drizzle(sqlite), { migrationsFolder: migrations });
+    sqlite.exec(`
+      INSERT INTO players (address, kind, nickname, created_at)
+        VALUES ('r4-bonus-player', 'human', 'r4-bonus', 100);
+      INSERT INTO bonuses (player, status, algo_amount, usdc_amount, claim_ip, claimed_at)
+        VALUES ('r4-bonus-player', 'claimed', 250000, 200000, '203.0.113.9', 5000);
+    `);
+    sqlite.close();
+    return path;
+  }
+
+  it("release4_database_backfills_opt_in_deadline_and_accepts_expired_status", () => {
+    const path = release4Database();
+    const database = open(path);
+    const row = database.sqlite
+      .prepare(
+        "SELECT status, claimed_at, opt_in_deadline_at, algo_skipped_at FROM bonuses WHERE player = 'r4-bonus-player'",
+      )
+      .get() as {
+      status: string;
+      claimed_at: number;
+      opt_in_deadline_at: number;
+      algo_skipped_at: number | null;
+    };
+    expect(row.status).toBe("claimed");
+    expect(row.opt_in_deadline_at).toBe(row.claimed_at + 86_400_000);
+    expect(row.algo_skipped_at).toBeNull();
+    database.sqlite
+      .prepare(
+        "UPDATE bonuses SET status = 'expired' WHERE player = 'r4-bonus-player'",
+      )
+      .run();
+    const status = database.sqlite
+      .prepare("SELECT status FROM bonuses WHERE player = 'r4-bonus-player'")
+      .get() as { status: string };
+    expect(status.status).toBe("expired");
+  });
+});
+
+describe("robustness migration (0006_claim_expiring_flag)", () => {
+  it("events_prune_delete_uses_the_ts_index", () => {
+    const database = open();
+    const plan = database.sqlite
+      .prepare("EXPLAIN QUERY PLAN DELETE FROM events WHERE ts < ?")
+      .all(0) as { detail: string }[];
+    expect(plan.map((row) => row.detail).join(" ")).toContain("events_ts");
+  });
+
+  it("release5_database_backfills_expiring_notified_at_for_open_claims", () => {
+    const dir = mkdtempSync(join(tmpdir(), "osc-r5-"));
+    const path = join(dir, "osc.sqlite");
+    const migrations = join(dir, "migrations");
+    mkdirSync(join(migrations, "meta"), { recursive: true });
+    const journal = JSON.parse(
+      readFileSync(join(drizzleDir, "meta", "_journal.json"), "utf8"),
+    ) as { entries: { idx: number; tag: string }[] };
+    journal.entries = journal.entries.filter((entry) => entry.idx <= 5);
+    for (const entry of journal.entries) {
+      copyFileSync(
+        join(drizzleDir, `${entry.tag}.sql`),
+        join(migrations, `${entry.tag}.sql`),
+      );
+    }
+    writeFileSync(
+      join(migrations, "meta", "_journal.json"),
+      JSON.stringify(journal),
+    );
+    const sqlite = new Database(path);
+    migrate(drizzle(sqlite), { migrationsFolder: migrations });
+    sqlite.exec(`
+      INSERT INTO players (address, kind, nickname, created_at)
+        VALUES ('r5-player', 'human', 'r5-player', 100),
+               ('r5-quiet', 'human', 'r5-quiet', 100);
+      INSERT INTO games (id, name, status, fen, history_json, rules_json,
+                         last_ply_at, created_at)
+        VALUES ('gm_r5', 'r5-game', 'active', 'fen', '[]', '{}', 100, 100),
+               ('gm_r5b', 'r5-game-b', 'active', 'fen', '[]', '{}', 100, 100);
+      INSERT INTO claims (id, game_id, player, side, demo, stake_microusdc,
+                          status, created_at, deadline)
+        VALUES ('clm_r5_open', 'gm_r5', 'r5-player', 'white', 0, 1000,
+                'open', 100, 700),
+               ('clm_r5_quiet', 'gm_r5b', 'r5-quiet', 'black', 0, 1000,
+                'open', 100, 700);
+      INSERT INTO events (ts, player, type, payload_json)
+        VALUES (200, 'r5-player', 'claim_expiring',
+                '{"claimId":"clm_r5_open","deadline":"1970-01-01T00:00:00.700Z"}');
+    `);
+    sqlite.close();
+    const database = open(path);
+    const rows = database.sqlite
+      .prepare("SELECT id, expiring_notified_at FROM claims ORDER BY id")
+      .all() as { id: string; expiring_notified_at: number | null }[];
+    const notified = rows.find((row) => row.id === "clm_r5_open");
+    const quiet = rows.find((row) => row.id === "clm_r5_quiet");
+    expect(notified?.expiring_notified_at).toBe(200);
+    expect(quiet?.expiring_notified_at).toBeNull();
   });
 });

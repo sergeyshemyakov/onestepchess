@@ -14,6 +14,7 @@ import { BONUS_SKIP_ALGO_MICRO } from "./lifecycle.js";
 const POLL_MS = 1_000;
 const BACKOFF_BASE_MS = 1_000;
 const ALGO_FUNDING_FEE_MICRO = 1_000;
+const DAY_MS = 86_400_000;
 
 export function hasAlgoFundingCapacity(
   bonusAlgoMicro: number,
@@ -21,6 +22,27 @@ export function hasAlgoFundingCapacity(
   floorMicro: number,
 ): boolean {
   return bonusAlgoMicro - amountMicro - ALGO_FUNDING_FEE_MICRO >= floorMicro;
+}
+
+/** In-memory funding gauges for `GET /api/v1/metrics` — refreshed by each
+ * executor pass so the endpoint itself never scans tables (F7, spec
+ * 2026-08-26). */
+export class FundingGauges {
+  bonusesAwaitingOptIn = 0;
+  fundingJobsFailed = 0;
+  fundingJobsBlocked: Record<string, number> = {};
+
+  snapshot(): {
+    readonly bonusesAwaitingOptIn: number;
+    readonly fundingJobsFailed: number;
+    readonly fundingJobsBlocked: Record<string, number>;
+  } {
+    return {
+      bonusesAwaitingOptIn: this.bonusesAwaitingOptIn,
+      fundingJobsFailed: this.fundingJobsFailed,
+      fundingJobsBlocked: { ...this.fundingJobsBlocked },
+    };
+  }
 }
 
 export type FundingExecutorDeps = {
@@ -34,7 +56,27 @@ export type FundingExecutorDeps = {
     emit(type: string, payload?: Record<string, unknown>): Promise<boolean>;
   };
   readonly cache?: AdminReadCache;
+  readonly gauges?: FundingGauges;
 };
+
+/** Last logged block reason per job, so a guard-blocked job produces one
+ * structured warn per reason transition instead of one per 2 s pass (F7). */
+const guardBlockReasons = new Map<string, string>();
+
+function noteGuardBlock(
+  deps: FundingExecutorDeps,
+  job: typeof schema.fundingJobs.$inferSelect,
+  reason: string,
+  blocked: Map<string, string>,
+): void {
+  blocked.set(job.id, reason);
+  if (guardBlockReasons.get(job.id) === reason) return;
+  guardBlockReasons.set(job.id, reason);
+  deps.logger.warn(
+    { jobId: job.id, player: job.player, leg: job.leg, reason },
+    "funding blocked by send guard",
+  );
+}
 
 function invalidate(deps: FundingExecutorDeps): void {
   deps.cache?.invalidate("bonuses", "overview", "activity", "players");
@@ -102,8 +144,120 @@ export function registerFundingCommands(deps: FundingExecutorDeps): void {
           ),
         )
         .run().changes;
-      if (changes > 0) ctx.afterCommit(() => invalidate(deps));
+      // The skip decision is durable so ensureFundingJobs never re-evaluates
+      // the algo leg with chain calls on every pass (F1, spec 2026-08-26).
+      const stamped = deps.db
+        .update(schema.bonuses)
+        .set({ algoSkippedAt: ctx.now })
+        .where(
+          and(
+            eq(schema.bonuses.player, payload.player),
+            eq(schema.bonuses.status, "claimed"),
+          ),
+        )
+        .run().changes;
+      if (changes > 0 || stamped > 0) ctx.afterCommit(() => invalidate(deps));
       return { changed: changes > 0 };
+    },
+  );
+
+  deps.coordinator.register(
+    "BonusOptInExpired",
+    (ctx, payload: { readonly player: string }) => {
+      const bonus = deps.db
+        .select()
+        .from(schema.bonuses)
+        .where(eq(schema.bonuses.player, payload.player))
+        .get();
+      if (
+        bonus === undefined ||
+        bonus.status !== "claimed" ||
+        ctx.now < bonus.optInDeadlineAt
+      ) {
+        return { changed: false as const };
+      }
+      // In-flight bytes may still land on chain; expiry must wait until the
+      // job resolves through the normal recovery path (F1, spec 2026-08-26).
+      const inFlight = deps.db
+        .select({ id: schema.fundingJobs.id })
+        .from(schema.fundingJobs)
+        .where(
+          and(
+            eq(schema.fundingJobs.player, payload.player),
+            inArray(schema.fundingJobs.status, [
+              "pending",
+              "prepared",
+              "submitted",
+            ]),
+          ),
+        )
+        .get();
+      if (inFlight !== undefined) return { changed: false as const };
+      // Expiry is only safe once the ALGO leg actually resolved — confirmed
+      // or durably skipped. A failed or never-attempted leg stays claimed
+      // for the alert/admin-retry path instead (F1 review, spec 2026-08-26).
+      if (bonus.algoSkippedAt === null) {
+        const confirmedAlgo = deps.db
+          .select({ id: schema.fundingJobs.id })
+          .from(schema.fundingJobs)
+          .where(
+            and(
+              eq(schema.fundingJobs.player, payload.player),
+              eq(schema.fundingJobs.leg, "algo"),
+              eq(schema.fundingJobs.status, "confirmed"),
+            ),
+          )
+          .get();
+        if (confirmedAlgo === undefined) return { changed: false as const };
+      }
+      deps.db
+        .update(schema.bonuses)
+        .set({ status: "expired" })
+        .where(eq(schema.bonuses.player, payload.player))
+        .run();
+      ctx.appendEvent("bonus_updated", payload.player, { status: "expired" });
+      ctx.afterCommit(() => {
+        void deps.alerts?.emit("bonus_optin_expired", {
+          player: payload.player,
+        });
+        invalidate(deps);
+      });
+      return { changed: true as const };
+    },
+  );
+
+  deps.coordinator.register(
+    "AdminBonusRevive",
+    (ctx, payload: { readonly actor: string; readonly player: string }) => {
+      const bonus = deps.db
+        .select({ status: schema.bonuses.status })
+        .from(schema.bonuses)
+        .where(eq(schema.bonuses.player, payload.player))
+        .get();
+      if (bonus === undefined) return { status: "not_found" as const };
+      if (bonus.status !== "expired") return { status: "not_expired" as const };
+      deps.db
+        .update(schema.bonuses)
+        .set({
+          status: "claimed",
+          optInDeadlineAt:
+            ctx.now + deps.config().BONUS_OPTIN_EXPIRY_DAYS * DAY_MS,
+          algoSkippedAt: null,
+        })
+        .where(eq(schema.bonuses.player, payload.player))
+        .run();
+      deps.db
+        .insert(schema.auditLog)
+        .values({
+          ts: ctx.now,
+          actor: payload.actor,
+          action: "bonus.revive",
+          payloadJson: JSON.stringify({ player: payload.player }),
+        })
+        .run();
+      ctx.appendEvent("bonus_updated", payload.player, { status: "claimed" });
+      ctx.afterCommit(() => invalidate(deps));
+      return { status: "claimed" as const };
     },
   );
 
@@ -318,6 +472,10 @@ export function registerFundingCommands(deps: FundingExecutorDeps): void {
   );
 }
 
+/** Steady state must dispatch nothing and touch no chain: opt-in observation
+ * lives in the 60 s watcher, the algo-leg skip decision is durable, and a job
+ * that already exists in any state is left to the job pipeline (F1, spec
+ * 2026-08-26). Only a bonus with genuinely missing work reaches a dispatch. */
 async function ensureFundingJobs(deps: FundingExecutorDeps): Promise<void> {
   const bonuses = deps.db
     .select()
@@ -325,6 +483,18 @@ async function ensureFundingJobs(deps: FundingExecutorDeps): Promise<void> {
     .where(inArray(schema.bonuses.status, ["claimed", "opted_in"]))
     .all();
   for (const bonus of bonuses) {
+    const leg = bonus.status === "opted_in" ? "usdc" : "algo";
+    const existing = deps.db
+      .select({ id: schema.fundingJobs.id })
+      .from(schema.fundingJobs)
+      .where(
+        and(
+          eq(schema.fundingJobs.player, bonus.player),
+          eq(schema.fundingJobs.leg, leg),
+        ),
+      )
+      .get();
+    if (existing !== undefined) continue;
     if (bonus.status === "opted_in") {
       await deps.coordinator.dispatch({
         type: "FundingJobCreated",
@@ -337,6 +507,9 @@ async function ensureFundingJobs(deps: FundingExecutorDeps): Promise<void> {
       });
       continue;
     }
+    if (bonus.algoSkippedAt !== null) continue;
+    // One-shot algo-leg resolution: every outcome below creates a job or
+    // stamps a durable skip, so these chain calls never repeat per pass.
     let account: Awaited<ReturnType<PaymentRail["getAccountInfo"]>>;
     try {
       account = await deps.rail.getAccountInfo(bonus.player);
@@ -529,6 +702,7 @@ async function submitPrepared(
   deps: FundingExecutorDeps,
   schedule: (at: number) => void,
   alreadyAttempted: Set<string>,
+  blocked: Map<string, string>,
 ): Promise<void> {
   const jobs = deps.db
     .select()
@@ -540,6 +714,7 @@ async function submitPrepared(
     alreadyAttempted.add(job.id);
     const guard = await sendGuard(deps, job);
     if (!guard.ok) {
+      noteGuardBlock(deps, job, guard.reason, blocked);
       void deps.alerts?.emit("bonus_funding_deferred", {
         player: job.player,
         leg: job.leg,
@@ -548,6 +723,7 @@ async function submitPrepared(
       schedule(deps.now() + POLL_MS);
       continue;
     }
+    guardBlockReasons.delete(job.id);
     const prepared = asPrepared(job);
     if (prepared === null)
       throw new Error(`prepared funding job ${job.id} lacks bytes`);
@@ -620,9 +796,10 @@ export async function runFundingExecutor(
     nextDue = nextDue === null ? at : Math.min(nextDue, at);
   };
   const attempted = new Set<string>();
+  const blocked = new Map<string, string>();
 
   await recoverSubmitted(deps, schedule);
-  await submitPrepared(deps, schedule, attempted);
+  await submitPrepared(deps, schedule, attempted, blocked);
   await recoverSubmitted(deps, schedule);
   await ensureFundingJobs(deps);
 
@@ -639,6 +816,7 @@ export async function runFundingExecutor(
     }
     const guard = await sendGuard(deps, job);
     if (!guard.ok) {
+      noteGuardBlock(deps, job, guard.reason, blocked);
       void deps.alerts?.emit("bonus_funding_deferred", {
         player: job.player,
         leg: job.leg,
@@ -647,6 +825,7 @@ export async function runFundingExecutor(
       schedule(now + POLL_MS);
       continue;
     }
+    guardBlockReasons.delete(job.id);
     try {
       const prepared = await deps.rail.prepareFunding({
         player: job.player,
@@ -672,8 +851,30 @@ export async function runFundingExecutor(
     }
   }
 
-  await submitPrepared(deps, schedule, attempted);
+  await submitPrepared(deps, schedule, attempted, blocked);
   await recoverSubmitted(deps, schedule);
+
+  if (deps.gauges !== undefined) {
+    deps.gauges.bonusesAwaitingOptIn = Number(
+      deps.db
+        .select({ count: sql<number>`count(*)` })
+        .from(schema.bonuses)
+        .where(eq(schema.bonuses.status, "claimed"))
+        .get()?.count ?? 0,
+    );
+    deps.gauges.fundingJobsFailed = Number(
+      deps.db
+        .select({ count: sql<number>`count(*)` })
+        .from(schema.fundingJobs)
+        .where(eq(schema.fundingJobs.status, "failed"))
+        .get()?.count ?? 0,
+    );
+    const byReason: Record<string, number> = {};
+    for (const reason of blocked.values()) {
+      byReason[reason] = (byReason[reason] ?? 0) + 1;
+    }
+    deps.gauges.fundingJobsBlocked = byReason;
+  }
   return nextDue;
 }
 
@@ -750,6 +951,83 @@ export async function rearmBonusFunding(
   });
   if (result.kind !== "ok") throw new Error("bonus retry deprioritized");
   return result.result;
+}
+
+export async function reviveExpiredBonus(
+  deps: FundingExecutorDeps,
+  player: string,
+  actor: string,
+): Promise<{ status: "not_found" | "not_expired" | "claimed" }> {
+  const result = await deps.coordinator.dispatch<
+    { actor: string; player: string },
+    { status: "not_found" | "not_expired" | "claimed" }
+  >({
+    type: "AdminBonusRevive",
+    payload: { actor, player },
+    refIds: [player],
+  });
+  if (result.kind !== "ok") throw new Error("bonus revive deprioritized");
+  return result.result;
+}
+
+export type FundingScheduler = {
+  /** Runs a pass now (or queues one behind the in-flight pass) and resolves
+   * when that pass completes. */
+  kick(): Promise<void>;
+  stop(): void;
+};
+
+/** Re-arming scheduler for the funding executor: sleeps until the pass's own
+ * `nextDue`, capped at `maxDelayMs` so a missed kick can never park the
+ * executor forever (F1, spec 2026-08-26). Work-creating events (bonus claim,
+ * opt-in observation, admin retry/revive) call `kick()`. */
+export function createFundingScheduler(options: {
+  readonly run: () => Promise<number | null>;
+  readonly now: () => number;
+  readonly maxDelayMs: number;
+}): FundingScheduler {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let running: Promise<void> | null = null;
+  let rerun = false;
+  let stopped = false;
+
+  const arm = (dueAt: number | null): void => {
+    if (stopped) return;
+    if (timer !== undefined) clearTimeout(timer);
+    const delay = Math.min(
+      Math.max(0, (dueAt ?? Number.POSITIVE_INFINITY) - options.now()),
+      options.maxDelayMs,
+    );
+    timer = setTimeout(() => {
+      void execute();
+    }, delay);
+    timer.unref?.();
+  };
+
+  const execute = (): Promise<void> => {
+    if (running !== null) {
+      rerun = true;
+      return running;
+    }
+    running = (async () => {
+      let nextDue: number | null = null;
+      do {
+        rerun = false;
+        nextDue = await options.run();
+      } while (rerun && !stopped);
+      running = null;
+      arm(nextDue);
+    })();
+    return running;
+  };
+
+  return {
+    kick: () => execute(),
+    stop: () => {
+      stopped = true;
+      if (timer !== undefined) clearTimeout(timer);
+    },
+  };
 }
 
 export function fundingGroundTruth(db: Db): {
