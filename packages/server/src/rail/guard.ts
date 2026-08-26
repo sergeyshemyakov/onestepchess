@@ -164,16 +164,20 @@ export function createGuardedRail(options: GuardedRailOptions): GuardedRail {
     }
   };
 
+  // The proxy target must not be the rail itself: createAvmRail returns a
+  // frozen object, and the get-trap invariant forces a frozen target's own
+  // properties to be returned verbatim — wrapping them would throw TypeError
+  // on every access (2026-08-27 outage).
   const wrap = (priority: boolean): PaymentRail =>
-    new Proxy(options.rail, {
-      get(target, property, receiver) {
+    new Proxy({} as PaymentRail, {
+      get(_target, property) {
         if (
           typeof property === "string" &&
           METHOD_DEPENDENCY[property] !== undefined
         ) {
           return (...args: unknown[]) => guardedCall(property, args, priority);
         }
-        return Reflect.get(target, property, receiver);
+        return Reflect.get(options.rail, property);
       },
     });
 
