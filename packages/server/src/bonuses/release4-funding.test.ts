@@ -2,7 +2,6 @@ import { createMockRail } from "@onestepchess/rail-mock";
 import algosdk from "algosdk";
 import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AdminReadCache } from "../admin/cache.js";
 import { adminBonuses, adminOverview } from "../admin/read-models.js";
 import { initializeSystemState } from "../boot.js";
 import { serverConfigSchema } from "../config.js";
@@ -78,10 +77,6 @@ function setup(overrides: Record<string, unknown> = {}) {
     logger,
     now: () => now,
   });
-  const cache = new AdminReadCache(
-    () => now,
-    () => 60,
-  );
   const deliveries = vi.fn(async () => new Response(null, { status: 204 }));
   const alerts = new OperationalAlerts({
     url: "https://alerts.example",
@@ -98,13 +93,11 @@ function setup(overrides: Record<string, unknown> = {}) {
     now: () => now,
     logger,
     alerts,
-    cache,
   };
   registerBonusCommands({
     coordinator,
     db: database.db,
     config: () => config,
-    cache,
   });
   registerFundingCommands(deps);
   const state = new OperationalState();
@@ -123,7 +116,6 @@ function setup(overrides: Record<string, unknown> = {}) {
     coordinator,
     rail,
     deps,
-    cache,
     alerts,
     deliveries,
     state,
@@ -749,22 +741,6 @@ describe("Release 4 recoverable starter-stake funding (#99)", () => {
       referredBy: referrer.addr.toString(),
     });
     seedStake(stack, account);
-    const before = await stack.cache.get("bonuses:1", () =>
-      adminBonuses(
-        {
-          db: stack.database.db,
-          rail: stack.rail,
-          views: new CoordinatorViews(),
-          config: stack.config,
-          baseConfig: stack.config(),
-          state: stack.state,
-          clientCount: () => 0,
-          now: stack.now,
-        },
-        1,
-      ),
-    );
-    await runFundingExecutor(stack.deps);
     const readDeps = {
       db: stack.database.db,
       rail: stack.rail,
@@ -775,6 +751,8 @@ describe("Release 4 recoverable starter-stake funding (#99)", () => {
       clientCount: () => 0,
       now: stack.now,
     };
+    const before = adminBonuses(readDeps, 1);
+    await runFundingExecutor(stack.deps);
     const bonuses = adminBonuses(readDeps, 1);
     expect(bonuses).toMatchObject({
       todayClaimed: 1,
@@ -801,8 +779,9 @@ describe("Release 4 recoverable starter-stake funding (#99)", () => {
         },
       ],
     });
-    const after = await stack.cache.get("bonuses:1", () => bonuses);
-    expect(after.etag).not.toBe(before.etag);
+    // No server-side cache: the funded status shows up on the very next read.
+    expect(before.items[0]).toMatchObject({ status: "opted_in" });
+    expect(JSON.stringify(bonuses)).not.toBe(JSON.stringify(before));
     const overview = await adminOverview(readDeps);
     expect(overview.funding).toEqual({
       pending: 0,

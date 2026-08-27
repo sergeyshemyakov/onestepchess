@@ -25,7 +25,6 @@ export type BonusLifecycleDeps = {
   readonly coordinator: Coordinator;
   readonly db: Db;
   readonly config: () => ServerConfig;
-  readonly cache?: { invalidate(...prefixes: string[]): void };
 };
 
 export type BonusEligibilityFacts = {
@@ -190,9 +189,6 @@ export function registerBonusCommands(deps: BonusLifecycleDeps): void {
         })
         .run();
       ctx.appendEvent("bonus_updated", payload.player, { status: "claimed" });
-      ctx.afterCommit(() =>
-        deps.cache?.invalidate("bonuses", "overview", "players"),
-      );
       return {
         status: "claimed" as const,
         claimedAt: new Date(ctx.now).toISOString(),
@@ -217,9 +213,6 @@ export function registerBonusCommands(deps: BonusLifecycleDeps): void {
         .where(eq(schema.bonuses.player, payload.player))
         .run();
       ctx.appendEvent("bonus_updated", payload.player, { status: "opted_in" });
-      ctx.afterCommit(() =>
-        deps.cache?.invalidate("bonuses", "overview", "players"),
-      );
       return { changed: true as const };
     },
   );

@@ -25,7 +25,6 @@ import {
   registerOperationalCommands,
   runReconciliation,
 } from "../operations/reconciliation.js";
-import { AdminReadCache } from "./cache.js";
 import { registerAdminCommands } from "./commands.js";
 import { registerAdminRoutes } from "./routes.js";
 
@@ -43,7 +42,6 @@ function setup(overrides: Record<string, unknown> = {}) {
   databases.push(database);
   const baseConfig = serverConfigSchema.parse({
     GAME_POOL_TARGET: 2,
-    ADMIN_CACHE_TTL_SECONDS: 60,
     ...overrides,
   });
   let config: ServerConfig = baseConfig;
@@ -123,10 +121,6 @@ function setup(overrides: Record<string, unknown> = {}) {
     metrics,
   };
   registerResolution(resolution);
-  const cache = new AdminReadCache(
-    () => now,
-    () => config.ADMIN_CACHE_TTL_SECONDS,
-  );
   registerAdminCommands({
     coordinator,
     db: database.db,
@@ -139,7 +133,6 @@ function setup(overrides: Record<string, unknown> = {}) {
     baseConfig,
     resolution,
     alerts,
-    cache,
   });
   const app = createApp({
     logger,
@@ -161,7 +154,6 @@ function setup(overrides: Record<string, unknown> = {}) {
     clientCount: () => 0,
     secrets: [JWT_SECRET, ADMIN_TOKEN],
     coordinator,
-    cache,
     reconciliation,
   });
   return {
@@ -711,25 +703,49 @@ describe("Release 3 admin reads", () => {
     expect(body.history).toHaveLength(1);
   });
 
-  it("admin_reads_cache_by_ttl_emit_etag_and_invalidate_on_change", async () => {
+  it("admin_reads_recompute_on_every_request_with_no_etag_or_cache", async () => {
     const stack = setup();
     const balances = vi.spyOn(stack.rail, "getBalances");
     const first = await stack.app.request("/api/v1/admin/overview", {
       headers: tokenHeaders(),
     });
-    const etag = first.headers.get("etag") as string;
-    const unchanged = await stack.app.request("/api/v1/admin/overview", {
-      headers: { ...tokenHeaders(), "If-None-Match": etag },
-    });
-    expect(unchanged.status).toBe(304);
+    expect(first.status).toBe(200);
+    expect(first.headers.get("etag")).toBeNull();
+    expect(first.headers.get("cache-control")).toBe("no-store");
     // One overview computation reads two accounts: treasury and bonus.
     expect(balances).toHaveBeenCalledTimes(2);
 
-    await jsonRequest(stack, "/api/v1/admin/pause", "POST", {});
-    await stack.app.request("/api/v1/admin/overview", {
-      headers: tokenHeaders(),
+    const repeat = await stack.app.request("/api/v1/admin/overview", {
+      headers: { ...tokenHeaders(), "If-None-Match": '"whatever"' },
     });
+    expect(repeat.status).toBe(200);
     expect(balances).toHaveBeenCalledTimes(4);
+  });
+
+  it("admin_activity_reflects_a_data_change_on_the_next_request", async () => {
+    const stack = setup();
+    const read = async () => {
+      const response = await stack.app.request(
+        "/api/v1/admin/activity?window=24h",
+        { headers: tokenHeaders() },
+      );
+      expect(response.status).toBe(200);
+      return (await response.json()) as {
+        counts: { registrations: number };
+      };
+    };
+    const before = await read();
+    stack.database.db
+      .insert(schema.players)
+      .values({
+        address: "fresh-human",
+        kind: "human",
+        nickname: "fresh",
+        createdAt: 900_000,
+      })
+      .run();
+    const after = await read();
+    expect(after.counts.registrations).toBe(before.counts.registrations + 1);
   });
 });
 

@@ -1,4 +1,4 @@
-import type { Context, Hono } from "hono";
+import type { Hono } from "hono";
 import { z } from "zod";
 import {
   type FundingExecutorDeps,
@@ -10,7 +10,6 @@ import { parseJsonBody } from "../http/validation.js";
 import type { ReconciliationDeps } from "../operations/reconciliation.js";
 import { runReconciliation } from "../operations/reconciliation.js";
 import { type AdminAuthDeps, adminAuth } from "./auth.js";
-import type { AdminReadCache } from "./cache.js";
 import type { AdminCommandDeps } from "./commands.js";
 import {
   type AdminReadDeps,
@@ -61,7 +60,6 @@ const adjustmentBody = z
 export type AdminRouteDeps = AdminAuthDeps &
   AdminReadDeps & {
     readonly coordinator: AdminCommandDeps["coordinator"];
-    readonly cache: AdminReadCache;
     readonly reconciliation: ReconciliationDeps;
     readonly funding?: FundingExecutorDeps;
     /** Wakes the funding scheduler after retry/revive creates work (F1). */
@@ -79,20 +77,6 @@ function query<T extends z.ZodType>(
     });
   }
   return result.data;
-}
-
-async function cached(
-  c: Context<AppEnv>,
-  deps: AdminRouteDeps,
-  key: string,
-  compute: () => unknown | Promise<unknown>,
-): Promise<Response> {
-  const entry = await deps.cache.get(key, compute);
-  if (c.req.header("if-none-match") === entry.etag) {
-    return c.body(null, 304, { ETag: entry.etag });
-  }
-  c.header("ETag", entry.etag);
-  return c.json(entry.value);
 }
 
 async function dispatch<R>(
@@ -113,69 +97,50 @@ export function registerAdminRoutes(
   deps: AdminRouteDeps,
 ): void {
   app.use("/api/v1/admin/*", adminAuth(deps));
+  // Every admin read computes fresh, so nothing between here and the operator
+  // may serve a remembered copy either.
+  app.use("/api/v1/admin/*", async (c, next) => {
+    await next();
+    c.header("Cache-Control", "no-store");
+  });
 
-  app.get("/api/v1/admin/overview", (c) =>
-    cached(c, deps, "overview", () => adminOverview(deps)),
+  app.get("/api/v1/admin/overview", async (c) =>
+    c.json(await adminOverview(deps)),
   );
   app.get("/api/v1/admin/activity", (c) => {
     const input = query(activityQuery, c.req.query());
-    return cached(c, deps, `activity:${input.window}`, () =>
-      adminActivity(deps, input.window),
-    );
+    return c.json(adminActivity(deps, input.window));
   });
   app.get("/api/v1/admin/errors", (c) => {
     const input = query(errorsQuery, c.req.query());
-    return cached(
-      c,
-      deps,
-      `errors:${input.level ?? ""}:${input.code ?? ""}:${input.page}`,
-      () => adminErrors(deps, input),
-    );
+    return c.json(adminErrors(deps, input));
   });
   app.get("/api/v1/admin/games", (c) => {
     const input = query(gamesQuery, c.req.query());
-    return cached(
-      c,
-      deps,
-      `games:${input.status ?? ""}:${input.q ?? ""}:${input.page}`,
-      () => adminGames(deps, input),
-    );
+    return c.json(adminGames(deps, input));
   });
-  app.get("/api/v1/admin/games/:id", (c) =>
-    cached(c, deps, `games:${c.req.param("id")}`, () => {
-      const result = adminGame(deps, c.req.param("id"));
-      if (result === null) {
-        throw new AppError("GAME_NOT_FOUND", { hint: "game not found" });
-      }
-      return result;
-    }),
-  );
+  app.get("/api/v1/admin/games/:id", (c) => {
+    const result = adminGame(deps, c.req.param("id"));
+    if (result === null) {
+      throw new AppError("GAME_NOT_FOUND", { hint: "game not found" });
+    }
+    return c.json(result);
+  });
   app.get("/api/v1/admin/players", (c) => {
     const input = query(playersQuery, c.req.query());
-    return cached(
-      c,
-      deps,
-      `players:${input.kind ?? ""}:${input.q ?? ""}:${input.page}`,
-      () => adminPlayers(deps, input),
-    );
+    return c.json(adminPlayers(deps, input));
   });
-  app.get("/api/v1/admin/players/:address", (c) =>
-    cached(c, deps, `players:${c.req.param("address")}`, () => {
-      const result = adminPlayer(deps, c.req.param("address"));
-      if (result === null) {
-        throw new AppError("NOT_FOUND", { hint: "player not found" });
-      }
-      return result;
-    }),
-  );
-  app.get("/api/v1/admin/config", (c) =>
-    cached(c, deps, "config", () => adminConfig(deps)),
-  );
+  app.get("/api/v1/admin/players/:address", (c) => {
+    const result = adminPlayer(deps, c.req.param("address"));
+    if (result === null) {
+      throw new AppError("NOT_FOUND", { hint: "player not found" });
+    }
+    return c.json(result);
+  });
+  app.get("/api/v1/admin/config", (c) => c.json(adminConfig(deps)));
   app.get("/api/v1/admin/bonuses", (c) => {
     const input = query(pageQuery, c.req.query());
-    return cached(c, deps, `bonuses:${input.page}`, () =>
-      adminBonuses(deps, input.page),
-    );
+    return c.json(adminBonuses(deps, input.page));
   });
 
   app.post("/api/v1/admin/pause", async (c) => {
@@ -291,7 +256,6 @@ export function registerAdminRoutes(
       "admin",
       c.get("adminActor"),
     );
-    deps.cache.invalidate("overview", "activity");
     return c.json(result);
   });
   app.post("/api/v1/admin/treasury/adjust", async (c) => {

@@ -15,6 +15,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../api/client.js";
 import type {
   AdminActivity,
+  AdminActivityWindow,
   AdminBonuses,
   AdminConfig,
   AdminGameDossier,
@@ -26,7 +27,7 @@ import { NotFound } from "../routes/NotFound.jsx";
 import { metaFixture, mockClient, Providers } from "../test/fixtures.jsx";
 import { AdminRoute } from "./AdminPage.jsx";
 import type { AdminClient } from "./client.js";
-import { ADMIN_POLL_MS, useAdminOverview } from "./useAdminOverview.js";
+import { useAdminOverview } from "./useAdminOverview.js";
 
 const overviewFixture: AdminOverview = {
   mode: "running",
@@ -266,11 +267,7 @@ const configFixture: AdminConfig = {
 
 function adminClient(overrides: Partial<AdminClient> = {}): AdminClient {
   return {
-    getAdminOverview: vi.fn(async () => ({
-      kind: "data" as const,
-      overview: overviewFixture,
-      etag: '"overview-1"',
-    })),
+    getAdminOverview: vi.fn(async () => overviewFixture),
     getAdminActivity: vi.fn(async (window) => ({
       ...activityFixture,
       window,
@@ -322,12 +319,49 @@ function envelopeError(status: number, hint: string) {
   );
 }
 
-function renderAdmin(client: AdminClient, webClient = mockClient()) {
+function renderAdmin(
+  client: AdminClient,
+  webClient = mockClient(),
+  eventSourceFactory?: (url: string) => FakeEventSource,
+) {
   return render(
-    <Providers client={webClient}>
+    <Providers
+      client={webClient}
+      {...(eventSourceFactory === undefined ? {} : { eventSourceFactory })}
+    >
       <AdminRoute client={client} />
     </Providers>,
   );
+}
+
+/** Minimal SSE stub: the admin console must ignore live events entirely. */
+class FakeEventSource {
+  static current: FakeEventSource | null = null;
+  readonly listeners = new Map<string, Set<EventListener>>();
+  closed = false;
+
+  constructor(readonly url: string) {
+    FakeEventSource.current = this;
+  }
+
+  addEventListener(type: string, listener: EventListener): void {
+    const listeners = this.listeners.get(type) ?? new Set();
+    listeners.add(listener);
+    this.listeners.set(type, listeners);
+  }
+
+  removeEventListener(type: string, listener: EventListener): void {
+    this.listeners.get(type)?.delete(listener);
+  }
+
+  close(): void {
+    this.closed = true;
+  }
+
+  emit(type: string, data: unknown): void {
+    const event = new MessageEvent(type, { data: JSON.stringify(data) });
+    for (const listener of this.listeners.get(type) ?? []) listener(event);
+  }
 }
 
 async function notFoundMarkup(children: ReactNode, client = mockClient()) {
@@ -381,24 +415,61 @@ describe("admin route and polling (#73)", () => {
     expect(screen.queryByText("[ NO SIGNAL ]")).toBeNull();
   });
 
-  it("admin_overview_polls_visible_tabs_with_etag_and_stops_hidden", async () => {
+  it("admin_overview_loads_once_and_only_refetches_on_demand", async () => {
     vi.useFakeTimers();
     let hidden = false;
     Object.defineProperty(document, "hidden", {
       configurable: true,
       get: () => hidden,
     });
-    const getAdminOverview = vi
-      .fn()
-      .mockResolvedValueOnce({
-        kind: "data",
-        overview: overviewFixture,
-        etag: '"overview-1"',
-      })
-      .mockResolvedValue({
-        kind: "not_modified",
-        etag: '"overview-1"',
-      });
+    const getAdminOverview = vi.fn(async () => overviewFixture);
+    const client = adminClient({ getAdminOverview });
+
+    let refresh: () => void = () => undefined;
+    function Probe() {
+      const state = useAdminOverview(client);
+      refresh = state.refresh;
+      return <span>{state.overview?.pool.active ?? "waiting"}</span>;
+    }
+
+    const view = render(<Probe />);
+    await act(async () => Promise.resolve());
+    expect(screen.getByText("6")).not.toBeNull();
+    expect(getAdminOverview).toHaveBeenCalledTimes(1);
+    expect(getAdminOverview).toHaveBeenCalledWith();
+
+    // Well past the retired 30s poll, and past a visibility flip: still one read.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300_000);
+    });
+    hidden = true;
+    document.dispatchEvent(new Event("visibilitychange"));
+    hidden = false;
+    document.dispatchEvent(new Event("visibilitychange"));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300_000);
+    });
+    expect(getAdminOverview).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      refresh();
+      await Promise.resolve();
+    });
+    expect(getAdminOverview).toHaveBeenCalledTimes(2);
+
+    view.unmount();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300_000);
+    });
+    expect(getAdminOverview).toHaveBeenCalledTimes(2);
+  });
+
+  it("admin_overview_loads_in_a_hidden_tab", async () => {
+    Object.defineProperty(document, "hidden", {
+      configurable: true,
+      get: () => true,
+    });
+    const getAdminOverview = vi.fn(async () => overviewFixture);
     const client = adminClient({ getAdminOverview });
 
     function Probe() {
@@ -406,34 +477,50 @@ describe("admin route and polling (#73)", () => {
       return <span>{state.overview?.pool.active ?? "waiting"}</span>;
     }
 
-    const view = render(<Probe />);
+    render(<Probe />);
     await act(async () => Promise.resolve());
+    expect(getAdminOverview).toHaveBeenCalledTimes(1);
     expect(screen.getByText("6")).not.toBeNull();
-    expect(getAdminOverview).toHaveBeenNthCalledWith(1, undefined);
+  });
+
+  it("admin_sse_events_do_not_trigger_admin_refetches", async () => {
+    const getAdminOverview = vi.fn(async () => overviewFixture);
+    const getAdminActivity = vi.fn(async (window: AdminActivityWindow) => ({
+      ...activityFixture,
+      window,
+    }));
+    renderAdmin(
+      adminClient({ getAdminOverview, getAdminActivity }),
+      mockClient(),
+      (url) => new FakeEventSource(url),
+    );
+    expect(await screen.findByText("OPERATIONS CONSOLE")).not.toBeNull();
+    await waitFor(() => expect(FakeEventSource.current).not.toBeNull());
+    const overviewCalls = getAdminOverview.mock.calls.length;
+    const activityCalls = getAdminActivity.mock.calls.length;
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(ADMIN_POLL_MS);
+      FakeEventSource.current?.emit("system_banner", { banner: "hello" });
+      FakeEventSource.current?.emit("config_updated", { revision: 2 });
+      await Promise.resolve();
     });
-    expect(getAdminOverview).toHaveBeenNthCalledWith(2, '"overview-1"');
-    expect(screen.getByText("6")).not.toBeNull();
+    expect(getAdminOverview).toHaveBeenCalledTimes(overviewCalls);
+    expect(getAdminActivity).toHaveBeenCalledTimes(activityCalls);
+  });
 
-    hidden = true;
-    document.dispatchEvent(new Event("visibilitychange"));
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(ADMIN_POLL_MS * 2);
-    });
-    expect(getAdminOverview).toHaveBeenCalledTimes(2);
+  it("admin_data_as_of_stamp_updates_on_a_successful_reload", async () => {
+    const getAdminOverview = vi.fn(async () => overviewFixture);
+    vi.setSystemTime(new Date("2026-08-27T10:00:00Z"));
+    renderAdmin(adminClient({ getAdminOverview }));
+    const before = (await screen.findByText(/^data as of /)).textContent;
+    expect(getAdminOverview).toHaveBeenCalledTimes(1);
 
-    hidden = false;
-    document.dispatchEvent(new Event("visibilitychange"));
-    await act(async () => Promise.resolve());
-    expect(getAdminOverview).toHaveBeenCalledTimes(3);
-
-    view.unmount();
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(ADMIN_POLL_MS);
-    });
-    expect(getAdminOverview).toHaveBeenCalledTimes(3);
+    vi.setSystemTime(new Date("2026-08-27T10:07:31Z"));
+    fireEvent.click(screen.getByRole("button", { name: "reload ▸" }));
+    await waitFor(() => expect(getAdminOverview).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(screen.getByText(/^data as of /).textContent).not.toBe(before),
+    );
   });
 });
 
@@ -586,9 +673,9 @@ describe("admin mutations (#73)", () => {
     let mode: AdminOverview["mode"] = "running";
     let banner: string | null = null;
     const getAdminOverview = vi.fn(async () => ({
-      kind: "data" as const,
-      overview: { ...overviewFixture, mode, banner },
-      etag: `"${mode}"`,
+      ...overviewFixture,
+      mode,
+      banner,
     }));
     const pauseAdmin = vi.fn(async (nextBanner?: string) => {
       mode = "paused";

@@ -101,11 +101,14 @@ const WINDOWS: readonly AdminActivityWindow[] = ["24h", "7d", "30d", "all"];
 export function ActivityPanel(props: {
   readonly client: AdminClient;
   readonly onPlayer: (address: string) => void;
+  readonly reloadToken: number;
 }) {
+  const { reloadToken } = props;
   const [window, setWindow] = useState<AdminActivityWindow>("24h");
   const [data, setData] = useState<AdminActivity | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies(reloadToken): a manual Reload refetches without changing the query inputs
   useEffect(() => {
     let cancelled = false;
     setError(null);
@@ -121,7 +124,7 @@ export function ActivityPanel(props: {
     return () => {
       cancelled = true;
     };
-  }, [props.client, window]);
+  }, [props.client, reloadToken, window]);
 
   return (
     <section className="admin-panel" aria-labelledby="admin-activity-title">
@@ -279,13 +282,16 @@ export function BonusesPanel(props: {
   readonly client: AdminClient;
   readonly meta: Meta;
   readonly onPlayer: (address: string) => void;
+  readonly reloadToken: number;
 }) {
+  const { reloadToken } = props;
   const [page, setPage] = useState(1);
   const [data, setData] = useState<AdminBonuses | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [retrying, setRetrying] = useState<string | null>(null);
   const [retryResult, setRetryResult] = useState<Record<string, string>>({});
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies(reloadToken): a manual Reload refetches without changing the query inputs
   useEffect(() => {
     let cancelled = false;
     props.client
@@ -299,7 +305,7 @@ export function BonusesPanel(props: {
     return () => {
       cancelled = true;
     };
-  }, [page, props.client]);
+  }, [page, props.client, reloadToken]);
 
   return (
     <section className="admin-panel" aria-labelledby="admin-bonuses-title">
@@ -463,13 +469,16 @@ function JobCounts(props: {
 export function HealthPanel(props: {
   readonly client: AdminClient;
   readonly overview: AdminOverview;
+  readonly reloadToken: number;
 }) {
+  const { reloadToken } = props;
   const [page, setPage] = useState(1);
   const [level, setLevel] = useState("");
   const [code, setCode] = useState("");
   const [errors, setErrors] = useState<GamesPage<AdminError> | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies(reloadToken): a manual Reload refetches without changing the query inputs
   useEffect(() => {
     let cancelled = false;
     props.client
@@ -487,7 +496,7 @@ export function HealthPanel(props: {
     return () => {
       cancelled = true;
     };
-  }, [code, level, page, props.client]);
+  }, [code, level, page, props.client, reloadToken]);
 
   const overview = props.overview;
   // Treasury coverage is part of the health verdict, so the badge label and its
@@ -693,8 +702,9 @@ export function PlayersPanel(props: {
   readonly client: AdminClient;
   readonly requestedPlayer: string | null;
   readonly onPlayerHandled: () => void;
+  readonly reloadToken: number;
 }) {
-  const { onPlayerHandled, requestedPlayer } = props;
+  const { onPlayerHandled, reloadToken, requestedPlayer } = props;
   const [queryDraft, setQueryDraft] = useState("");
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<"" | "human" | "agent">("");
@@ -703,6 +713,7 @@ export function PlayersPanel(props: {
   const [player, setPlayer] = useState<AdminPlayer | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies(reloadToken): a manual Reload refetches without changing the query inputs
   useEffect(() => {
     let cancelled = false;
     setError(null);
@@ -721,7 +732,7 @@ export function PlayersPanel(props: {
     return () => {
       cancelled = true;
     };
-  }, [kind, page, props.client, query]);
+  }, [kind, page, props.client, reloadToken, query]);
 
   const openPlayer = useCallback(
     (address: string) => {
@@ -1039,7 +1050,9 @@ function GameDossier(props: {
 export function GamesPanel(props: {
   readonly client: AdminClient;
   readonly meta: Meta;
+  readonly reloadToken: number;
 }) {
+  const { reloadToken } = props;
   const [queryDraft, setQueryDraft] = useState("");
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
@@ -1049,6 +1062,7 @@ export function GamesPanel(props: {
   const [player, setPlayer] = useState<AdminPlayer | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies(reloadToken): a manual Reload refetches without changing the query inputs
   useEffect(() => {
     let cancelled = false;
     props.client
@@ -1066,7 +1080,7 @@ export function GamesPanel(props: {
     return () => {
       cancelled = true;
     };
-  }, [page, props.client, query, status]);
+  }, [page, props.client, reloadToken, query, status]);
 
   const openPlayer = useCallback(
     (address: string) => {
@@ -1299,7 +1313,9 @@ function ConfigRow(props: {
 export function ConfigPanel(props: {
   readonly client: AdminClient;
   readonly onChanged: () => void;
+  readonly reloadToken: number;
 }) {
+  const { reloadToken } = props;
   const [config, setConfig] = useState<AdminConfig | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
@@ -1315,7 +1331,8 @@ export function ConfigPanel(props: {
       );
   }, [props.client]);
 
-  useEffect(load, [load]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies(reloadToken): a manual Reload refetches without changing the query inputs
+  useEffect(load, [load, reloadToken]);
 
   const mutate = async (item: AdminConfigItem, action: () => Promise<void>) => {
     setBusyKey(item.key);

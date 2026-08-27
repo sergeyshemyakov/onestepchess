@@ -43,7 +43,6 @@ const CONFIG_DESCRIPTIONS = {
   EVENTS_RETENTION_DAYS: "Days live events remain available for replay.",
   PAYMENT_INTENT_RETENTION_DAYS:
     "Days settled payment intents are retained before pruning.",
-  ADMIN_CACHE_TTL_SECONDS: "Seconds admin overview responses remain cached.",
   PAYOUT_BATCH_MAX: "Maximum payout transfers in one batch.",
   PAYOUT_MAX_ATTEMPTS: "Maximum attempts before a payout remains failed.",
   RECONCILE_INTERVAL_MINUTES: "Minutes between treasury reconciliations.",

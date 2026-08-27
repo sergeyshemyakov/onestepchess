@@ -26,14 +26,6 @@ import {
   gamesPageSchema,
 } from "../api/schemas.js";
 
-export type AdminOverviewResult =
-  | {
-      readonly kind: "data";
-      readonly overview: AdminOverview;
-      readonly etag: string | null;
-    }
-  | { readonly kind: "not_modified"; readonly etag: string | null };
-
 export type AdminClient = ReturnType<typeof createAdminClient>;
 
 export function createAdminClient(
@@ -50,7 +42,7 @@ export function createAdminClient(
     } = {},
   ): Promise<Response> {
     const response = await fetchFn(`/api/v1${path}`, jsonRequestInit(init));
-    if (!response.ok && response.status !== 304) {
+    if (!response.ok) {
       throw await responseError(response);
     }
     return response;
@@ -61,19 +53,8 @@ export function createAdminClient(
   }
 
   return {
-    async getAdminOverview(etag?: string): Promise<AdminOverviewResult> {
-      const response = await request("/admin/overview", {
-        headers: etag === undefined ? {} : { "If-None-Match": etag },
-      });
-      const nextEtag = response.headers.get("ETag");
-      if (response.status === 304) {
-        return { kind: "not_modified", etag: nextEtag ?? etag ?? null };
-      }
-      return {
-        kind: "data",
-        overview: await json(response, adminOverviewSchema),
-        etag: nextEtag,
-      };
+    async getAdminOverview(): Promise<AdminOverview> {
+      return json(await request("/admin/overview"), adminOverviewSchema);
     },
 
     async getAdminActivity(
