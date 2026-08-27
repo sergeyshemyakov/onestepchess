@@ -78,7 +78,6 @@ export const serverConfigSchema = coreConfigSchema
     SSE_MAX_CONNECTIONS_PER_PLAYER: positiveInt.default(4),
     EVENTS_RETENTION_DAYS: positiveInt.default(7),
     PAYMENT_INTENT_RETENTION_DAYS: positiveInt.default(7),
-    ADMIN_CACHE_TTL_SECONDS: positiveInt.default(60),
     PAYOUT_BATCH_MAX: positiveInt.default(16),
     PAYOUT_MAX_ATTEMPTS: positiveInt.default(10),
     RECONCILE_INTERVAL_MINUTES: positiveInt.default(60),

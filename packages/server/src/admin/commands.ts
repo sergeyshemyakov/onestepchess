@@ -16,7 +16,6 @@ import {
   type ReconciliationReport,
   readReconciliationReport,
 } from "../operations/reconciliation.js";
-import type { AdminReadCache } from "./cache.js";
 import {
   configEditable,
   configEffect,
@@ -42,7 +41,6 @@ export type AdminCommandDeps = {
   readonly baseConfig: ServerConfig;
   readonly resolution: ResolutionDeps;
   readonly alerts: OperationalAlerts;
-  readonly cache: AdminReadCache;
 };
 
 function audit(
@@ -89,7 +87,6 @@ export function registerAdminCommands(deps: AdminCommandDeps): void {
         changed: result.changed,
       });
       ctx.afterCommit(() => {
-        deps.cache.invalidate("overview");
         if (result.changed) {
           void deps.alerts.emit("manual_pause", {
             actor: payload.actor,
@@ -112,7 +109,6 @@ export function registerAdminCommands(deps: AdminCommandDeps): void {
         changed: result.changed,
         remainingCauses: result.state.causes,
       });
-      ctx.afterCommit(() => deps.cache.invalidate("overview"));
       return result.state;
     },
   );
@@ -136,7 +132,6 @@ export function registerAdminCommands(deps: AdminCommandDeps): void {
         address: payload.address,
         banned: payload.banned,
       });
-      ctx.afterCommit(() => deps.cache.invalidate("players", "activity"));
       return { found: changed > 0, banned: payload.banned };
     },
   );
@@ -160,7 +155,6 @@ export function registerAdminCommands(deps: AdminCommandDeps): void {
         address: payload.address,
         override: payload.override,
       });
-      ctx.afterCommit(() => deps.cache.invalidate("players"));
       return { found: changed > 0, override: payload.override };
     },
   );
@@ -227,7 +221,6 @@ export function registerAdminCommands(deps: AdminCommandDeps): void {
         effect,
         revision,
       });
-      ctx.afterCommit(() => deps.cache.invalidate("config", "overview"));
       return { ok: true, effect, revision };
     },
   );
@@ -281,7 +274,6 @@ export function registerAdminCommands(deps: AdminCommandDeps): void {
         revision,
         existed: existing !== undefined,
       });
-      ctx.afterCommit(() => deps.cache.invalidate("config", "overview"));
       return { ok: true, effect, revision };
     },
   );
@@ -359,7 +351,6 @@ export function registerAdminCommands(deps: AdminCommandDeps): void {
       });
       ctx.afterCommit(() => {
         deps.views.games.delete(game.id);
-        deps.cache.invalidate("overview", "activity", "games", "players");
       });
       return {
         status: "aborted" as const,
@@ -425,7 +416,6 @@ export function registerAdminCommands(deps: AdminCommandDeps): void {
         deltaMicroUsdc: payload.deltaMicroUsdc,
         reason: payload.reason,
       });
-      ctx.afterCommit(() => deps.cache.invalidate("overview", "activity"));
       return { status: "adjusted" as const, reconciliation: next };
     },
   );
@@ -454,7 +444,6 @@ export function registerAdminCommands(deps: AdminCommandDeps): void {
       audit(deps, ctx.now, payload.actor, "payout.retry", {
         payoutId: job.id,
       });
-      ctx.afterCommit(() => deps.cache.invalidate("overview", "games"));
       return { status: "pending" as const, payoutId: job.id };
     },
   );

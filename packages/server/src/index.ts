@@ -1,7 +1,6 @@
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { serve } from "@hono/node-server";
-import { AdminReadCache } from "./admin/cache.js";
 import { registerAdminCommands } from "./admin/commands.js";
 import { registerAdminRoutes } from "./admin/routes.js";
 import {
@@ -71,7 +70,6 @@ import { createGuardedRail } from "./rail/guard.js";
 import { completeBootRecovery, recoverSettlingIntents } from "./recovery.js";
 
 export * from "./admin/auth.js";
-export * from "./admin/cache.js";
 export * from "./admin/commands.js";
 export * from "./admin/config-metadata.js";
 export * from "./admin/read-models.js";
@@ -225,15 +223,10 @@ export async function main(): Promise<void> {
   const views = new CoordinatorViews();
   views.rebuild(db, now);
   const coordinator = new Coordinator({ sqlite, db, logger, views });
-  const adminCache = new AdminReadCache(
-    Date.now,
-    () => config.ADMIN_CACHE_TTL_SECONDS,
-  );
   const bonusLifecycleDeps = {
     coordinator,
     db,
     config: () => config,
-    cache: adminCache,
   } as const;
   registerBonusCommands(bonusLifecycleDeps);
   const alerts = new OperationalAlerts({
@@ -359,7 +352,6 @@ export async function main(): Promise<void> {
     baseConfig: loaded.config,
     resolution: resolutionDeps,
     alerts,
-    cache: adminCache,
   });
   const payoutDeps = {
     coordinator,
@@ -381,7 +373,6 @@ export async function main(): Promise<void> {
     now: Date.now,
     logger,
     alerts,
-    cache: adminCache,
     gauges: fundingGauges,
   } as const;
   registerFundingCommands(fundingDeps);
@@ -690,7 +681,6 @@ export async function main(): Promise<void> {
     clientCount: () => events.clientCount,
     secrets: secretValues(loaded.env),
     coordinator,
-    cache: adminCache,
     reconciliation: operationalDeps,
     funding: fundingDeps,
     fundingKick: () => {

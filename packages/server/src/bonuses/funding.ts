@@ -1,6 +1,5 @@
 import type { PaymentRail, PreparedFunding } from "@onestepchess/core";
 import { and, eq, inArray, sql } from "drizzle-orm";
-import type { AdminReadCache } from "../admin/cache.js";
 import { currentMode } from "../boot.js";
 import type { ServerConfig } from "../config.js";
 import type { Coordinator } from "../coordinator/queue.js";
@@ -55,7 +54,6 @@ export type FundingExecutorDeps = {
   readonly alerts?: {
     emit(type: string, payload?: Record<string, unknown>): Promise<boolean>;
   };
-  readonly cache?: AdminReadCache;
   readonly gauges?: FundingGauges;
 };
 
@@ -76,10 +74,6 @@ function noteGuardBlock(
     { jobId: job.id, player: job.player, leg: job.leg, reason },
     "funding blocked by send guard",
   );
-}
-
-function invalidate(deps: FundingExecutorDeps): void {
-  deps.cache?.invalidate("bonuses", "overview", "activity", "players");
 }
 
 export function registerFundingCommands(deps: FundingExecutorDeps): void {
@@ -126,7 +120,6 @@ export function registerFundingCommands(deps: FundingExecutorDeps): void {
           updatedAt: ctx.now,
         })
         .run();
-      ctx.afterCommit(() => invalidate(deps));
       return { created: true as const, id };
     },
   );
@@ -146,7 +139,7 @@ export function registerFundingCommands(deps: FundingExecutorDeps): void {
         .run().changes;
       // The skip decision is durable so ensureFundingJobs never re-evaluates
       // the algo leg with chain calls on every pass (F1, spec 2026-08-26).
-      const stamped = deps.db
+      deps.db
         .update(schema.bonuses)
         .set({ algoSkippedAt: ctx.now })
         .where(
@@ -156,7 +149,6 @@ export function registerFundingCommands(deps: FundingExecutorDeps): void {
           ),
         )
         .run().changes;
-      if (changes > 0 || stamped > 0) ctx.afterCommit(() => invalidate(deps));
       return { changed: changes > 0 };
     },
   );
@@ -220,7 +212,6 @@ export function registerFundingCommands(deps: FundingExecutorDeps): void {
         void deps.alerts?.emit("bonus_optin_expired", {
           player: payload.player,
         });
-        invalidate(deps);
       });
       return { changed: true as const };
     },
@@ -256,7 +247,6 @@ export function registerFundingCommands(deps: FundingExecutorDeps): void {
         })
         .run();
       ctx.appendEvent("bonus_updated", payload.player, { status: "claimed" });
-      ctx.afterCommit(() => invalidate(deps));
       return { status: "claimed" as const };
     },
   );
@@ -288,7 +278,6 @@ export function registerFundingCommands(deps: FundingExecutorDeps): void {
           ),
         )
         .run().changes;
-      if (changes > 0) ctx.afterCommit(() => invalidate(deps));
       return { changed: changes > 0 };
     },
   );
@@ -306,7 +295,6 @@ export function registerFundingCommands(deps: FundingExecutorDeps): void {
           ),
         )
         .run().changes;
-      if (changes > 0) ctx.afterCommit(() => invalidate(deps));
       return { changed: changes > 0 };
     },
   );
@@ -372,7 +360,6 @@ export function registerFundingCommands(deps: FundingExecutorDeps): void {
         }
         ctx.appendEvent("bonus_updated", job.player, { status: "funded" });
       }
-      ctx.afterCommit(() => invalidate(deps));
       return { changed: true as const };
     },
   );
@@ -416,7 +403,6 @@ export function registerFundingCommands(deps: FundingExecutorDeps): void {
           });
         });
       }
-      ctx.afterCommit(() => invalidate(deps));
       return { status: exhausted ? ("failed" as const) : ("pending" as const) };
     },
   );
@@ -466,7 +452,6 @@ export function registerFundingCommands(deps: FundingExecutorDeps): void {
           }),
         })
         .run();
-      ctx.afterCommit(() => invalidate(deps));
       return { status: "pending" as const, jobs: changed };
     },
   );

@@ -1,5 +1,20 @@
 import type { PaymentRail } from "@onestepchess/core";
-import { and, desc, eq, inArray, like, or, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNotNull,
+  like,
+  lte,
+  ne,
+  or,
+  type SQL,
+  sql,
+} from "drizzle-orm";
+import type { SQLiteColumn } from "drizzle-orm/sqlite-core";
 import { fundingGroundTruth } from "../bonuses/funding.js";
 import type { ServerConfig } from "../config.js";
 import type { CoordinatorViews } from "../coordinator/views.js";
@@ -48,23 +63,23 @@ function claimSummary(
   };
 }
 
-function page<T>(items: readonly T[], pageNumber: number, size = PAGE_SIZE) {
-  const total = items.length;
-  const pageCount = total === 0 ? 0 : Math.ceil(total / size);
+/** Page envelope for list endpoints. The rows arrive already sliced by SQL
+ * `LIMIT`/`OFFSET`, so only the total is needed to derive the page count. */
+function paged<T>(items: readonly T[], pageNumber: number, total: number) {
   return {
-    items: items.slice((pageNumber - 1) * size, pageNumber * size),
+    items,
     page: pageNumber,
-    pageCount,
+    pageCount: total === 0 ? 0 : Math.ceil(total / PAGE_SIZE),
     total,
   };
 }
 
-function percentile(values: readonly number[], p: number): number | null {
-  if (values.length === 0) return null;
-  const sorted = [...values].sort((a, b) => a - b);
-  return sorted[
-    Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length))
-  ] as number;
+function offsetOf(pageNumber: number): number {
+  return (pageNumber - 1) * PAGE_SIZE;
+}
+
+function num(value: unknown): number {
+  return Number(value ?? 0);
 }
 
 function pct(numerator: number, denominator: number): number | null {
@@ -182,182 +197,253 @@ function windowStart(window: ActivityWindow, now: number): number | null {
   return now - hours * HOUR_MS;
 }
 
+type WindowBounds = { readonly from: number | null; readonly to: number };
+
+/** A row is in-window when its timestamp falls in `[from, to]`. The `all`
+ * window drops only the lower bound — the upper bound still excludes rows
+ * stamped in the future, and NULL timestamps stay out because comparing them
+ * yields NULL rather than true. */
+function windowConditions(
+  column: SQLiteColumn,
+  bounds: WindowBounds,
+): readonly SQL[] {
+  const conditions = [lte(column, bounds.to)];
+  if (bounds.from !== null) conditions.push(gte(column, bounds.from));
+  return conditions;
+}
+
 export function adminActivity(deps: AdminReadDeps, window: ActivityWindow) {
   const now = deps.now();
   const from = windowStart(window, now);
-  const inside = (at: number | null) =>
-    at !== null && (from === null || at >= from) && at <= now;
-  const players = deps.db.select().from(schema.players).all();
-  const playerByAddress = new Map(
-    players.map((player) => [player.address, player]),
-  );
-  const allClaims = deps.db.select().from(schema.claims).all();
-  const claims = allClaims.filter((claim) => inside(claim.createdAt));
-  const moved = allClaims.filter(
-    (claim) => claim.status === "moved" && inside(claim.movedAt),
-  );
-  const stakedMoved = moved.filter((claim) => !claim.demo);
-  const humanStaked = stakedMoved.filter(
-    (claim) => playerByAddress.get(claim.player)?.kind === "human",
-  );
-  const agentStaked = stakedMoved.filter(
-    (claim) => playerByAddress.get(claim.player)?.kind === "agent",
-  );
-  const humanAddresses = new Set(humanStaked.map((claim) => claim.player));
-  const agentAddresses = new Set(agentStaked.map((claim) => claim.player));
-  const demoHumanAddresses = new Set(
-    moved
-      .filter((claim) => claim.demo)
-      .map((claim) => claim.player)
-      .filter((address) => playerByAddress.get(address)?.kind === "human"),
-  );
-  const demoAddresses = new Set(
-    [...demoHumanAddresses].filter((address) => !humanAddresses.has(address)),
-  );
-  const games = deps.db
-    .select()
-    .from(schema.games)
-    .all()
-    .filter((game) => inside(game.finishedAt));
-  const allStakes = deps.db.select().from(schema.stakeEntries).all();
-  const stakes = allStakes.filter((entry) => inside(entry.createdAt));
-  const payoutJobs = deps.db
-    .select()
-    .from(schema.payoutJobs)
-    .all()
-    .filter((job) => job.status === "confirmed" && inside(job.createdAt));
-  const ledger = deps.db
-    .select()
-    .from(schema.ledger)
-    .all()
-    .filter((entry) => inside(entry.ts));
-  const humanClaims = claims.filter(
-    (claim) => playerByAddress.get(claim.player)?.kind !== "agent",
-  );
-  const agentClaims = claims.filter(
-    (claim) => playerByAddress.get(claim.player)?.kind === "agent",
-  );
-  const humanLatencies = humanClaims
-    .filter((claim) => claim.movedAt !== null)
-    .map((claim) => ((claim.movedAt as number) - claim.createdAt) / 1_000);
+  const bounds: WindowBounds = { from, to: now };
+  const db = deps.db;
+  const claims = schema.claims;
+  const players = schema.players;
+  const createdInWindow = windowConditions(claims.createdAt, bounds);
+  const movedInWindow = [
+    eq(claims.status, "moved"),
+    ...windowConditions(claims.movedAt, bounds),
+  ];
+  // A claim whose player row is missing counts as non-agent, matching the
+  // `?.kind !== "agent"` the JS read model used.
+  const nonAgent = sql`(${players.kind} is null or ${players.kind} != 'agent')`;
 
-  const resolvedGames = new Set(
-    deps.db
-      .select({ id: schema.games.id, resolvedAt: schema.games.resolvedAt })
-      .from(schema.games)
-      .all()
-      .filter((game) => inside(game.resolvedAt))
-      .map((game) => game.id),
+  const claimRow = db
+    .select({
+      created: sql<number>`count(*)`,
+      expired: sql<number>`sum(case when ${claims.status} = 'expired' then 1 else 0 end)`,
+      humanTotal: sql<number>`sum(case when ${nonAgent} then 1 else 0 end)`,
+      humanMoved: sql<number>`sum(case when ${nonAgent} and ${claims.status} = 'moved' then 1 else 0 end)`,
+      agentTotal: sql<number>`sum(case when ${players.kind} = 'agent' then 1 else 0 end)`,
+      agentMoved: sql<number>`sum(case when ${players.kind} = 'agent' and ${claims.status} = 'moved' then 1 else 0 end)`,
+    })
+    .from(claims)
+    .leftJoin(players, eq(players.address, claims.player))
+    .where(and(...createdInWindow))
+    .get();
+
+  const movedRow = db
+    .select({
+      moved: sql<number>`count(*)`,
+      demoMoves: sql<number>`sum(case when ${claims.demo} = 1 then 1 else 0 end)`,
+      humanMoves: sql<number>`sum(case when ${claims.demo} = 0 and ${players.kind} = 'human' then 1 else 0 end)`,
+      agentMoves: sql<number>`sum(case when ${claims.demo} = 0 and ${players.kind} = 'agent' then 1 else 0 end)`,
+      activeHumans: sql<number>`count(distinct case when ${claims.demo} = 0 and ${players.kind} = 'human' then ${claims.player} end)`,
+      activeAgents: sql<number>`count(distinct case when ${claims.demo} = 0 and ${players.kind} = 'agent' then ${claims.player} end)`,
+      demoHumans: sql<number>`count(distinct case when ${claims.demo} = 1 and ${players.kind} = 'human' then ${claims.player} end)`,
+    })
+    .from(claims)
+    .leftJoin(players, eq(players.address, claims.player))
+    .where(and(...movedInWindow))
+    .get();
+
+  // Humans who moved both a demo and a staked claim in-window: the numerator
+  // of demoToStakedPct, and what separates demo-only players from the rest.
+  const convertedDemo = db
+    .select({ player: claims.player })
+    .from(claims)
+    .innerJoin(players, eq(players.address, claims.player))
+    .where(and(...movedInWindow, eq(players.kind, "human")))
+    .groupBy(claims.player)
+    .having(
+      and(
+        sql`sum(case when ${claims.demo} = 1 then 1 else 0 end) > 0`,
+        sql`sum(case when ${claims.demo} = 0 then 1 else 0 end) > 0`,
+      ),
+    )
+    .as("converted_demo");
+  const convertedDemoPlayers = num(
+    db.select({ value: sql<number>`count(*)` }).from(convertedDemo).get()
+      ?.value,
   );
-  const pnl = new Map<string, number>();
-  for (const entry of allStakes.filter((item) =>
-    resolvedGames.has(item.gameId),
-  )) {
-    if (entry.payoutAmount === null) continue;
-    pnl.set(
-      entry.player,
-      (pnl.get(entry.player) ?? 0) + entry.payoutAmount - entry.amount,
-    );
-  }
-  const ranked = [...pnl]
-    .map(([address, pnlMicroUsdc]) => ({
-      address,
-      nickname: playerByAddress.get(address)?.nickname ?? "",
-      pnlMicroUsdc,
-    }))
-    .sort(
-      (a, b) =>
-        b.pnlMicroUsdc - a.pnlMicroUsdc || a.address.localeCompare(b.address),
-    );
+
+  const registrations = num(
+    db
+      .select({ value: sql<number>`count(*)` })
+      .from(players)
+      .where(
+        and(
+          ne(players.kind, "guest"),
+          ...windowConditions(players.createdAt, bounds),
+        ),
+      )
+      .get()?.value,
+  );
+
+  const gamesFinished = num(
+    db
+      .select({ value: sql<number>`count(*)` })
+      .from(schema.games)
+      .where(and(...windowConditions(schema.games.finishedAt, bounds)))
+      .get()?.value,
+  );
+
+  const stakeVolume = num(
+    db
+      .select({
+        value: sql<number>`coalesce(sum(${schema.stakeEntries.amount}), 0)`,
+      })
+      .from(schema.stakeEntries)
+      .where(and(...windowConditions(schema.stakeEntries.createdAt, bounds)))
+      .get()?.value,
+  );
+
+  const payoutVolume = num(
+    db
+      .select({
+        value: sql<number>`coalesce(sum(${schema.payoutJobs.amount}), 0)`,
+      })
+      .from(schema.payoutJobs)
+      .where(
+        and(
+          eq(schema.payoutJobs.status, "confirmed"),
+          ...windowConditions(schema.payoutJobs.createdAt, bounds),
+        ),
+      )
+      .get()?.value,
+  );
+
+  const ledgerRow = db
+    .select({
+      protocol: sql<number>`coalesce(sum(case when ${schema.ledger.account} = 'protocol' then ${schema.ledger.deltaMicrousdc} else 0 end), 0)`,
+      treasury: sql<number>`coalesce(sum(case when ${schema.ledger.account} = 'treasury' then ${schema.ledger.deltaMicrousdc} else 0 end), 0)`,
+    })
+    .from(schema.ledger)
+    .where(and(...windowConditions(schema.ledger.ts, bounds)))
+    .get();
+
+  // Latency percentiles pick the same index the JS implementation did, but via
+  // ORDER BY + OFFSET so no per-claim value is ever materialized.
+  const latencyWhere = and(
+    ...createdInWindow,
+    isNotNull(claims.movedAt),
+    nonAgent,
+  );
+  const latencySpan = sql<number>`${claims.movedAt} - ${claims.createdAt}`;
+  const latencyCount = num(
+    db
+      .select({ value: sql<number>`count(*)` })
+      .from(claims)
+      .leftJoin(players, eq(players.address, claims.player))
+      .where(latencyWhere)
+      .get()?.value,
+  );
+  const latencySeconds = (p: number): number | null => {
+    if (latencyCount === 0) return null;
+    const row = db
+      .select({ value: latencySpan })
+      .from(claims)
+      .leftJoin(players, eq(players.address, claims.player))
+      .where(latencyWhere)
+      .orderBy(asc(latencySpan))
+      .limit(1)
+      .offset(Math.min(latencyCount - 1, Math.floor((p / 100) * latencyCount)))
+      .get();
+    return row === undefined ? null : num(row.value) / 1_000;
+  };
+
+  const pnlSum = sql<number>`sum(${schema.stakeEntries.payoutAmount} - ${schema.stakeEntries.amount})`;
+  const pnlRanking = () =>
+    db
+      .select({
+        address: schema.stakeEntries.player,
+        nickname: sql<string>`coalesce(${players.nickname}, '')`,
+        pnlMicroUsdc: pnlSum,
+      })
+      .from(schema.stakeEntries)
+      .innerJoin(schema.games, eq(schema.games.id, schema.stakeEntries.gameId))
+      .leftJoin(players, eq(players.address, schema.stakeEntries.player))
+      .where(
+        and(
+          isNotNull(schema.stakeEntries.payoutAmount),
+          ...windowConditions(schema.games.resolvedAt, bounds),
+        ),
+      )
+      .groupBy(schema.stakeEntries.player, players.nickname)
+      .limit(5);
+  const topWinners = pnlRanking()
+    .having(sql`${pnlSum} > 0`)
+    .orderBy(desc(pnlSum), asc(schema.stakeEntries.player))
+    .all();
+  const topLosers = pnlRanking()
+    .having(sql`${pnlSum} < 0`)
+    .orderBy(asc(pnlSum), asc(schema.stakeEntries.player))
+    .all();
+
+  const claimsMoved = num(movedRow?.moved);
+  const demoMoves = num(movedRow?.demoMoves);
+  const demoHumans = num(movedRow?.demoHumans);
+  const humanClaimTotal = num(claimRow?.humanTotal);
+  const agentClaimTotal = num(claimRow?.agentTotal);
 
   return {
     window,
     fromAt: iso(from),
     toAt: new Date(now).toISOString(),
     counts: {
-      activeHumans: humanAddresses.size,
-      activeAgents: agentAddresses.size,
-      demoOnlyPlayers: demoAddresses.size,
-      registrations: players.filter(
-        (player) => player.kind !== "guest" && inside(player.createdAt),
-      ).length,
-      humanMoves: humanStaked.length,
-      agentMoves: agentStaked.length,
-      demoMoves: moved.filter((claim) => claim.demo).length,
-      claimsCreated: claims.length,
-      claimsMoved: moved.length,
-      claimsExpired: claims.filter((claim) => claim.status === "expired")
-        .length,
-      gamesFinished: games.length,
+      activeHumans: num(movedRow?.activeHumans),
+      activeAgents: num(movedRow?.activeAgents),
+      demoOnlyPlayers: demoHumans - convertedDemoPlayers,
+      registrations,
+      humanMoves: num(movedRow?.humanMoves),
+      agentMoves: num(movedRow?.agentMoves),
+      demoMoves,
+      claimsCreated: num(claimRow?.created),
+      claimsMoved,
+      claimsExpired: num(claimRow?.expired),
+      gamesFinished,
     },
     money: {
-      stakeVolumeMicroUsdc: stakes.reduce(
-        (sum, entry) => sum + entry.amount,
-        0,
-      ),
-      payoutVolumeMicroUsdc: payoutJobs.reduce(
-        (sum, job) => sum + job.amount,
-        0,
-      ),
-      protocolTakeMicroUsdc: ledger
-        .filter((entry) => entry.account === "protocol")
-        .reduce((sum, entry) => sum + entry.deltaMicrousdc, 0),
-      treasuryNetFlowMicroUsdc: ledger
-        .filter((entry) => entry.account === "treasury")
-        .reduce((sum, entry) => sum + entry.deltaMicrousdc, 0),
+      stakeVolumeMicroUsdc: stakeVolume,
+      payoutVolumeMicroUsdc: payoutVolume,
+      protocolTakeMicroUsdc: num(ledgerRow?.protocol),
+      treasuryNetFlowMicroUsdc: num(ledgerRow?.treasury),
     },
     tripwires: {
-      claimMovePctHuman: pct(
-        humanClaims.filter((claim) => claim.status === "moved").length,
-        humanClaims.length,
-      ),
-      claimMovePctAgent: pct(
-        agentClaims.filter((claim) => claim.status === "moved").length,
-        agentClaims.length,
-      ),
-      demoSharePct: pct(
-        moved.filter((claim) => claim.demo).length,
-        moved.length,
-      ),
-      demoToStakedPct: pct(
-        [...demoHumanAddresses].filter((address) => humanAddresses.has(address))
-          .length,
-        demoHumanAddresses.size,
-      ),
-      humanMoveLatencyP50Seconds: percentile(humanLatencies, 50),
-      humanMoveLatencyP95Seconds: percentile(humanLatencies, 95),
+      claimMovePctHuman: pct(num(claimRow?.humanMoved), humanClaimTotal),
+      claimMovePctAgent: pct(num(claimRow?.agentMoved), agentClaimTotal),
+      demoSharePct: pct(demoMoves, claimsMoved),
+      demoToStakedPct: pct(convertedDemoPlayers, demoHumans),
+      humanMoveLatencyP50Seconds: latencySeconds(50),
+      humanMoveLatencyP95Seconds: latencySeconds(95),
       quotaSaturationPct: null,
-      topWinners: ranked.filter((item) => item.pnlMicroUsdc > 0).slice(0, 5),
-      topLosers: ranked
-        .filter((item) => item.pnlMicroUsdc < 0)
-        .sort((a, b) => a.pnlMicroUsdc - b.pnlMicroUsdc)
-        .slice(0, 5),
+      topWinners: topWinners.map((row) => ({
+        ...row,
+        pnlMicroUsdc: num(row.pnlMicroUsdc),
+      })),
+      topLosers: topLosers.map((row) => ({
+        ...row,
+        pnlMicroUsdc: num(row.pnlMicroUsdc),
+      })),
     },
   };
 }
 
-function gameSummary(db: Db, game: typeof schema.games.$inferSelect) {
-  const stakePotMicroUsdc = Number(
-    db
-      .select({
-        value: sql<number>`coalesce(sum(${schema.stakeEntries.amount}), 0)`,
-      })
-      .from(schema.stakeEntries)
-      .where(eq(schema.stakeEntries.gameId, game.id))
-      .get()?.value ?? 0,
-  );
-  const claimsOpen = Number(
-    db
-      .select({ value: sql<number>`count(*)` })
-      .from(schema.claims)
-      .where(
-        and(
-          eq(schema.claims.gameId, game.id),
-          eq(schema.claims.status, "open"),
-        ),
-      )
-      .get()?.value ?? 0,
-  );
+function gameCard(
+  game: typeof schema.games.$inferSelect,
+  stakePotMicroUsdc: number,
+  claimsOpen: number,
+) {
   return {
     id: game.id,
     name: game.name,
@@ -369,6 +455,73 @@ function gameSummary(db: Db, game: typeof schema.games.$inferSelect) {
     createdAt: new Date(game.createdAt).toISOString(),
     finishedAt: iso(game.finishedAt),
   };
+}
+
+function gameSummary(db: Db, game: typeof schema.games.$inferSelect) {
+  const stakePotMicroUsdc = num(
+    db
+      .select({
+        value: sql<number>`coalesce(sum(${schema.stakeEntries.amount}), 0)`,
+      })
+      .from(schema.stakeEntries)
+      .where(eq(schema.stakeEntries.gameId, game.id))
+      .get()?.value,
+  );
+  const claimsOpen = num(
+    db
+      .select({ value: sql<number>`count(*)` })
+      .from(schema.claims)
+      .where(
+        and(
+          eq(schema.claims.gameId, game.id),
+          eq(schema.claims.status, "open"),
+        ),
+      )
+      .get()?.value,
+  );
+  return gameCard(game, stakePotMicroUsdc, claimsOpen);
+}
+
+/** Per-game aggregates for one page of games. Two grouped queries rather than
+ * one join: pot and open-claim count come from different tables, so joining
+ * both at once would fan the rows out and inflate each aggregate. */
+function gameAggregates(db: Db, gameIds: readonly string[]) {
+  if (gameIds.length === 0) {
+    return {
+      pots: new Map<string, number>(),
+      opens: new Map<string, number>(),
+    };
+  }
+  const pots = new Map(
+    db
+      .select({
+        gameId: schema.stakeEntries.gameId,
+        value: sql<number>`coalesce(sum(${schema.stakeEntries.amount}), 0)`,
+      })
+      .from(schema.stakeEntries)
+      .where(inArray(schema.stakeEntries.gameId, gameIds))
+      .groupBy(schema.stakeEntries.gameId)
+      .all()
+      .map((row) => [row.gameId, num(row.value)] as const),
+  );
+  const opens = new Map(
+    db
+      .select({
+        gameId: schema.claims.gameId,
+        value: sql<number>`count(*)`,
+      })
+      .from(schema.claims)
+      .where(
+        and(
+          inArray(schema.claims.gameId, gameIds),
+          eq(schema.claims.status, "open"),
+        ),
+      )
+      .groupBy(schema.claims.gameId)
+      .all()
+      .map((row) => [row.gameId, num(row.value)] as const),
+  );
+  return { pots, opens };
 }
 
 export function adminGames(
@@ -396,14 +549,33 @@ export function adminGames(
       ) as NonNullable<ReturnType<typeof or>>,
     );
   }
-  const rows = deps.db
+  const where = conditions.length === 0 ? undefined : and(...conditions);
+  const total = num(
+    deps.db
+      .select({ value: sql<number>`count(*)` })
+      .from(schema.games)
+      .where(where)
+      .get()?.value,
+  );
+  const games = deps.db
     .select()
     .from(schema.games)
-    .where(conditions.length === 0 ? undefined : and(...conditions))
-    .orderBy(desc(schema.games.createdAt))
-    .all()
-    .map((game) => gameSummary(deps.db, game));
-  return page(rows, input.page);
+    .where(where)
+    .orderBy(desc(schema.games.createdAt), asc(schema.games.id))
+    .limit(PAGE_SIZE)
+    .offset(offsetOf(input.page))
+    .all();
+  const { pots, opens } = gameAggregates(
+    deps.db,
+    games.map((game) => game.id),
+  );
+  return paged(
+    games.map((game) =>
+      gameCard(game, pots.get(game.id) ?? 0, opens.get(game.id) ?? 0),
+    ),
+    input.page,
+    total,
+  );
 }
 
 export function adminPlayers(
@@ -430,62 +602,82 @@ export function adminPlayers(
     );
   }
 
-  const playerRows = deps.db
-    .select()
-    .from(schema.players)
-    .where(and(...conditions))
-    .all();
-  const selected = new Set(playerRows.map((player) => player.address));
-  const lastActive = new Map<string, number>();
-  for (const claim of deps.db.select().from(schema.claims).all()) {
-    if (!selected.has(claim.player)) continue;
-    const at = Math.max(claim.createdAt, claim.movedAt ?? claim.createdAt);
-    lastActive.set(
-      claim.player,
-      Math.max(lastActive.get(claim.player) ?? 0, at),
-    );
-  }
-  const pnl = new Map<string, number>();
-  for (const stake of deps.db.select().from(schema.stakeEntries).all()) {
-    if (!selected.has(stake.player)) continue;
-    pnl.set(
-      stake.player,
-      (pnl.get(stake.player) ?? 0) + (stake.payoutAmount ?? 0) - stake.amount,
-    );
-  }
+  const where = and(...conditions);
+  const total = num(
+    deps.db
+      .select({ value: sql<number>`count(*)` })
+      .from(schema.players)
+      .where(where)
+      .get()?.value,
+  );
 
-  const rows = playerRows
-    .map((player) => {
-      const total = player.wins + player.draws + player.losses;
-      return {
-        address: player.address,
-        nickname: player.nickname,
-        kind: player.kind as "human" | "agent",
-        createdAt: new Date(player.createdAt).toISOString(),
-        lastActiveAt: new Date(
-          lastActive.get(player.address) ?? player.createdAt,
-        ).toISOString(),
-        banned: player.banned,
-        deprioritizedUntil: iso(player.deprioritizedUntil),
-        abandonCount: player.abandonCount,
-        points: player.points,
-        stats: {
-          moves: total,
-          wins: player.wins,
-          draws: player.draws,
-          losses: player.losses,
-          winratePct: winratePct(player.wins, player.losses),
-        },
-        netPnlMicroUsdc: pnl.get(player.address) ?? 0,
-      };
+  // lastActive drives the sort order, so it has to be a grouped subquery over
+  // claims rather than a page-scoped lookup — SQLite aggregates it without
+  // handing any claim row back to JS.
+  const activity = deps.db
+    .select({
+      player: schema.claims.player,
+      at: sql<number>`max(max(${schema.claims.createdAt}, coalesce(${schema.claims.movedAt}, ${schema.claims.createdAt})))`.as(
+        "at",
+      ),
     })
-    .sort(
-      (left, right) =>
-        right.lastActiveAt.localeCompare(left.lastActiveAt) ||
-        right.createdAt.localeCompare(left.createdAt) ||
-        left.address.localeCompare(right.address),
-    );
-  return page(rows, input.page);
+    .from(schema.claims)
+    .groupBy(schema.claims.player)
+    .as("activity");
+  const lastActiveAt = sql<number>`coalesce(${activity.at}, ${schema.players.createdAt})`;
+  const playerRows = deps.db
+    .select({ player: schema.players, lastActiveAt })
+    .from(schema.players)
+    .leftJoin(activity, eq(activity.player, schema.players.address))
+    .where(where)
+    .orderBy(
+      desc(lastActiveAt),
+      desc(schema.players.createdAt),
+      asc(schema.players.address),
+    )
+    .limit(PAGE_SIZE)
+    .offset(offsetOf(input.page))
+    .all();
+
+  const addresses = playerRows.map((row) => row.player.address);
+  const pnl = new Map(
+    addresses.length === 0
+      ? []
+      : deps.db
+          .select({
+            player: schema.stakeEntries.player,
+            value: sql<number>`sum(coalesce(${schema.stakeEntries.payoutAmount}, 0) - ${schema.stakeEntries.amount})`,
+          })
+          .from(schema.stakeEntries)
+          .where(inArray(schema.stakeEntries.player, addresses))
+          .groupBy(schema.stakeEntries.player)
+          .all()
+          .map((row) => [row.player, num(row.value)] as const),
+  );
+
+  const rows = playerRows.map(({ player, lastActiveAt: activeAt }) => {
+    const total = player.wins + player.draws + player.losses;
+    return {
+      address: player.address,
+      nickname: player.nickname,
+      kind: player.kind as "human" | "agent",
+      createdAt: new Date(player.createdAt).toISOString(),
+      lastActiveAt: new Date(num(activeAt)).toISOString(),
+      banned: player.banned,
+      deprioritizedUntil: iso(player.deprioritizedUntil),
+      abandonCount: player.abandonCount,
+      points: player.points,
+      stats: {
+        moves: total,
+        wins: player.wins,
+        draws: player.draws,
+        losses: player.losses,
+        winratePct: winratePct(player.wins, player.losses),
+      },
+      netPnlMicroUsdc: pnl.get(player.address) ?? 0,
+    };
+  });
+  return paged(rows, input.page, total);
 }
 
 export function adminGame(deps: AdminReadDeps, gameId: string) {
@@ -598,27 +790,27 @@ export function adminPlayer(deps: AdminReadDeps, address: string) {
     .where(eq(schema.stakeEntries.player, address))
     .all();
   const now = deps.now();
-  const stakedClaims = deps.db
-    .select()
-    .from(schema.claims)
-    .where(
-      and(eq(schema.claims.player, address), eq(schema.claims.demo, false)),
-    )
-    .all();
-  const demoClaims = deps.db
-    .select()
-    .from(schema.claims)
-    .where(and(eq(schema.claims.player, address), eq(schema.claims.demo, true)))
-    .all();
+  // Only the last hour matters for the quota, so the window is a predicate
+  // rather than a full per-player claim scan.
+  const quotaClaims = (demo: boolean) =>
+    deps.db
+      .select({ createdAt: schema.claims.createdAt })
+      .from(schema.claims)
+      .where(
+        and(
+          eq(schema.claims.player, address),
+          eq(schema.claims.demo, demo),
+          gte(schema.claims.createdAt, now - HOUR_MS + 1),
+        ),
+      )
+      .orderBy(asc(schema.claims.createdAt))
+      .all();
   const quota = (
-    claims: readonly (typeof schema.claims.$inferSelect)[],
+    claims: readonly { readonly createdAt: number }[],
     limit: number | null,
   ) => {
     if (limit === null) return { limit: null, remaining: null, resetsAt: null };
-    const inWindow = claims
-      .map((claim) => claim.createdAt)
-      .filter((at) => at > now - HOUR_MS)
-      .sort((a, b) => a - b);
+    const inWindow = claims.map((claim) => claim.createdAt);
     return {
       limit,
       remaining: Math.max(0, limit - inWindow.length),
@@ -670,8 +862,8 @@ export function adminPlayer(deps: AdminReadDeps, address: string) {
         }
       : {}),
     quota: {
-      staked: quota(stakedClaims, stakedLimit),
-      demo: quota(demoClaims, deps.config().QUOTA_DEMO),
+      staked: quota(quotaClaims(false), stakedLimit),
+      demo: quota(quotaClaims(true), deps.config().QUOTA_DEMO),
     },
     recentClaims,
   };
@@ -690,11 +882,21 @@ export function adminErrors(
     conditions.push(eq(schema.errorLog.level, input.level));
   if (input.code !== undefined)
     conditions.push(eq(schema.errorLog.code, input.code));
+  const where = conditions.length === 0 ? undefined : and(...conditions);
+  const total = num(
+    deps.db
+      .select({ value: sql<number>`count(*)` })
+      .from(schema.errorLog)
+      .where(where)
+      .get()?.value,
+  );
   const rows = deps.db
     .select()
     .from(schema.errorLog)
-    .where(conditions.length === 0 ? undefined : and(...conditions))
+    .where(where)
     .orderBy(desc(schema.errorLog.id))
+    .limit(PAGE_SIZE)
+    .offset(offsetOf(input.page))
     .all()
     .map((row) => ({
       id: row.id,
@@ -707,7 +909,7 @@ export function adminErrors(
         deps.secrets,
       ),
     }));
-  return page(rows, input.page);
+  return paged(rows, input.page, total);
 }
 
 export function adminConfig(deps: AdminReadDeps) {
@@ -765,6 +967,27 @@ export function adminBonuses(deps: AdminReadDeps, pageNumber: number) {
     today.getUTCMonth(),
     today.getUTCDate(),
   );
+  // Every count keeps the inner join to players, so a starter stake whose
+  // player row is gone stays excluded exactly as it was before.
+  const claimedCount = (where?: SQL) =>
+    num(
+      deps.db
+        .select({ value: sql<number>`count(*)` })
+        .from(schema.bonuses)
+        .innerJoin(
+          schema.players,
+          eq(schema.players.address, schema.bonuses.player),
+        )
+        .where(where)
+        .get()?.value,
+    );
+  const totalClaimed = claimedCount();
+  const todayClaimed = claimedCount(
+    and(
+      gte(schema.bonuses.claimedAt, dayStart),
+      lte(schema.bonuses.claimedAt, dayStart + 86_400_000 - 1),
+    ),
+  );
   const bonusRows = deps.db
     .select({ bonus: schema.bonuses, player: schema.players })
     .from(schema.bonuses)
@@ -772,20 +995,36 @@ export function adminBonuses(deps: AdminReadDeps, pageNumber: number) {
       schema.players,
       eq(schema.players.address, schema.bonuses.player),
     )
-    .orderBy(desc(schema.bonuses.claimedAt))
+    .orderBy(desc(schema.bonuses.claimedAt), asc(schema.bonuses.player))
+    .limit(PAGE_SIZE)
+    .offset(offsetOf(pageNumber))
     .all();
-  const jobs = deps.db.select().from(schema.fundingJobs).all();
-  const confirmed = jobs.filter((job) => job.status === "confirmed");
-  const stakedMoves = new Map(
+  const legTotals = new Map(
     deps.db
       .select({
-        player: schema.stakeEntries.player,
-        count: sql<number>`count(*)`,
+        leg: schema.fundingJobs.leg,
+        value: sql<number>`coalesce(sum(${schema.fundingJobs.amount}), 0)`,
       })
-      .from(schema.stakeEntries)
-      .groupBy(schema.stakeEntries.player)
+      .from(schema.fundingJobs)
+      .where(eq(schema.fundingJobs.status, "confirmed"))
+      .groupBy(schema.fundingJobs.leg)
       .all()
-      .map((row) => [row.player, Number(row.count)] as const),
+      .map((row) => [row.leg, num(row.value)] as const),
+  );
+  const pageAddresses = bonusRows.map(({ bonus }) => bonus.player);
+  const stakedMoves = new Map(
+    pageAddresses.length === 0
+      ? []
+      : deps.db
+          .select({
+            player: schema.stakeEntries.player,
+            count: sql<number>`count(*)`,
+          })
+          .from(schema.stakeEntries)
+          .where(inArray(schema.stakeEntries.player, pageAddresses))
+          .groupBy(schema.stakeEntries.player)
+          .all()
+          .map((row) => [row.player, num(row.count)] as const),
   );
   const items = bonusRows.map(({ bonus, player }) => ({
     address: bonus.player,
@@ -801,18 +1040,11 @@ export function adminBonuses(deps: AdminReadDeps, pageNumber: number) {
     referredBy: player.referredBy,
   }));
   return {
-    todayClaimed: bonusRows.filter(
-      ({ bonus }) =>
-        bonus.claimedAt >= dayStart && bonus.claimedAt < dayStart + 86_400_000,
-    ).length,
+    todayClaimed,
     dailyCap: deps.config().BONUS_DAILY_CAP,
-    totalClaimed: bonusRows.length,
-    totalAlgoMicro: confirmed
-      .filter((job) => job.leg === "algo")
-      .reduce((sum, job) => sum + job.amount, 0),
-    totalUsdcMicro: confirmed
-      .filter((job) => job.leg === "usdc")
-      .reduce((sum, job) => sum + job.amount, 0),
-    ...page(items, pageNumber),
+    totalClaimed,
+    totalAlgoMicro: legTotals.get("algo") ?? 0,
+    totalUsdcMicro: legTotals.get("usdc") ?? 0,
+    ...paged(items, pageNumber, totalClaimed),
   };
 }

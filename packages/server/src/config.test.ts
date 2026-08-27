@@ -33,6 +33,14 @@ describe("server config composition", () => {
     expect(loaded.config.PAYOUT_BATCH_MAX).toBe(16);
     expect(loaded.config.BACKUP_HOUR_UTC).toBe(3);
     expect(loaded.config.CAIP2).toBe("mock:local");
+    expect(loaded.config).not.toHaveProperty("ADMIN_CACHE_TTL_SECONDS");
+  });
+
+  it("rejects the retired ADMIN_CACHE_TTL_SECONDS knob as unknown", () => {
+    const path = writeConfigFile({ ADMIN_CACHE_TTL_SECONDS: 60 });
+    expect(() =>
+      loadConfig({ env: { ...baseEnv, OSC_CONFIG_PATH: path } }),
+    ).toThrowError(/ADMIN_CACHE_TTL_SECONDS: unknown key/);
   });
 
   it("rejects a bad knob naming the offending key", () => {

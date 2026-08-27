@@ -49,40 +49,44 @@ export const players = sqliteTable(
   ],
 );
 
-export const games = sqliteTable("games", {
-  id: text("id").primaryKey(),
-  name: text("name").notNull().unique(),
-  status: text("status", {
-    enum: ["active", "endspiel", "finished", "aborted"],
-  })
-    .notNull()
-    .default("active"),
-  fen: text("fen").notNull(),
-  ply: integer("ply").notNull().default(0),
-  historyJson: text("history_json").notNull().default("[]"),
-  rulesJson: text("rules_json").notNull(),
-  result: text("result", { enum: ["white", "black", "draw", "aborted"] }),
-  termination: text("termination", {
-    enum: [
-      "checkmate",
-      "stalemate",
-      "insufficient",
-      "threefold",
-      "fifty_move",
-      "max_plies",
-      "aborted",
-    ],
-  }),
-  endspielPly: integer("endspiel_ply"),
-  // Materialized at resolution (F7); carried as a NULL column from the
-  // initial migration so the resolution slice needs no schema change.
-  replayJson: text("replay_json"),
-  minNextClaimAt: integer("min_next_claim_at").notNull().default(0),
-  lastPlyAt: integer("last_ply_at").notNull(),
-  createdAt: integer("created_at").notNull(),
-  finishedAt: integer("finished_at"),
-  resolvedAt: integer("resolved_at"),
-});
+export const games = sqliteTable(
+  "games",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull().unique(),
+    status: text("status", {
+      enum: ["active", "endspiel", "finished", "aborted"],
+    })
+      .notNull()
+      .default("active"),
+    fen: text("fen").notNull(),
+    ply: integer("ply").notNull().default(0),
+    historyJson: text("history_json").notNull().default("[]"),
+    rulesJson: text("rules_json").notNull(),
+    result: text("result", { enum: ["white", "black", "draw", "aborted"] }),
+    termination: text("termination", {
+      enum: [
+        "checkmate",
+        "stalemate",
+        "insufficient",
+        "threefold",
+        "fifty_move",
+        "max_plies",
+        "aborted",
+      ],
+    }),
+    endspielPly: integer("endspiel_ply"),
+    // Materialized at resolution (F7); carried as a NULL column from the
+    // initial migration so the resolution slice needs no schema change.
+    replayJson: text("replay_json"),
+    minNextClaimAt: integer("min_next_claim_at").notNull().default(0),
+    lastPlyAt: integer("last_ply_at").notNull(),
+    createdAt: integer("created_at").notNull(),
+    finishedAt: integer("finished_at"),
+    resolvedAt: integer("resolved_at"),
+  },
+  (table) => [index("games_resolved_at").on(table.resolvedAt)],
+);
 
 export const claims = sqliteTable(
   "claims",
@@ -120,6 +124,8 @@ export const claims = sqliteTable(
       .on(table.player)
       .where(sql`status = 'open'`),
     index("claims_player_created").on(table.player, table.createdAt),
+    index("claims_created_at").on(table.createdAt),
+    index("claims_status_moved_at").on(table.status, table.movedAt),
   ],
 );
 
@@ -148,6 +154,7 @@ export const stakeEntries = sqliteTable(
   (table) => [
     index("stake_entries_game").on(table.gameId),
     index("stake_entries_player").on(table.player),
+    index("stake_entries_created_at").on(table.createdAt),
   ],
 );
 
@@ -216,6 +223,7 @@ export const payoutJobs = sqliteTable(
   },
   (table) => [
     uniqueIndex("payout_jobs_game_recipient").on(table.gameId, table.recipient),
+    index("payout_jobs_status_created_at").on(table.status, table.createdAt),
   ],
 );
 
@@ -273,26 +281,30 @@ export const fundingJobs = sqliteTable(
   ],
 );
 
-export const ledger = sqliteTable("ledger", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  ts: integer("ts").notNull(),
-  account: text("account").notNull(),
-  deltaMicrousdc: integer("delta_microusdc").notNull(),
-  refType: text("ref_type", {
-    enum: [
-      "opening",
-      "adjustment",
-      "stake",
-      "payout",
-      "fee",
-      "dust",
-      "surplus",
-      "bonus",
-    ],
-  }).notNull(),
-  refId: text("ref_id").notNull(),
-  txid: text("txid"),
-});
+export const ledger = sqliteTable(
+  "ledger",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    ts: integer("ts").notNull(),
+    account: text("account").notNull(),
+    deltaMicrousdc: integer("delta_microusdc").notNull(),
+    refType: text("ref_type", {
+      enum: [
+        "opening",
+        "adjustment",
+        "stake",
+        "payout",
+        "fee",
+        "dust",
+        "surplus",
+        "bonus",
+      ],
+    }).notNull(),
+    refId: text("ref_id").notNull(),
+    txid: text("txid"),
+  },
+  (table) => [index("ledger_ts").on(table.ts)],
+);
 
 export const ledgerBalances = sqliteTable("ledger_balances", {
   account: text("account").primaryKey(),

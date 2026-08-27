@@ -1,61 +1,56 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ApiError } from "../api/client.js";
 import type { AdminOverview } from "../api/schemas.js";
 import type { AdminClient } from "./client.js";
-
-export const ADMIN_POLL_MS = 30_000;
 
 type AdminOverviewState = {
   readonly access: "probing" | "allowed" | "denied" | "error";
   readonly overview: AdminOverview | null;
   readonly error: string | null;
+  /** Completion time of the last successful fetch, for the "data as of" stamp. */
+  readonly loadedAt: number | null;
 };
 
+/** The admin console is an on-demand tool: it reads once on open and again
+ * only when the operator asks (spec 2026-08-27). No timer, and no
+ * `document.hidden` gate — opening the page in a background tab must still
+ * load, or the console never leaves its skeleton. */
 export function useAdminOverview(client: AdminClient) {
-  const etag = useRef<string | undefined>(undefined);
-  const pollNow = useRef<() => void>(() => undefined);
+  const [reloads, setReloads] = useState(0);
   const [state, setState] = useState<AdminOverviewState>({
     access: "probing",
     overview: null,
     error: null,
+    loadedAt: null,
   });
 
   const refresh = useCallback(() => {
-    pollNow.current();
+    setReloads((current) => current + 1);
   }, []);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies(reloads): bumping reloads repeats the same request on operator demand
   useEffect(() => {
     let stopped = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-
-    const schedule = () => {
-      if (stopped || document.hidden) return;
-      timer = setTimeout(() => void poll(), ADMIN_POLL_MS);
-    };
-
-    const poll = async () => {
-      if (stopped || document.hidden) return;
-      try {
-        const result = await client.getAdminOverview(etag.current);
+    client
+      .getAdminOverview()
+      .then((overview) => {
         if (stopped) return;
-        if (result.etag !== null) etag.current = result.etag;
-        if (result.kind === "data") {
-          setState({
-            access: "allowed",
-            overview: result.overview,
-            error: null,
-          });
-        } else {
-          setState((current) => ({
-            ...current,
-            access: current.overview === null ? "probing" : "allowed",
-            error: null,
-          }));
-        }
-      } catch (error) {
+        setState({
+          access: "allowed",
+          overview,
+          error: null,
+          loadedAt: Date.now(),
+        });
+      })
+      .catch((error: unknown) => {
         if (stopped) return;
         if (error instanceof ApiError && error.status === 404) {
-          setState({ access: "denied", overview: null, error: null });
+          setState({
+            access: "denied",
+            overview: null,
+            error: null,
+            loadedAt: null,
+          });
           return;
         }
         setState((current) => ({
@@ -65,32 +60,13 @@ export function useAdminOverview(client: AdminClient) {
             error instanceof ApiError
               ? error.envelope.hint
               : "admin overview unavailable",
+          loadedAt: current.loadedAt,
         }));
-      } finally {
-        schedule();
-      }
-    };
-
-    const onVisibility = () => {
-      if (timer !== undefined) clearTimeout(timer);
-      timer = undefined;
-      if (!document.hidden) void poll();
-    };
-
-    pollNow.current = () => {
-      if (timer !== undefined) clearTimeout(timer);
-      timer = undefined;
-      if (!document.hidden) void poll();
-    };
-    document.addEventListener("visibilitychange", onVisibility);
-    void poll();
+      });
     return () => {
       stopped = true;
-      pollNow.current = () => undefined;
-      if (timer !== undefined) clearTimeout(timer);
-      document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [client]);
+  }, [client, reloads]);
 
   return { ...state, refresh };
 }

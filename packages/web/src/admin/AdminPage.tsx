@@ -3,7 +3,6 @@ import type { AdminOverview } from "../api/schemas.js";
 import { useSession } from "../auth/SessionContext.jsx";
 import { AppShell } from "../components/AppShell.jsx";
 import { BootSkeleton } from "../components/BootSkeleton.jsx";
-import { useLiveOptional } from "../live/LiveContext.jsx";
 import { useMeta } from "../meta/MetaContext.jsx";
 import { NotFound } from "../routes/NotFound.jsx";
 import { type AdminClient, createAdminClient } from "./client.js";
@@ -136,20 +135,32 @@ function PauseControl(props: {
   );
 }
 
+function stamp(at: number | null): string {
+  return at === null
+    ? "data as of —"
+    : `data as of ${new Date(at).toLocaleTimeString()}`;
+}
+
 function AdminDashboard(props: {
   readonly client: AdminClient;
   readonly overview: AdminOverview;
   readonly refreshOverview: () => void;
+  readonly loadedAt: number | null;
 }) {
   const [active, setActive] = useState<Panel>("activity");
   const [visited, setVisited] = useState<ReadonlySet<Panel>>(
     () => new Set(["activity"]),
   );
   const [requestedPlayer, setRequestedPlayer] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
   const tabs = useRef<Array<HTMLButtonElement | null>>([]);
   const { meta, updateStatus } = useMeta();
-  const live = useLiveOptional();
   const { refreshOverview } = props;
+
+  const reload = () => {
+    setReloadToken((current) => current + 1);
+    refreshOverview();
+  };
 
   useEffect(() => {
     updateStatus({
@@ -157,15 +168,6 @@ function AdminDashboard(props: {
       banner: props.overview.banner,
     });
   }, [props.overview.banner, props.overview.mode, updateStatus]);
-
-  useEffect(() => {
-    if (
-      live?.lastEvent?.type === "system_banner" ||
-      live?.lastEvent?.type === "config_updated"
-    ) {
-      refreshOverview();
-    }
-  }, [live?.lastEvent, refreshOverview]);
 
   const visit = (panel: Panel) => {
     setActive(panel);
@@ -214,7 +216,13 @@ function AdminDashboard(props: {
       );
     }
     if (panel === "activity") {
-      return <ActivityPanel client={props.client} onPlayer={inspectPlayer} />;
+      return (
+        <ActivityPanel
+          client={props.client}
+          onPlayer={inspectPlayer}
+          reloadToken={reloadToken}
+        />
+      );
     }
     if (panel === "bonuses") {
       return (
@@ -222,14 +230,27 @@ function AdminDashboard(props: {
           client={props.client}
           meta={meta}
           onPlayer={inspectPlayer}
+          reloadToken={reloadToken}
         />
       );
     }
     if (panel === "health") {
-      return <HealthPanel client={props.client} overview={props.overview} />;
+      return (
+        <HealthPanel
+          client={props.client}
+          overview={props.overview}
+          reloadToken={reloadToken}
+        />
+      );
     }
     if (panel === "games") {
-      return <GamesPanel client={props.client} meta={meta} />;
+      return (
+        <GamesPanel
+          client={props.client}
+          meta={meta}
+          reloadToken={reloadToken}
+        />
+      );
     }
     if (panel === "players") {
       return (
@@ -237,11 +258,16 @@ function AdminDashboard(props: {
           client={props.client}
           requestedPlayer={requestedPlayer}
           onPlayerHandled={() => setRequestedPlayer(null)}
+          reloadToken={reloadToken}
         />
       );
     }
     return (
-      <ConfigPanel client={props.client} onChanged={props.refreshOverview} />
+      <ConfigPanel
+        client={props.client}
+        onChanged={props.refreshOverview}
+        reloadToken={reloadToken}
+      />
     );
   };
 
@@ -254,9 +280,14 @@ function AdminDashboard(props: {
         <header className="admin-title">
           <div>
             <span className="vt">OPERATIONS CONSOLE</span>
-            <p>live read models · heavy detail on demand</p>
+            <p>read on open · reload for fresh data</p>
           </div>
-          <span className="admin-poll-state">● 30s visible-tab polling</span>
+          <div className="admin-reload">
+            <span className="admin-poll-state">{stamp(props.loadedAt)}</span>
+            <button type="button" className="btn mini" onClick={reload}>
+              reload ▸
+            </button>
+          </div>
         </header>
         <PauseControl
           client={props.client}
@@ -328,6 +359,7 @@ function AuthorizedAdmin(props: { readonly client: AdminClient }) {
       client={props.client}
       overview={state.overview}
       refreshOverview={state.refresh}
+      loadedAt={state.loadedAt}
     />
   );
 }

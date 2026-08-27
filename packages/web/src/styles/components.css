@@ -1133,6 +1133,11 @@ body.fx .admin-shell svg.pc {
   color: var(--ph);
   font-size: 12px;
 }
+.admin-reload {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .admin-health-bad,
 .admin-error,
 .admin-inline-error {
@@ -1495,6 +1500,11 @@ body.fx .admin-shell svg.pc {
   .admin-poll-state {
     max-width: 120px;
     text-align: right;
+  }
+  .admin-reload {
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
   }
   .admin-pause {
     position: relative;

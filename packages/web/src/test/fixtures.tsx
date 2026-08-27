@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { MemoryRouter } from "react-router";
 import { vi } from "vitest";
 import type { ApiClient } from "../api/client.js";
@@ -247,6 +247,9 @@ export function mockClient(overrides: Partial<ApiClient> = {}): ApiClient {
 
 export function Providers(props: {
   readonly client: ApiClient;
+  readonly eventSourceFactory?: ComponentProps<
+    typeof LiveProvider
+  >["eventSourceFactory"];
   readonly children: ReactNode;
 }) {
   return (
@@ -254,7 +257,14 @@ export function Providers(props: {
       <ToastProvider>
         <MetaProvider client={props.client}>
           <SessionProvider client={props.client}>
-            <LiveProvider client={props.client}>{props.children}</LiveProvider>
+            <LiveProvider
+              client={props.client}
+              {...(props.eventSourceFactory === undefined
+                ? {}
+                : { eventSourceFactory: props.eventSourceFactory })}
+            >
+              {props.children}
+            </LiveProvider>
           </SessionProvider>
         </MetaProvider>
       </ToastProvider>
