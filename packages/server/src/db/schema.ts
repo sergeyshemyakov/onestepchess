@@ -85,7 +85,10 @@ export const games = sqliteTable(
     finishedAt: integer("finished_at"),
     resolvedAt: integer("resolved_at"),
   },
-  (table) => [index("games_resolved_at").on(table.resolvedAt)],
+  (table) => [
+    index("games_resolved_at").on(table.resolvedAt),
+    index("games_status_finished_at").on(table.status, table.finishedAt),
+  ],
 );
 
 export const claims = sqliteTable(
@@ -124,6 +127,11 @@ export const claims = sqliteTable(
       .on(table.player)
       .where(sql`status = 'open'`),
     index("claims_player_created").on(table.player, table.createdAt),
+    index("claims_player_status_moved_at").on(
+      table.player,
+      table.status,
+      table.movedAt,
+    ),
     index("claims_created_at").on(table.createdAt),
     index("claims_status_moved_at").on(table.status, table.movedAt),
   ],
@@ -186,19 +194,23 @@ export const paymentIntents = sqliteTable(
   ],
 );
 
-export const payoutBatches = sqliteTable("payout_batches", {
-  id: text("id").primaryKey(),
-  status: text("status", {
-    enum: ["prepared", "submitted", "confirmed", "failed"],
-  }).notNull(),
-  payloadB64: text("payload_b64").notNull(),
-  groupId: text("group_id").notNull(),
-  lastValidRound: integer("last_valid_round").notNull(),
-  attempts: integer("attempts").notNull().default(0),
-  nextAttemptAt: integer("next_attempt_at"),
-  createdAt: integer("created_at").notNull(),
-  updatedAt: integer("updated_at").notNull(),
-});
+export const payoutBatches = sqliteTable(
+  "payout_batches",
+  {
+    id: text("id").primaryKey(),
+    status: text("status", {
+      enum: ["prepared", "submitted", "confirmed", "failed"],
+    }).notNull(),
+    payloadB64: text("payload_b64").notNull(),
+    groupId: text("group_id").notNull(),
+    lastValidRound: integer("last_valid_round").notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    nextAttemptAt: integer("next_attempt_at"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [index("payout_batches_status").on(table.status)],
+);
 
 export const payoutJobs = sqliteTable(
   "payout_jobs",
@@ -251,7 +263,10 @@ export const bonuses = sqliteTable(
     optedInAt: integer("opted_in_at"),
     fundedAt: integer("funded_at"),
   },
-  (table) => [index("bonuses_claimed_at").on(table.claimedAt)],
+  (table) => [
+    index("bonuses_claimed_at").on(table.claimedAt),
+    index("bonuses_status").on(table.status),
+  ],
 );
 
 export const fundingJobs = sqliteTable(
@@ -278,6 +293,7 @@ export const fundingJobs = sqliteTable(
   },
   (table) => [
     uniqueIndex("funding_jobs_player_leg").on(table.player, table.leg),
+    index("funding_jobs_status").on(table.status),
   ],
 );
 
@@ -336,13 +352,22 @@ export const revokedJti = sqliteTable("revoked_jti", {
   expiresAt: integer("expires_at").notNull(),
 });
 
-export const nicknameChanges = sqliteTable("nickname_changes", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  player: text("player")
-    .notNull()
-    .references(() => players.address),
-  changedAt: integer("changed_at").notNull(),
-});
+export const nicknameChanges = sqliteTable(
+  "nickname_changes",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    player: text("player")
+      .notNull()
+      .references(() => players.address),
+    changedAt: integer("changed_at").notNull(),
+  },
+  (table) => [
+    index("nickname_changes_player_changed_at").on(
+      table.player,
+      table.changedAt,
+    ),
+  ],
+);
 
 export const pointAwards = sqliteTable(
   "point_awards",

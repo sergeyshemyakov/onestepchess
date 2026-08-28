@@ -11,8 +11,9 @@ import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
+import { getTableConfig } from "drizzle-orm/sqlite-core";
 import { afterEach, describe, expect, it } from "vitest";
-import { type OpenedDatabase, openDatabase } from "./open.js";
+import { type OpenedDatabase, openDatabase, schema } from "./open.js";
 
 const opened: OpenedDatabase[] = [];
 
@@ -516,5 +517,176 @@ describe("robustness migration (0006_claim_expiring_flag)", () => {
     const quiet = rows.find((row) => row.id === "clm_r5_quiet");
     expect(notified?.expiring_notified_at).toBe(200);
     expect(quiet?.expiring_notified_at).toBeNull();
+  });
+});
+
+function indexNames(sqlite: Database.Database): string[] {
+  return sqlite
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_autoindex%' ORDER BY name",
+    )
+    .all()
+    .map((row) => (row as { name: string }).name);
+}
+
+// A database whose migration chain stops at `maxIdx` — the shape a deployed
+// snapshot has before newer migrations are applied.
+function databaseThroughMigration(maxIdx: number): string {
+  const dir = mkdtempSync(join(tmpdir(), `osc-chain-${maxIdx}-`));
+  const path = join(dir, "osc.sqlite");
+  const migrations = join(dir, "migrations");
+  mkdirSync(join(migrations, "meta"), { recursive: true });
+  const journal = JSON.parse(
+    readFileSync(join(drizzleDir, "meta", "_journal.json"), "utf8"),
+  ) as { entries: { idx: number; tag: string }[] };
+  journal.entries = journal.entries.filter((entry) => entry.idx <= maxIdx);
+  for (const entry of journal.entries) {
+    copyFileSync(
+      join(drizzleDir, `${entry.tag}.sql`),
+      join(migrations, `${entry.tag}.sql`),
+    );
+  }
+  writeFileSync(
+    join(migrations, "meta", "_journal.json"),
+    JSON.stringify(journal),
+  );
+  const sqlite = new Database(path);
+  migrate(drizzle(sqlite), { migrationsFolder: migrations });
+  sqlite.close();
+  return path;
+}
+
+describe("executor status indexes (0008_executor_status_indexes)", () => {
+  it("migration_creates_executor_status_indexes", () => {
+    const database = open();
+    const names = indexNames(database.sqlite);
+    for (const name of [
+      "payout_batches_status",
+      "bonuses_status",
+      "funding_jobs_status",
+    ]) {
+      expect(names).toContain(name);
+    }
+  });
+
+  it("migration_0008_contains_only_create_index_statements", () => {
+    const sql = readFileSync(
+      join(drizzleDir, "0008_executor_status_indexes.sql"),
+      "utf8",
+    );
+    const statements = sql
+      .split("--> statement-breakpoint")
+      .map((statement) => statement.trim())
+      .filter((statement) => statement.length > 0);
+    expect(statements).toHaveLength(3);
+    for (const statement of statements) {
+      expect(statement).toMatch(/^CREATE INDEX/);
+    }
+  });
+
+  it("executor_status_polls_search_using_the_indexes", () => {
+    const database = open();
+    // The plan assertion is meaningless without a selective seed: on a
+    // near-empty or uniform-status table SQLite may legitimately prefer a
+    // scan even though the index exists (spec 2026-08-28, G2).
+    const insertBatch = database.sqlite.prepare(
+      `INSERT INTO payout_batches (id, status, payload_b64, group_id, last_valid_round, created_at, updated_at)
+       VALUES (?, ?, 'cGF5', 'grp', 1, 0, 0)`,
+    );
+    const insertBonus = database.sqlite.prepare(
+      `INSERT INTO bonuses (player, status, algo_amount, usdc_amount, claim_ip, claimed_at, opt_in_deadline_at)
+       VALUES (?, ?, 200000, 1000000, '127.0.0.1', 0, 600000)`,
+    );
+    // Confirmed jobs must satisfy funding_jobs_prepared_shape (0004): a
+    // terminal broadcast row carries its payload, txid, and round.
+    const insertConfirmedJob = database.sqlite.prepare(
+      `INSERT INTO funding_jobs (id, player, leg, amount, status, payload_b64, txid, last_valid_round, created_at, updated_at)
+       VALUES (?, ?, 'algo', 200000, 'confirmed', 'cGF5', ?, 1, 0, 0)`,
+    );
+    for (let index = 0; index < 200; index += 1) {
+      insertPlayer(database, `addr-${index}`);
+      insertBatch.run(`pb_${index}`, index % 2 === 0 ? "confirmed" : "failed");
+      insertBonus.run(`addr-${index}`, index % 2 === 0 ? "funded" : "expired");
+      insertConfirmedJob.run(`fj_${index}`, `addr-${index}`, `tx_${index}`);
+    }
+    insertBatch.run("pb_prepared", "prepared");
+    insertBatch.run("pb_submitted", "submitted");
+    insertPlayer(database, "addr-polled");
+    insertBonus.run("addr-polled", "claimed");
+    database.sqlite
+      .prepare(
+        `INSERT INTO funding_jobs (id, player, leg, amount, status, created_at, updated_at)
+         VALUES ('fj_polled', 'addr-polled', 'usdc', 200000, 'pending', 0, 0)`,
+      )
+      .run();
+    database.sqlite.exec("ANALYZE");
+
+    const polls: readonly (readonly [string, string])[] = [
+      [
+        "SELECT * FROM payout_batches WHERE status = 'prepared'",
+        "payout_batches_status",
+      ],
+      [
+        "SELECT * FROM payout_batches WHERE status = 'submitted'",
+        "payout_batches_status",
+      ],
+      ["SELECT * FROM bonuses WHERE status = 'claimed'", "bonuses_status"],
+      [
+        "SELECT * FROM funding_jobs WHERE status IN ('pending', 'prepared', 'submitted')",
+        "funding_jobs_status",
+      ],
+    ];
+    for (const [query, index] of polls) {
+      const plan = database.sqlite
+        .prepare(`EXPLAIN QUERY PLAN ${query}`)
+        .all() as { detail: string }[];
+      const details = plan.map((row) => row.detail).join("\n");
+      expect(details).toMatch(new RegExp(`SEARCH .*USING INDEX ${index}`));
+      expect(details).not.toMatch(/^SCAN /m);
+    }
+  });
+
+  it("migration_0008_applies_to_a_database_already_on_0007", () => {
+    const path = databaseThroughMigration(7);
+    const before = new Database(path, { readonly: true });
+    const beforeNames = indexNames(before);
+    before.close();
+    expect(beforeNames).not.toContain("payout_batches_status");
+
+    const migrated = open(path);
+    const migratedNames = indexNames(migrated.sqlite);
+    for (const name of [
+      "payout_batches_status",
+      "bonuses_status",
+      "funding_jobs_status",
+    ]) {
+      expect(migratedNames).toContain(name);
+    }
+    // Same index set as a database migrated from empty through the full
+    // chain — the pre-0008 snapshot necessarily lacked the three above.
+    const fresh = open();
+    expect(migratedNames).toEqual(indexNames(fresh.sqlite));
+  });
+});
+
+describe("schema/migration reconciliation (G3, spec 2026-08-28)", () => {
+  it("schema_declares_every_migrated_index", () => {
+    const database = open();
+    const migrated = indexNames(database.sqlite);
+    const declared = new Set<string>();
+    for (const table of Object.values(schema)) {
+      const config = getTableConfig(table);
+      for (const index of config.indexes) {
+        declared.add(index.config.name);
+      }
+      // Inline .unique() columns become named `<table>_<column>_unique`
+      // indexes in the migrated database, not autoindexes.
+      for (const column of config.columns) {
+        if (column.isUnique && column.uniqueName !== undefined) {
+          declared.add(column.uniqueName);
+        }
+      }
+    }
+    expect([...declared].sort()).toEqual(migrated);
   });
 });

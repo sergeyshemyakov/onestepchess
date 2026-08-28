@@ -1,5 +1,5 @@
 import type { PaymentRail, Rng } from "@onestepchess/core";
-import { and, eq, gt, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, sql } from "drizzle-orm";
 import type { Hono } from "hono";
 import {
   freeNickname,
@@ -273,93 +273,57 @@ export function registerHumanRoutes(
       page: c.req.query("page") ?? 1,
     });
     const address = c.get("session").address;
-    const participations = deps.db
-      .select({ claim: schema.claims, game: schema.games })
-      .from(schema.claims)
-      .innerJoin(schema.games, eq(schema.games.id, schema.claims.gameId))
-      .where(
-        and(
-          eq(schema.claims.player, address),
-          eq(schema.claims.status, "moved"),
-        ),
-      )
-      .all()
-      .filter(({ game }) =>
-        query.status === "ongoing"
-          ? game.status === "active" || game.status === "endspiel"
-          : game.status === "finished" || game.status === "aborted",
-      )
-      .sort((a, b) =>
-        query.status === "ongoing"
-          ? (b.claim.movedAt ?? 0) - (a.claim.movedAt ?? 0)
-          : (b.game.finishedAt ?? 0) - (a.game.finishedAt ?? 0),
+    const stakeEntriesFor = (claimIds: readonly string[]) =>
+      new Map(
+        (claimIds.length === 0
+          ? []
+          : deps.db
+              .select()
+              .from(schema.stakeEntries)
+              .where(inArray(schema.stakeEntries.claimId, [...claimIds]))
+              .all()
+        ).map((entry) => [entry.claimId, entry]),
       );
-    const claimIds = participations.map(({ claim }) => claim.id);
-    const entries =
-      claimIds.length === 0
-        ? []
-        : deps.db
-            .select()
-            .from(schema.stakeEntries)
-            .where(inArray(schema.stakeEntries.claimId, claimIds))
-            .all();
-    const entryByClaim = new Map(
-      entries.map((entry) => [entry.claimId, entry]),
-    );
-    const gameIds = [...new Set(participations.map(({ game }) => game.id))];
-    const jobs =
-      gameIds.length === 0
-        ? []
-        : deps.db
-            .select()
-            .from(schema.payoutJobs)
-            .where(
-              and(
-                inArray(schema.payoutJobs.gameId, gameIds),
-                eq(schema.payoutJobs.recipient, address),
-              ),
-            )
-            .all();
-    const jobByGame = new Map(jobs.map((job) => [job.gameId, job]));
-    const groupedParticipations =
-      query.status === "ongoing"
-        ? participations.map((participation) => [participation])
-        : [
-            ...participations
-              .reduce((byGame, participation) => {
-                const group = byGame.get(participation.game.id) ?? [];
-                group.push(participation);
-                byGame.set(participation.game.id, group);
-                return byGame;
-              }, new Map<string, (typeof participations)[number][]>())
-              .values(),
-          ];
-    const pageSize =
-      query.status === "ongoing"
-        ? deps.config().PAGE_SIZE_ACTIVE
-        : deps.config().PAGE_SIZE_FINISHED;
-    const total = groupedParticipations.length;
-    const pageCount = Math.ceil(total / pageSize);
-    const selected = groupedParticipations.slice(
-      (query.page - 1) * pageSize,
-      query.page * pageSize,
-    );
-    const items = selected.map((group) => {
-      const first = group[0];
-      if (first === undefined) throw new Error("empty participation group");
-      const { claim, game } = first;
-      for (const participation of group) {
-        if (
-          participation.claim.moveUci === null ||
-          participation.claim.moveSan === null ||
-          participation.claim.movedAt === null ||
-          participation.claim.fenBefore === null
-        )
-          throw new Error(
-            `moved claim ${participation.claim.id} lacks move data`,
-          );
-      }
-      if (query.status === "ongoing") {
+
+    if (query.status === "ongoing") {
+      const pageSize = deps.config().PAGE_SIZE_ACTIVE;
+      // The games join exists only to evaluate the status filter — every
+      // response field is a claim column, so no games column is selected and
+      // the probe never touches a game row's blob overflow pages (G1, spec
+      // 2026-08-28).
+      const predicate = and(
+        eq(schema.claims.player, address),
+        eq(schema.claims.status, "moved"),
+        inArray(schema.games.status, ["active", "endspiel"]),
+      );
+      const claimRows = deps.db
+        .select({
+          id: schema.claims.id,
+          side: schema.claims.side,
+          demo: schema.claims.demo,
+          stakeMicrousdc: schema.claims.stakeMicrousdc,
+          createdAt: schema.claims.createdAt,
+          movedAt: schema.claims.movedAt,
+          moveUci: schema.claims.moveUci,
+          moveSan: schema.claims.moveSan,
+          fenBefore: schema.claims.fenBefore,
+        })
+        .from(schema.claims)
+        .innerJoin(schema.games, eq(schema.games.id, schema.claims.gameId))
+        .where(predicate)
+        .orderBy(desc(schema.claims.movedAt), desc(schema.claims.id))
+        .limit(pageSize)
+        .offset((query.page - 1) * pageSize)
+        .all();
+      const total =
+        deps.db
+          .select({ count: sql<number>`count(*)` })
+          .from(schema.claims)
+          .innerJoin(schema.games, eq(schema.games.id, schema.claims.gameId))
+          .where(predicate)
+          .get()?.count ?? 0;
+      const entryByClaim = stakeEntriesFor(claimRows.map((claim) => claim.id));
+      const items = claimRows.map((claim) => {
         if (
           claim.moveUci === null ||
           claim.moveSan === null ||
@@ -377,6 +341,114 @@ export function registerHumanRoutes(
           fenBeforeYourMove: claim.fenBefore,
           payTxid: entryByClaim.get(claim.id)?.payTxid ?? null,
         };
+      });
+      return c.json({
+        items,
+        page: query.page,
+        pageCount: Math.ceil(total / pageSize),
+        total,
+      });
+    }
+
+    const pageSize = deps.config().PAGE_SIZE_FINISHED;
+    const predicate = and(
+      eq(schema.claims.player, address),
+      eq(schema.claims.status, "moved"),
+      inArray(schema.games.status, ["finished", "aborted"]),
+    );
+    // The page unit is the game, so paging happens over grouped game rows;
+    // ties on finished_at are pinned by game id to make the order canonical
+    // instead of an accident of index traversal (G1, spec 2026-08-28).
+    const gameRows = deps.db
+      .select({
+        id: schema.games.id,
+        name: schema.games.name,
+        fen: schema.games.fen,
+        result: schema.games.result,
+        termination: schema.games.termination,
+        rulesJson: schema.games.rulesJson,
+        createdAt: schema.games.createdAt,
+        finishedAt: schema.games.finishedAt,
+      })
+      .from(schema.claims)
+      .innerJoin(schema.games, eq(schema.games.id, schema.claims.gameId))
+      .where(predicate)
+      .groupBy(schema.games.id)
+      .orderBy(sql`max(${schema.games.finishedAt}) desc`, asc(schema.games.id))
+      .limit(pageSize)
+      .offset((query.page - 1) * pageSize)
+      .all();
+    const total =
+      deps.db
+        .select({ count: sql<number>`count(distinct ${schema.games.id})` })
+        .from(schema.claims)
+        .innerJoin(schema.games, eq(schema.games.id, schema.claims.gameId))
+        .where(predicate)
+        .get()?.count ?? 0;
+    const gameIds = gameRows.map((game) => game.id);
+    const claimRows =
+      gameIds.length === 0
+        ? []
+        : deps.db
+            .select({
+              id: schema.claims.id,
+              gameId: schema.claims.gameId,
+              side: schema.claims.side,
+              demo: schema.claims.demo,
+              stakeMicrousdc: schema.claims.stakeMicrousdc,
+              createdAt: schema.claims.createdAt,
+              movedAt: schema.claims.movedAt,
+              movedPly: schema.claims.movedPly,
+              moveUci: schema.claims.moveUci,
+              moveSan: schema.claims.moveSan,
+              fenBefore: schema.claims.fenBefore,
+            })
+            .from(schema.claims)
+            .where(
+              and(
+                eq(schema.claims.player, address),
+                eq(schema.claims.status, "moved"),
+                inArray(schema.claims.gameId, gameIds),
+              ),
+            )
+            .orderBy(asc(schema.claims.movedAt), asc(schema.claims.id))
+            .all();
+    const claimsByGame = new Map<string, (typeof claimRows)[number][]>();
+    for (const claim of claimRows) {
+      const group = claimsByGame.get(claim.gameId) ?? [];
+      group.push(claim);
+      claimsByGame.set(claim.gameId, group);
+    }
+    const entryByClaim = stakeEntriesFor(claimRows.map((claim) => claim.id));
+    const jobs =
+      gameIds.length === 0
+        ? []
+        : deps.db
+            .select()
+            .from(schema.payoutJobs)
+            .where(
+              and(
+                inArray(schema.payoutJobs.gameId, gameIds),
+                eq(schema.payoutJobs.recipient, address),
+              ),
+            )
+            .all();
+    const jobByGame = new Map(jobs.map((job) => [job.gameId, job]));
+    // Group order must come from the paged game rows — the claims query
+    // returns index order, which can disagree with game recency (G1).
+    const items = gameRows.map((game) => {
+      const group = claimsByGame.get(game.id);
+      const first = group?.[0];
+      if (group === undefined || first === undefined)
+        throw new Error("empty participation group");
+      for (const claim of group) {
+        if (
+          claim.moveUci === null ||
+          claim.moveSan === null ||
+          claim.movedAt === null ||
+          claim.fenBefore === null
+        )
+          throw new Error(`moved claim ${claim.id} lacks move data`);
       }
       if (
         game.result === null ||
@@ -386,26 +458,20 @@ export function registerHumanRoutes(
         throw new Error(`terminal game ${game.id} lacks result data`);
       const ordered = [...group].sort(
         (a, b) =>
-          (a.claim.movedPly ?? Number.MAX_SAFE_INTEGER) -
-          (b.claim.movedPly ?? Number.MAX_SAFE_INTEGER),
+          (a.movedPly ?? Number.MAX_SAFE_INTEGER) -
+          (b.movedPly ?? Number.MAX_SAFE_INTEGER),
       );
       const thinkingTimeMs = ordered.reduce(
-        (totalMs, participation) =>
-          totalMs +
-          Math.max(
-            0,
-            (participation.claim.movedAt as number) -
-              participation.claim.createdAt,
-          ),
+        (totalMs, claim) =>
+          totalMs + Math.max(0, (claim.movedAt as number) - claim.createdAt),
         0,
       );
       const stakeMicroUsdc = ordered.reduce(
-        (totalStake, participation) =>
-          totalStake + participation.claim.stakeMicrousdc,
+        (totalStake, claim) => totalStake + claim.stakeMicrousdc,
         0,
       );
       const finishedCommon = {
-        yourSide: claim.side,
+        yourSide: first.side,
         stakeMicroUsdc,
         thinkingTimeMs,
         startedAt: new Date(game.createdAt).toISOString(),
@@ -414,35 +480,29 @@ export function registerHumanRoutes(
         repetitionAdjudication: repetitionAdjudicationFor(game),
         finishedAt: new Date(game.finishedAt).toISOString(),
       };
-      if (ordered.every((participation) => participation.claim.demo))
+      if (ordered.every((claim) => claim.demo))
         return {
           ...finishedCommon,
-          yourMoves: ordered.map((participation) => ({
-            uci: participation.claim.moveUci as string,
-            san: participation.claim.moveSan as string,
+          yourMoves: ordered.map((claim) => ({
+            uci: claim.moveUci as string,
+            san: claim.moveSan as string,
           })),
           demo: true,
           payoutMicroUsdc: 0,
           payoutStatus: null,
           statsCounted: false,
         };
-      for (const participation of ordered) {
-        if (participation.claim.movedPly === null)
+      for (const claim of ordered) {
+        if (claim.movedPly === null)
           throw new Error(
             `staked game ${game.id} has a claim without moved ply`,
           );
-        if (
-          !participation.claim.demo &&
-          entryByClaim.get(participation.claim.id) === undefined
-        )
-          throw new Error(
-            `staked claim ${participation.claim.id} lacks entry data`,
-          );
+        if (!claim.demo && entryByClaim.get(claim.id) === undefined)
+          throw new Error(`staked claim ${claim.id} lacks entry data`);
       }
       const payout = ordered.reduce(
-        (totalPayout, participation) =>
-          totalPayout +
-          (entryByClaim.get(participation.claim.id)?.payoutAmount ?? 0),
+        (totalPayout, claim) =>
+          totalPayout + (entryByClaim.get(claim.id)?.payoutAmount ?? 0),
         0,
       );
       const job = jobByGame.get(game.id);
@@ -456,10 +516,10 @@ export function registerHumanRoutes(
               : "queued";
       return {
         ...finishedCommon,
-        yourMoves: ordered.map((participation) => ({
-          uci: participation.claim.moveUci as string,
-          san: participation.claim.moveSan as string,
-          ply: participation.claim.movedPly as number,
+        yourMoves: ordered.map((claim) => ({
+          uci: claim.moveUci as string,
+          san: claim.moveSan as string,
+          ply: claim.movedPly as number,
         })),
         demo: false,
         gameId: game.id,
@@ -467,7 +527,7 @@ export function registerHumanRoutes(
         finalFen: game.fen,
         payTxid:
           ordered.length === 1
-            ? (entryByClaim.get(claim.id)?.payTxid ?? null)
+            ? (entryByClaim.get(first.id)?.payTxid ?? null)
             : null,
         payoutMicroUsdc: payout,
         payoutTxid: job?.txid ?? null,
@@ -475,7 +535,12 @@ export function registerHumanRoutes(
         statsCounted: true,
       };
     });
-    return c.json({ items, page: query.page, pageCount, total });
+    return c.json({
+      items,
+      page: query.page,
+      pageCount: Math.ceil(total / pageSize),
+      total,
+    });
   });
 
   app.get("/api/v1/games/:id/replay", (c) => {
