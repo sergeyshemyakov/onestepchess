@@ -57,6 +57,13 @@
       "when": 1787788800002,
       "tag": "0007_admin_read_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1787788800003,
+      "tag": "0008_executor_status_indexes",
+      "breakpoints": true
     }
   ]
 }

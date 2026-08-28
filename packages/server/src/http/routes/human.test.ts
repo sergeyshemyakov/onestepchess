@@ -1,3 +1,6 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { STARTING_FEN } from "@onestepchess/core";
 import { eq } from "drizzle-orm";
 import sharp from "sharp";
@@ -82,6 +85,7 @@ function setup(overrides: Record<string, unknown> = {}) {
   return {
     app,
     db: database.db,
+    sqlite: database.sqlite,
     coordinator,
     balanceCalls,
     setNow: (value: number) => {
@@ -1086,5 +1090,455 @@ describe("profile, game history, and public replay reads (§6.3)", () => {
       );
     }
     expect(cache.size).toBeLessThanOrEqual(2);
+  });
+});
+
+type CapturedStatement = {
+  readonly sql: string;
+  readonly params: readonly unknown[];
+  readonly rows: number;
+};
+
+// Wraps the raw driver so tests can assert on what SQL actually ran and how
+// many rows each statement materialized — the G1 criteria are about reads at
+// the driver, not response shapes or wall time.
+function captureSelects(sqlite: OpenedDatabase["sqlite"]): CapturedStatement[] {
+  const captured: CapturedStatement[] = [];
+  const originalPrepare = sqlite.prepare.bind(sqlite);
+  vi.spyOn(sqlite, "prepare").mockImplementation(((source: string) => {
+    const statement = originalPrepare(source);
+    if (!/^\s*select\b/i.test(source)) return statement;
+    const originalAll = statement.all.bind(statement);
+    const originalGet = statement.get.bind(statement);
+    statement.all = ((...params: unknown[]) => {
+      const rows = originalAll(...params) as unknown[];
+      captured.push({ sql: source, params, rows: rows.length });
+      return rows;
+    }) as typeof statement.all;
+    statement.get = ((...params: unknown[]) => {
+      const row = originalGet(...params);
+      captured.push({ sql: source, params, rows: row === undefined ? 0 : 1 });
+      return row;
+    }) as typeof statement.get;
+    return statement;
+  }) as never);
+  return captured;
+}
+
+function demoMove(ply: number): SeedMove {
+  return {
+    player: "alice",
+    side: "white",
+    demo: true,
+    stake: 0,
+    ply,
+    uci: "e2e4",
+    san: "e4",
+    fenAfter: FEN_AFTER_E4,
+  };
+}
+
+type GamesPage = {
+  items: Record<string, unknown>[];
+  page: number;
+  pageCount: number;
+  total: number;
+};
+
+async function requestGames(
+  stack: Stack,
+  address: string,
+  query: string,
+): Promise<GamesPage> {
+  const response = await stack.app.request(`/api/v1/my/games?${query}`, {
+    headers: bearer(stack, address),
+  });
+  expect(response.status).toBe(200);
+  return (await response.json()) as GamesPage;
+}
+
+const goldenPath = fileURLToPath(
+  new URL("./__fixtures__/my-games-golden.json", import.meta.url),
+);
+
+describe("G1: /my/games full-history scan (spec 2026-08-28)", () => {
+  it("my_games_ongoing_reads_a_bounded_row_count", async () => {
+    const stack = setup();
+    seedPlayer(stack.db, "alice", "alice");
+    seedGame(stack.db, {
+      id: "gm_bulk_ongoing",
+      name: "bulk-ongoing",
+      status: "active",
+      createdAt: 1_000,
+      moves: Array.from({ length: 500 }, (_, index) => demoMove(index + 1)),
+    });
+
+    const captured = captureSelects(stack.sqlite);
+    const page = await requestGames(stack, "alice", "status=ongoing&page=1");
+
+    expect(page).toMatchObject({ page: 1, pageCount: 100, total: 500 });
+    expect(page.items).toHaveLength(5);
+    expect(captured.length).toBeGreaterThan(0);
+    // PAGE_SIZE_ACTIVE (5) bounds every statement's materialized rows — the
+    // player's other 495 moved claims must never leave the database.
+    for (const statement of captured) {
+      expect(statement.rows).toBeLessThanOrEqual(5);
+    }
+  });
+
+  it("my_games_finished_pages_by_game", async () => {
+    const stack = setup();
+    seedPlayer(stack.db, "alice", "alice");
+    for (let game = 1; game <= 30; game += 1) {
+      seedGame(stack.db, {
+        id: `gm_bulk_fin_${String(game).padStart(2, "0")}`,
+        name: `bulk-fin-${game}`,
+        status: "finished",
+        result: "draw",
+        termination: "stalemate",
+        createdAt: game * 100_000,
+        finishedAt: game * 100_000 + 90_000,
+        moves: Array.from({ length: 17 }, (_, index) => demoMove(index + 1)),
+      });
+    }
+
+    const captured = captureSelects(stack.sqlite);
+    const page = await requestGames(stack, "alice", "status=finished&page=1");
+
+    expect(page).toMatchObject({ page: 1, pageCount: 3, total: 30 });
+    expect(page.items).toHaveLength(10);
+    expect(page.items[0]?.finishedAt).toBe(
+      new Date(30 * 100_000 + 90_000).toISOString(),
+    );
+    // One page is 10 games × 17 claims; the remaining 340 claims of the
+    // player's 510 must never be materialized.
+    for (const statement of captured) {
+      expect(statement.rows).toBeLessThanOrEqual(170);
+    }
+  });
+
+  it("my_games_does_not_select_replay_or_history_json", async () => {
+    const stack = setup();
+    seedPlayer(stack.db, "alice", "alice");
+    seedGame(stack.db, {
+      id: "gm_cols_live",
+      name: "cols-live",
+      status: "active",
+      createdAt: 1_000,
+      moves: [staked("alice", "white", 1)],
+    });
+    seedGame(stack.db, {
+      id: "gm_cols_fin",
+      name: "cols-fin",
+      status: "finished",
+      result: "white",
+      termination: "checkmate",
+      createdAt: 2_000,
+      finishedAt: 3_000,
+      moves: [staked("alice", "white", 1)],
+    });
+
+    const captured = captureSelects(stack.sqlite);
+    await requestGames(stack, "alice", "status=ongoing");
+    await requestGames(stack, "alice", "status=finished");
+
+    expect(captured.length).toBeGreaterThan(0);
+    for (const statement of captured) {
+      expect(statement.sql).not.toContain("replay_json");
+      expect(statement.sql).not.toContain("history_json");
+    }
+  });
+
+  it("my_games_response_is_unchanged", async () => {
+    const stack = setup();
+    // Deterministic claim/entry ids regardless of the other tests in this
+    // file; the golden fixture embeds pay txids derived from them.
+    seedCounter = 5_000;
+    seedPlayer(stack.db, "alice", "alice");
+    seedPlayer(stack.db, "bob", "bob");
+    // All timestamps are distinct by construction — the golden pins the
+    // documented order, never the tie-break (spec 2026-08-28, G1).
+    seedGame(stack.db, {
+      id: "gm_gold_multi",
+      name: "gold-multi",
+      status: "finished",
+      result: "white",
+      termination: "checkmate",
+      createdAt: 40_000,
+      finishedAt: 50_000,
+      moves: [
+        staked("alice", "white", 1),
+        staked("bob", "black", 2, FEN_AFTER_E5),
+        { ...staked("alice", "white", 3), uci: "g1f3", san: "Nf3" },
+      ],
+    });
+    seedGame(stack.db, {
+      id: "gm_gold_demo",
+      name: "gold-demo",
+      status: "finished",
+      result: "draw",
+      termination: "stalemate",
+      createdAt: 41_000,
+      finishedAt: 60_000,
+      moves: [{ ...demoMove(1), ply: 1 }],
+    });
+    seedGame(stack.db, {
+      id: "gm_gold_payout",
+      name: "gold-payout",
+      status: "finished",
+      result: "white",
+      termination: "checkmate",
+      createdAt: 42_000,
+      finishedAt: 55_000,
+      moves: [
+        staked("alice", "white", 1),
+        staked("bob", "black", 2, FEN_AFTER_E5),
+      ],
+    });
+    // The player's most recent MOVE (moved_at 45_002) is in the game that
+    // finishes FIRST — claims-index order disagrees with game recency, so an
+    // implementation that derives group order from the claims query instead
+    // of the paged game rows fails this golden.
+    seedGame(stack.db, {
+      id: "gm_gold_recency",
+      name: "gold-recency",
+      status: "finished",
+      result: "black",
+      termination: "checkmate",
+      createdAt: 45_000,
+      finishedAt: 46_000,
+      moves: [
+        staked("alice", "white", 1),
+        staked("bob", "black", 2, FEN_AFTER_E5),
+      ],
+    });
+    seedGame(stack.db, {
+      id: "gm_gold_live_staked",
+      name: "gold-live-staked",
+      status: "active",
+      createdAt: 70_000,
+      moves: [staked("alice", "white", 1)],
+    });
+    seedGame(stack.db, {
+      id: "gm_gold_live_demo",
+      name: "gold-live-demo",
+      status: "active",
+      createdAt: 71_000,
+      moves: [demoMove(1)],
+    });
+    await finish(stack, "gm_gold_multi");
+    await finish(stack, "gm_gold_demo");
+    await finish(stack, "gm_gold_payout");
+    await finish(stack, "gm_gold_recency");
+    stack.db
+      .update(schema.payoutJobs)
+      .set({ status: "confirmed", txid: "ptx_gold_confirmed" })
+      .where(eq(schema.payoutJobs.gameId, "gm_gold_payout"))
+      .run();
+
+    const ongoing = await stack.app.request(
+      "/api/v1/my/games?status=ongoing&page=1",
+      { headers: bearer(stack, "alice") },
+    );
+    const finished = await stack.app.request(
+      "/api/v1/my/games?status=finished&page=1",
+      { headers: bearer(stack, "alice") },
+    );
+    expect(ongoing.status).toBe(200);
+    expect(finished.status).toBe(200);
+    const actual = {
+      ongoing: await ongoing.text(),
+      finished: await finished.text(),
+    };
+
+    if (!existsSync(goldenPath)) {
+      mkdirSync(dirname(goldenPath), { recursive: true });
+      writeFileSync(goldenPath, `${JSON.stringify(actual, null, 2)}\n`);
+      throw new Error(
+        `golden fixture written to ${goldenPath} — verify it against the ` +
+          "pre-change implementation and re-run",
+      );
+    }
+    const golden = JSON.parse(readFileSync(goldenPath, "utf8")) as {
+      ongoing: string;
+      finished: string;
+    };
+    expect(JSON.parse(actual.ongoing)).toEqual(JSON.parse(golden.ongoing));
+    expect(JSON.parse(actual.finished)).toEqual(JSON.parse(golden.finished));
+    // Byte-for-byte, not just structurally: field order is part of the pin.
+    expect(actual.ongoing).toBe(golden.ongoing);
+    expect(actual.finished).toBe(golden.finished);
+  });
+
+  it("my_games_ordering_is_deterministic", async () => {
+    const stack = setup();
+    seedPlayer(stack.db, "alice", "alice");
+    // Two finished games share one finished_at; the game whose claim moved
+    // EARLIER has the LATER id, so the claims traversal order disagrees with
+    // the canonical (finished_at desc, game id asc) tiebreak.
+    seedGame(stack.db, {
+      id: "gm_tie_b",
+      name: "tie-b",
+      status: "finished",
+      result: "white",
+      termination: "checkmate",
+      createdAt: 1_000,
+      finishedAt: 9_000,
+      moves: [staked("alice", "white", 1)],
+    });
+    seedGame(stack.db, {
+      id: "gm_tie_a",
+      name: "tie-a",
+      status: "finished",
+      result: "white",
+      termination: "checkmate",
+      createdAt: 2_000,
+      finishedAt: 9_000,
+      moves: [staked("alice", "white", 1)],
+    });
+    // Two ongoing claims share one moved_at; ids are chosen so insertion
+    // order disagrees with the canonical (moved_at desc, claim id desc) key.
+    seedGame(stack.db, {
+      id: "gm_tie_live",
+      name: "tie-live",
+      status: "active",
+      createdAt: 5_000,
+      moves: [],
+    });
+    stack.db
+      .insert(schema.claims)
+      .values(
+        (
+          [
+            { id: "clm_tie_1", uci: "e2e4", san: "e4" },
+            { id: "clm_tie_2", uci: "d2d4", san: "d4" },
+          ] as const
+        ).map((claim) => ({
+          id: claim.id,
+          gameId: "gm_tie_live",
+          player: "alice",
+          side: "white" as const,
+          demo: true,
+          stakeMicrousdc: 0,
+          status: "moved" as const,
+          createdAt: 5_001,
+          deadline: 5_001 + 600_000,
+          movedAt: 5_002,
+          movedPly: 1,
+          moveUci: claim.uci,
+          moveSan: claim.san,
+          fenBefore: STARTING_FEN,
+          fenAfter: FEN_AFTER_E4,
+        })),
+      )
+      .run();
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const finished = await requestGames(stack, "alice", "status=finished");
+      expect(finished.items.map((item) => item.gameId)).toEqual([
+        "gm_tie_a",
+        "gm_tie_b",
+      ]);
+      const ongoing = await requestGames(stack, "alice", "status=ongoing");
+      expect(
+        ongoing.items.map((item) => (item.yourMove as { uci: string }).uci),
+      ).toEqual(["d2d4", "e2e4"]);
+    }
+  });
+
+  it("my_games_pagination_boundaries", async () => {
+    const stack = setup({ PAGE_SIZE_ACTIVE: 2, PAGE_SIZE_FINISHED: 3 });
+    seedPlayer(stack.db, "alice", "alice");
+    seedPlayer(stack.db, "carol", "carol");
+    for (let game = 1; game <= 7; game += 1) {
+      seedGame(stack.db, {
+        id: `gm_bound_fin_${game}`,
+        name: `bound-fin-${game}`,
+        status: "finished",
+        result: "draw",
+        termination: "stalemate",
+        createdAt: game * 1_000,
+        finishedAt: game * 1_000 + 500,
+        moves: [demoMove(1)],
+      });
+    }
+    for (let game = 1; game <= 3; game += 1) {
+      seedGame(stack.db, {
+        id: `gm_bound_live_${game}`,
+        name: `bound-live-${game}`,
+        status: "active",
+        createdAt: 100_000 + game * 1_000,
+        moves: [demoMove(1)],
+      });
+    }
+
+    const lastPage = await requestGames(
+      stack,
+      "alice",
+      "status=finished&page=3",
+    );
+    expect(lastPage).toMatchObject({ page: 3, pageCount: 3, total: 7 });
+    expect(lastPage.items).toHaveLength(1);
+
+    const beyond = await requestGames(stack, "alice", "status=finished&page=4");
+    expect(beyond).toMatchObject({ page: 4, pageCount: 3, total: 7 });
+    expect(beyond.items).toHaveLength(0);
+
+    const liveLast = await requestGames(
+      stack,
+      "alice",
+      "status=ongoing&page=2",
+    );
+    expect(liveLast).toMatchObject({ page: 2, pageCount: 2, total: 3 });
+    expect(liveLast.items).toHaveLength(1);
+
+    const liveBeyond = await requestGames(
+      stack,
+      "alice",
+      "status=ongoing&page=5",
+    );
+    expect(liveBeyond).toMatchObject({ page: 5, pageCount: 2, total: 3 });
+    expect(liveBeyond.items).toHaveLength(0);
+
+    for (const status of ["ongoing", "finished"]) {
+      const empty = await requestGames(stack, "carol", `status=${status}`);
+      expect(empty).toEqual({ items: [], page: 1, pageCount: 0, total: 0 });
+    }
+  });
+
+  it("my_games_query_plans_never_scan_claims_or_games", async () => {
+    const stack = setup();
+    seedPlayer(stack.db, "alice", "alice");
+    seedGame(stack.db, {
+      id: "gm_plan_live",
+      name: "plan-live",
+      status: "active",
+      createdAt: 1_000,
+      moves: [staked("alice", "white", 1)],
+    });
+    seedGame(stack.db, {
+      id: "gm_plan_fin",
+      name: "plan-fin",
+      status: "finished",
+      result: "white",
+      termination: "checkmate",
+      createdAt: 2_000,
+      finishedAt: 3_000,
+      moves: [staked("alice", "white", 1)],
+    });
+
+    const captured = captureSelects(stack.sqlite);
+    await requestGames(stack, "alice", "status=ongoing");
+    await requestGames(stack, "alice", "status=finished");
+
+    expect(captured.length).toBeGreaterThan(0);
+    for (const statement of captured) {
+      const plan = stack.sqlite
+        .prepare(`EXPLAIN QUERY PLAN ${statement.sql}`)
+        .all(...statement.params) as { detail: string }[];
+      for (const row of plan) {
+        expect(row.detail).not.toMatch(/^SCAN (claims|games)\b/);
+      }
+    }
   });
 });
