@@ -200,6 +200,7 @@ export function registerOperationalCommands(deps: ReconciliationDeps): void {
       const bonusLow =
         payload.bonusAlgoMicroAlgo < cfg.BONUS_MIN_ALGO_MICRO ||
         payload.bonusUsdcMicroUsdc < cfg.BONUS_USDC_MICRO;
+      const previousReport = readReconciliationReport(deps.db);
       const report: ReconciliationReport = {
         lastRunAt: new Date(ctx.now).toISOString(),
         bookMicroUsdc: book,
@@ -243,34 +244,38 @@ export function registerOperationalCommands(deps: ReconciliationDeps): void {
           .run();
       }
 
-      const reconciliationChanged = updatePauseCause(deps.db, ctx, {
+      // Drift alerts the operator but never pauses gameplay: small transient
+      // drifts from facilitator/algod quirks are cheaper to reconcile offline
+      // than an automatic halt (ADR 0007). Clearing the cause here also
+      // releases any drift pause persisted before this policy change.
+      updatePauseCause(deps.db, ctx, {
         cause: "reconciliation",
-        active: !ok,
-      }).changed;
-      if (!ok) {
-        if (reconciliationChanged) {
-          deps.db
-            .insert(schema.errorLog)
-            .values({
-              ts: ctx.now,
-              level: "error",
-              code: "reconciliation_drift",
-              requestId: null,
-              contextJson: JSON.stringify({
-                driftMicroUsdc: drift,
-                inboundToleranceMicroUsdc: totalInboundTolerance,
-                outboundToleranceMicroUsdc: totalOutboundTolerance,
-              }),
-            })
-            .run();
-          ctx.afterCommit(() => {
-            void deps.alerts.emit("reconciliation_drift", {
+        active: false,
+      });
+      // Debounce on the ok -> drift transition so the scheduled loop does not
+      // re-alert every cycle while a known drift awaits investigation.
+      if (!ok && (previousReport === null || previousReport.ok)) {
+        deps.db
+          .insert(schema.errorLog)
+          .values({
+            ts: ctx.now,
+            level: "error",
+            code: "reconciliation_drift",
+            requestId: null,
+            contextJson: JSON.stringify({
               driftMicroUsdc: drift,
               inboundToleranceMicroUsdc: totalInboundTolerance,
               outboundToleranceMicroUsdc: totalOutboundTolerance,
-            });
+            }),
+          })
+          .run();
+        ctx.afterCommit(() => {
+          void deps.alerts.emit("reconciliation_drift", {
+            driftMicroUsdc: drift,
+            inboundToleranceMicroUsdc: totalInboundTolerance,
+            outboundToleranceMicroUsdc: totalOutboundTolerance,
           });
-        }
+        });
       }
       const treasuryChanged = updatePauseCause(deps.db, ctx, {
         cause: "treasury",

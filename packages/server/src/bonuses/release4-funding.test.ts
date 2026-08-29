@@ -679,7 +679,14 @@ describe("Release 4 recoverable starter-stake funding (#99)", () => {
         stack.database.db.select().from(schema.systemState).get()
           ?.pauseCausesJson ?? "[]",
       ),
-    ).toContain("reconciliation");
+    ).toEqual([]);
+    await Promise.resolve();
+    const driftBodies = (
+      stack.deliveries.mock.calls as unknown as [string, { body: string }][]
+    ).map((call) => call[1]?.body ?? "");
+    expect(
+      driftBodies.some((body) => body.includes("reconciliation_drift")),
+    ).toBe(true);
   });
 
   it("bonus_attempt_exhaustion_stays_visible_and_admin_retry_rearms_only_after_safe_recovery", async () => {
