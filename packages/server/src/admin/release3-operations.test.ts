@@ -402,7 +402,7 @@ describe("Release 3 reconciliation and recovery", () => {
     });
   });
 
-  it("reconciliation_drift_pauses_once_and_alerts_once", async () => {
+  it("reconciliation_drift_alerts_once_without_pausing", async () => {
     const stack = setup({ ALERT_DEDUPE_SECONDS: 600 });
     await runReconciliation(stack.reconciliation, "boot");
     stack.rail.control.setBalances(stack.rail.treasuryAddress, {
@@ -412,10 +412,37 @@ describe("Release 3 reconciliation and recovery", () => {
     await runReconciliation(stack.reconciliation, "scheduled");
 
     expect(readPauseState(stack.database.db)).toMatchObject({
-      mode: "paused",
-      causes: ["reconciliation"],
+      mode: "running",
+      causes: [],
+      banner: null,
     });
     expect(stack.transport).toHaveBeenCalledTimes(1);
+  });
+
+  it("reconciliation_drift_realerts_after_a_clean_run", async () => {
+    const stack = setup();
+    await runReconciliation(stack.reconciliation, "boot");
+    stack.rail.control.setBalances(stack.rail.treasuryAddress, {
+      usdcMicroUsdc: 999_000,
+    });
+    await runReconciliation(stack.reconciliation, "scheduled");
+    await runReconciliation(stack.reconciliation, "scheduled");
+    stack.rail.control.setBalances(stack.rail.treasuryAddress, {
+      usdcMicroUsdc: 1_000_000,
+    });
+    await runReconciliation(stack.reconciliation, "scheduled");
+    stack.rail.control.setBalances(stack.rail.treasuryAddress, {
+      usdcMicroUsdc: 999_000,
+    });
+    await runReconciliation(stack.reconciliation, "scheduled");
+
+    expect(
+      stack.database.db
+        .select()
+        .from(schema.errorLog)
+        .all()
+        .filter((row) => row.code === "reconciliation_drift"),
+    ).toHaveLength(2);
   });
 
   it("reconciliation_drift_recovers_only_its_pause_cause_after_clean_probe", async () => {
@@ -461,13 +488,16 @@ describe("Release 3 reconciliation and recovery", () => {
       usdcMicroUsdc: 999_000,
     });
     await runReconciliation(stack.reconciliation, "scheduled");
+    expect(readPauseState(stack.database.db).causes).toEqual(
+      expect.arrayContaining(["manual", "facilitator"]),
+    );
     stack.rail.control.setHealth(true);
     await probeFacilitator(stack.reconciliation);
     await jsonRequest(stack, "/api/v1/admin/resume", "POST");
 
     expect(readPauseState(stack.database.db)).toMatchObject({
-      mode: "paused",
-      causes: ["reconciliation"],
+      mode: "running",
+      causes: [],
     });
   });
 
@@ -981,6 +1011,11 @@ describe("Release 3 admin mutations", () => {
       usdcMicroUsdc: 999_500,
     });
     await runReconciliation(stack.reconciliation, "scheduled");
+    // Drift no longer pauses on its own, so the operator pauses manually
+    // before applying the investigated adjustment.
+    await jsonRequest(stack, "/api/v1/admin/pause", "POST", {
+      banner: "Investigating drift",
+    });
     const wrong = await jsonRequest(
       stack,
       "/api/v1/admin/treasury/adjust",
