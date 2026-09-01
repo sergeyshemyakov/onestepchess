@@ -5,6 +5,7 @@ import type {
   PaymentRequirements as X402PaymentRequirements,
 } from "@x402-avm/core/types";
 import algosdk from "algosdk";
+import { Buffer as BufferPolyfill } from "buffer";
 import type { ApiClient } from "../api/client.js";
 import type {
   ErrorEnvelope,
@@ -15,6 +16,19 @@ import type {
 } from "../api/schemas.js";
 import { paymentRequiredSchema } from "../api/schemas.js";
 import type { ConnectedWallet } from "./provider.js";
+
+// `@x402-avm/avm` builds its transaction notes from the bare Node `Buffer`
+// global, which no browser provides. The deployment only ever had one by
+// accident — the Pera and Defly SDK chunks assign `window.Buffer` when they
+// load — so exact payments worked for those two wallets and died with
+// `ReferenceError: Buffer is not defined` for every other one, before the
+// signer was ever reached. The chunk that pulls the AVM scheme in owns the
+// shim (§5.6 keeps it out of the root bundle), next to the `global` alias
+// `loadWalletModule` installs for the same reason.
+const runtime = globalThis as typeof globalThis & {
+  Buffer?: typeof BufferPolyfill;
+};
+runtime.Buffer ??= BufferPolyfill;
 
 const X402_GLOBAL_CHALLENGE_TAG = "x402-global-challenge";
 const MOVE_RESOURCE_DESCRIPTION =
