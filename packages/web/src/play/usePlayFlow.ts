@@ -328,9 +328,13 @@ export function usePlayFlow(args: {
             break;
         }
       })
-      .catch(() =>
-        dispatch({ type: "PAYMENT_FAILED", envelope: CONNECTION_FAILED }),
-      )
+      .catch((cause) => {
+        // The envelope is deliberately vague, which makes a code defect in the
+        // payment build read exactly like a flaky link. Keep the cause where a
+        // bug report can reach it.
+        console.error("move submission failed", cause);
+        dispatch({ type: "PAYMENT_FAILED", envelope: CONNECTION_FAILED });
+      })
       .finally(() => {
         submitInFlight.current = false;
       });

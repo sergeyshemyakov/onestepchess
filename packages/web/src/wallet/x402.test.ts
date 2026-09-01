@@ -908,3 +908,34 @@ it("web_mock_and_demo_paths_remain_wallet_free_and_release3_compatible", async (
   expect(getSigner).not.toHaveBeenCalled();
   expect(fetchSpy).not.toHaveBeenCalled();
 });
+
+// A browser has no Node `Buffer`, and the deployment only ever got one by
+// accident: the Pera/Defly SDK chunks assign `window.Buffer` on load, so exact
+// payments worked for those wallets and threw `ReferenceError: Buffer is not
+// defined` for Lute. `@x402-avm/avm` builds its transaction notes from the bare
+// global, so the chunk has to carry the polyfill itself. Re-importing under a
+// removed global is the only faithful stand-in for the browser here — the
+// module applies the polyfill at load, which is exactly what has to survive.
+it("web_exact_payment_builds_and_signs_without_a_node_buffer_global", async () => {
+  suggestedParams();
+  vi.stubGlobal("Buffer", undefined);
+  vi.resetModules();
+  const bufferless = await import("./x402.js");
+  const wallet = exactWallet();
+  await expect(
+    bufferless.payMove({
+      claimId: "clm_bufferless",
+      moveUci: "e2e4",
+      address: payer.addr.toString(),
+      stakeMicroUsdc: 1_000,
+      meta: exactMeta,
+      client: scriptedClient([
+        paymentRequired(exactChallenge()),
+        { kind: "receipt", receipt },
+      ]),
+      getSigner: async () => wallet,
+    }),
+  ).resolves.toEqual({ kind: "receipt", receipt });
+  expect(wallet.signTransactions).toHaveBeenCalledTimes(1);
+  bufferless.resetHeaderCacheForTests();
+});

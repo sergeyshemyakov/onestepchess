@@ -487,6 +487,42 @@ describe("payment edge-state matrix (#32, F-W10 rows)", () => {
     });
   });
 
+  // The vague envelope below reads as a flaky link, so a code defect in the
+  // payment build (a browser missing the Node `Buffer` global, say) used to be
+  // indistinguishable from one. The cause has to reach the console.
+  it("an unexpected submit failure reports its cause instead of swallowing it", async () => {
+    const reported = vi.spyOn(console, "error").mockImplementation(() => {});
+    let call = 0;
+    const client = mockClient({
+      postMove: vi.fn(async () => {
+        call += 1;
+        if (call === 1) return paymentRequired;
+        throw new ReferenceError("Buffer is not defined");
+      }),
+    } as never);
+    const { view } = renderHub(client);
+    fireEvent.click(await screen.findByRole("button", { name: /▸ PLAY/ }));
+    await screen.findByText(/YOU PLAY WHITE/);
+    fireEvent.click(
+      view.container.querySelector('[data-square="e2"]') as Element,
+    );
+    fireEvent.click(
+      view.container.querySelector('[data-square="e4"]') as Element,
+    );
+    await screen.findByText("FINAL MOVE?");
+    fireEvent.click(screen.getByRole("button", { name: /sign & commit/ }));
+    await screen.findByText(/connection failed/);
+    expect(
+      reported.mock.calls.some((args) =>
+        args.some(
+          (arg) =>
+            arg instanceof Error && arg.message === "Buffer is not defined",
+        ),
+      ),
+    ).toBe(true);
+    reported.mockRestore();
+  });
+
   it("503 PAYMENT_UNAVAILABLE returns to CONFIRM, definitively uncharged", async () => {
     await stakedConfirm([
       paymentRequired,
