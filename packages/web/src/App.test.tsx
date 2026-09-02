@@ -205,7 +205,7 @@ describe("wallet auth flow (#28)", () => {
     });
   });
 
-  it("wallet_connection_closes_the_connect_sheet_before_requesting_the_signature", async () => {
+  it("wallet_connection_swaps_the_wallet_list_for_a_waiting_state_before_requesting_the_signature", async () => {
     let releaseChallenge:
       | ((challenge: {
           nonce: string;
@@ -248,9 +248,12 @@ describe("wallet auth flow (#28)", () => {
 
     await waitFor(() => {
       expect(client.authChallenge).toHaveBeenCalledTimes(1);
+      // The wallet list is gone (no double-trigger), replaced by a visible
+      // waiting state instead of an empty screen while the wallet signs.
       expect(
-        screen.queryByRole("dialog", { name: "connect wallet" }),
+        screen.queryByRole("button", { name: /dev wallet \(mnemonic\)/ }),
       ).toBeNull();
+      expect(screen.getByText(/approve the sign-in request/i)).not.toBeNull();
     });
 
     releaseChallenge?.({

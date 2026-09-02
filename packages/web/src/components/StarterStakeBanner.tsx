@@ -6,7 +6,10 @@ import { AlgorandMark, KnightMark } from "../board/pieces.jsx";
 import { explorerTxUrl } from "../lib/explorer.js";
 import {
   acknowledgeStarterStake,
+  clearStarterStakeOptInPending,
+  markStarterStakeOptInPending,
   starterStakeAcknowledged,
+  starterStakeOptInPendingAt,
 } from "../lib/storage.js";
 import type { ConnectedWallet } from "../wallet/provider.js";
 
@@ -15,6 +18,21 @@ function errorHint(cause: unknown, fallback: string): string {
 }
 
 const STAGES = ["CLAIM", "ALGO", "USDC", "PLAY"] as const;
+
+/** How long a signed-but-unobserved opt-in keeps the banner waiting. Long
+ * enough for a slow chain/watcher round trip, short enough that a relay that
+ * silently died re-arms the button instead of stranding the flow. */
+const OPTIN_PENDING_TTL_MS = 5 * 60_000;
+
+function freshOptInPendingAt(address: string): number | null {
+  const at = starterStakeOptInPendingAt(address);
+  if (at === null) return null;
+  if (Date.now() - at >= OPTIN_PENDING_TTL_MS) {
+    clearStarterStakeOptInPending();
+    return null;
+  }
+  return at;
+}
 
 export function StarterStakeBanner(props: {
   readonly client: ApiClient;
@@ -33,8 +51,12 @@ export function StarterStakeBanner(props: {
   const [completionRevealed, setCompletionRevealed] = useState(
     status === "funded",
   );
+  const [optInPendingAt, setOptInPendingAt] = useState<number | null>(() =>
+    freshOptInPendingAt(props.profile.address),
+  );
   const paused = props.meta.status.mode === "paused";
-  const waiting = waitingForStatus === status;
+  const optInPending = status === "claimed" && optInPendingAt !== null;
+  const waiting = waitingForStatus === status || optInPending;
   const visibleStatus =
     status === "funded" && !completionRevealed ? "opted_in" : status;
 
@@ -56,6 +78,28 @@ export function StarterStakeBanner(props: {
     const interval = setInterval(onRefresh, 5_000);
     return () => clearInterval(interval);
   }, [awaitingChain, onRefresh]);
+
+  // The reload-surviving marker resolves one of two ways: the bonus advances
+  // past `claimed` (opt-in observed — done), or the TTL runs out and the
+  // button re-arms so a lost relay can be retried instead of stranding the
+  // flow until the opt-in deadline.
+  useEffect(() => {
+    if (optInPendingAt === null) return;
+    if (status !== "claimed") {
+      clearStarterStakeOptInPending();
+      setOptInPendingAt(null);
+      return;
+    }
+    const timer = setTimeout(
+      () => {
+        clearStarterStakeOptInPending();
+        setOptInPendingAt(null);
+        setError("USDC setup is taking longer than expected — try again");
+      },
+      Math.max(0, optInPendingAt + OPTIN_PENDING_TTL_MS - Date.now()),
+    );
+    return () => clearTimeout(timer);
+  }, [optInPendingAt, status]);
 
   const claim = useCallback(async () => {
     if (busy !== null) return;
@@ -85,10 +129,23 @@ export function StarterStakeBanner(props: {
         meta: props.meta,
         getWallet: props.getWallet,
       });
-      setWaitingForStatus("claimed");
+      // The marker is the only waiting source for this step, so the TTL
+      // expiry re-arms the button on the same page, not just after a reload.
+      markStarterStakeOptInPending(props.profile.address);
+      setOptInPendingAt(Date.now());
       props.onRefresh();
     } catch (cause) {
       if (cause instanceof Error && cause.name === "AbortError") {
+        return;
+      }
+      // A racing observer already advanced the bonus — progress, not failure.
+      if (
+        cause instanceof ApiError &&
+        cause.envelope.error === "BONUS_ALREADY_OPTED_IN"
+      ) {
+        markStarterStakeOptInPending(props.profile.address);
+        setOptInPendingAt(Date.now());
+        props.onRefresh();
         return;
       }
       setError(

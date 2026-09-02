@@ -31,6 +31,46 @@ export type LoginOutcome =
   | { readonly kind: "rejected" }
   | { readonly kind: "error"; readonly message: string };
 
+/** Only a deliberate user cancellation may close the sheet silently; every
+ * other signing failure (popup blocked, dead WalletConnect session, network
+ * mismatch) must surface as an error the user can act on. The wallet SDKs
+ * signal cancellation inconsistently — an AbortError, a `data.type` code, or
+ * just prose — so all three shapes are checked, each kept narrow enough that
+ * failures like SESSION_CLOSED or "rejected because the session expired"
+ * stay classified as errors; when unsure, showing an error to a user who
+ * cancelled beats silently hiding a real failure. */
+export function isSignCancellation(cause: unknown): boolean {
+  if (cause instanceof Error && cause.name === "AbortError") return true;
+  if (
+    typeof cause === "object" &&
+    cause !== null &&
+    "data" in cause &&
+    typeof cause.data === "object" &&
+    cause.data !== null &&
+    "type" in cause.data &&
+    typeof cause.data.type === "string" &&
+    (/CANCEL/i.test(cause.data.type) || /_MODAL_CLOSED$/i.test(cause.data.type))
+  ) {
+    return true;
+  }
+  const message = cause instanceof Error ? cause.message : "";
+  return /\bcancell?ed\b|\buser\s+(rejected|declined|denied)\b|^transaction request rejected$/i.test(
+    message,
+  );
+}
+
+function signFailure(cause: unknown): LoginOutcome {
+  if (isSignCancellation(cause)) return { kind: "rejected" };
+  const detail = cause instanceof Error ? cause.message.trim() : "";
+  return {
+    kind: "error",
+    message:
+      detail === ""
+        ? "wallet signing failed — try again"
+        : `wallet signing failed: ${detail}`,
+  };
+}
+
 export async function loginWithWallet(deps: {
   readonly client: ApiClient;
   readonly meta: Meta;
@@ -49,8 +89,8 @@ export async function loginWithWallet(deps: {
         scope: challenge.arc60Payload.metadata.scope,
         encoding: challenge.arc60Payload.metadata.encoding,
       });
-    } catch {
-      return { kind: "rejected" };
+    } catch (cause) {
+      return signFailure(cause);
     }
     proofBody = {
       method: "arc60",
@@ -78,8 +118,8 @@ export async function loginWithWallet(deps: {
     let signedBytes: Uint8Array;
     try {
       signedBytes = await wallet.signTransactions([guarded.txn]);
-    } catch {
-      return { kind: "rejected" };
+    } catch (cause) {
+      return signFailure(cause);
     }
     proofBody = { method: "txn", signedTxnB64: bytesToB64(signedBytes) };
   }

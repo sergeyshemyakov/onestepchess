@@ -32,6 +32,7 @@ import {
   evaluateBonusEligibility,
   registerBonusCommands,
 } from "./lifecycle.js";
+import { createOptInWatchLauncher, watchRelayedOptIn } from "./optin.js";
 import { registerBonusRoutes } from "./routes.js";
 import { runBonusWatcher } from "./watcher.js";
 
@@ -89,13 +90,15 @@ function setup(overrides: Record<string, unknown> = {}) {
   });
   registerHumanRoutes(app, deps);
   const onFundingWork = vi.fn();
-  registerBonusRoutes(app, { ...deps, onFundingWork });
+  const onOptInRelayed = vi.fn();
+  registerBonusRoutes(app, { ...deps, onFundingWork, onOptInRelayed });
   return {
     app,
     database,
     coordinator,
     deps,
     onFundingWork,
+    onOptInRelayed,
     rail,
     now: () => now,
     setNow(value: number) {
@@ -930,5 +933,196 @@ describe("welcome-bonus return sweep", () => {
       },
     );
     expect(duplicateResponse.status).toBe(400);
+  });
+});
+
+describe("welcome-bonus opt-in robustness", () => {
+  it("optin_relay_invokes_the_fast_path_hook_with_the_signed_bytes", async () => {
+    const stack = setup();
+    const account = algosdk.generateAccount();
+    seedPlayer(stack, account);
+    seedClaimedBonus(stack, account);
+    const request = (signed: string) =>
+      stack.app.request("/api/v1/my/bonus/optin", {
+        method: "POST",
+        headers: {
+          ...authorization(stack, account),
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ signedTxnB64: signed }),
+      });
+
+    const relayedFine = signedOptIn(account);
+    expect((await request(relayedFine)).status).toBe(202);
+    expect(stack.onOptInRelayed).toHaveBeenLastCalledWith({
+      player: account.addr.toString(),
+      signedTxnB64: relayedFine,
+      relayed: true,
+    });
+
+    stack.rail.control.queueSubmitSignedTransaction({
+      ok: false,
+      reason: "unavailable",
+    });
+    const ambiguous = signedOptIn(account);
+    expect((await request(ambiguous)).status).toBe(202);
+    expect(stack.onOptInRelayed).toHaveBeenLastCalledWith({
+      player: account.addr.toString(),
+      signedTxnB64: ambiguous,
+      relayed: false,
+    });
+
+    stack.rail.control.queueSubmitSignedTransaction({
+      ok: false,
+      reason: "rejected",
+    });
+    expect((await request(signedOptIn(account))).status).toBe(400);
+    expect(stack.onOptInRelayed).toHaveBeenCalledTimes(2);
+  });
+
+  it("watch_relayed_optin_observes_confirmation_and_kicks_funding_without_the_watcher", async () => {
+    const stack = setup();
+    const account = algosdk.generateAccount();
+    seedPlayer(stack, account);
+    seedClaimedBonus(stack, account);
+    const signed = signedOptIn(account);
+    expect((await stack.rail.submitSignedTransaction(signed)).ok).toBe(true);
+
+    const onFundingWork = vi.fn();
+    const advanced = await watchRelayedOptIn(
+      { coordinator: stack.coordinator, rail: stack.rail, onFundingWork },
+      {
+        player: account.addr.toString(),
+        signedTxnB64: signed,
+        relayed: true,
+        attempts: 3,
+        intervalMs: 0,
+      },
+    );
+    expect(advanced).toBe(true);
+    expect(onFundingWork).toHaveBeenCalledTimes(1);
+    expect(
+      stack.database.db
+        .select({ status: schema.bonuses.status })
+        .from(schema.bonuses)
+        .where(eq(schema.bonuses.player, account.addr.toString()))
+        .get()?.status,
+    ).toBe("opted_in");
+  });
+
+  it("watch_relayed_optin_resubmits_an_ambiguous_relay_before_observing", async () => {
+    const stack = setup();
+    const account = algosdk.generateAccount();
+    seedPlayer(stack, account);
+    seedClaimedBonus(stack, account);
+    // The route's relay attempt failed without applying anything; the watch
+    // owns the retained bytes and retries them.
+    const advanced = await watchRelayedOptIn(
+      { coordinator: stack.coordinator, rail: stack.rail },
+      {
+        player: account.addr.toString(),
+        signedTxnB64: signedOptIn(account),
+        relayed: false,
+        attempts: 3,
+        intervalMs: 0,
+      },
+    );
+    expect(advanced).toBe(true);
+    expect(
+      stack.database.db
+        .select({ status: schema.bonuses.status })
+        .from(schema.bonuses)
+        .where(eq(schema.bonuses.player, account.addr.toString()))
+        .get()?.status,
+    ).toBe("opted_in");
+  });
+
+  it("watch_relayed_optin_gives_up_quietly_when_the_optin_never_lands", async () => {
+    const stack = setup();
+    const account = algosdk.generateAccount();
+    seedPlayer(stack, account);
+    seedClaimedBonus(stack, account);
+    stack.rail.control.setAccountInfo(account.addr.toString(), {
+      optedInUsdc: false,
+    });
+    const onFundingWork = vi.fn();
+    const advanced = await watchRelayedOptIn(
+      { coordinator: stack.coordinator, rail: stack.rail, onFundingWork },
+      {
+        player: account.addr.toString(),
+        signedTxnB64: signedOptIn(account),
+        relayed: true,
+        attempts: 3,
+        intervalMs: 0,
+      },
+    );
+    expect(advanced).toBe(false);
+    expect(onFundingWork).not.toHaveBeenCalled();
+    expect(
+      stack.database.db
+        .select({ status: schema.bonuses.status })
+        .from(schema.bonuses)
+        .where(eq(schema.bonuses.player, account.addr.toString()))
+        .get()?.status,
+    ).toBe("claimed");
+  });
+
+  it("optin_watch_launcher_coalesces_concurrent_watches_per_player", async () => {
+    const stack = setup();
+    const account = algosdk.generateAccount();
+    seedPlayer(stack, account);
+    seedClaimedBonus(stack, account);
+    stack.rail.control.setAccountInfo(account.addr.toString(), {
+      optedInUsdc: false,
+    });
+    const accountSpy = vi.spyOn(stack.rail, "getAccountInfo");
+    const launch = createOptInWatchLauncher(
+      { coordinator: stack.coordinator, rail: stack.rail },
+      { attempts: 2, intervalMs: 0 },
+    );
+    const input = {
+      player: account.addr.toString(),
+      signedTxnB64: signedOptIn(account),
+      relayed: true,
+    };
+    // A replayed POST while a watch is live must not fan out a second loop.
+    await Promise.all([launch(input), launch(input)]);
+    expect(accountSpy).toHaveBeenCalledTimes(2);
+    // Once the first watch finished, a later relay may watch again.
+    await launch(input);
+    expect(accountSpy).toHaveBeenCalledTimes(4);
+  });
+
+  it("optin_routes_distinguish_an_already_opted_in_bonus", async () => {
+    const stack = setup();
+    const account = algosdk.generateAccount();
+    seedPlayer(stack, account);
+    seedClaimedBonus(stack, account);
+    stack.database.db
+      .update(schema.bonuses)
+      .set({ status: "opted_in" })
+      .where(eq(schema.bonuses.player, account.addr.toString()))
+      .run();
+
+    const build = await stack.app.request("/api/v1/my/bonus/optin-txn", {
+      headers: authorization(stack, account),
+    });
+    expect(build.status).toBe(409);
+    expect(await build.json()).toMatchObject({
+      error: "BONUS_ALREADY_OPTED_IN",
+    });
+
+    const relay = await stack.app.request("/api/v1/my/bonus/optin", {
+      method: "POST",
+      headers: {
+        ...authorization(stack, account),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ signedTxnB64: signedOptIn(account) }),
+    });
+    expect(relay.status).toBe(409);
+    expect(await relay.json()).toMatchObject({
+      error: "BONUS_ALREADY_OPTED_IN",
+    });
   });
 });

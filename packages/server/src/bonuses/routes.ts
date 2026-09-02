@@ -29,6 +29,13 @@ export type BonusRouteDeps = SessionAuthDeps & {
   readonly trustProxyHops: number;
   /** Wakes the funding scheduler after a claim creates work (F1). */
   readonly onFundingWork?: () => void;
+  /** Fire-and-forget fast-path observation of a relayed opt-in (see
+   * `watchRelayedOptIn`); the 60 s watcher remains the durable fallback. */
+  readonly onOptInRelayed?: (input: {
+    readonly player: string;
+    readonly signedTxnB64: string;
+    readonly relayed: boolean;
+  }) => void;
 };
 
 function claimedBonus(deps: BonusRouteDeps, player: string): void {
@@ -37,6 +44,13 @@ function claimedBonus(deps: BonusRouteDeps, player: string): void {
     .from(schema.bonuses)
     .where(eq(schema.bonuses.player, player))
     .get();
+  // A racing watcher/fast-path pass may have advanced the bonus between the
+  // player's click and this request — that is progress, not ineligibility.
+  if (row?.status === "opted_in" || row?.status === "funded") {
+    throw new AppError("BONUS_ALREADY_OPTED_IN", {
+      hint: "USDC is already enabled — your starter stake is on the way",
+    });
+  }
   if (row?.status !== "claimed") {
     throw new AppError("BONUS_NOT_ELIGIBLE", {
       hint: "a claimed starter stake awaiting USDC opt-in is required",
@@ -188,6 +202,11 @@ export function registerBonusRoutes(
         hint: result.detail?.slice(0, 500) ?? "algod rejected the opt-in",
       });
     }
+    deps.onOptInRelayed?.({
+      player: session.address,
+      signedTxnB64: body.signedTxnB64,
+      relayed: result.ok,
+    });
     return c.json({ status: "watching" as const }, 202);
   });
 

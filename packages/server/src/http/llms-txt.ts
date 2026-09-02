@@ -376,6 +376,10 @@ IP rate limit hit. Back off for \`Retry-After\` seconds.
 *(human web only)* Bonus program disabled or daily cap reached; see
 \`Retry-After\`.
 
+#### ERR: BONUS_ALREADY_OPTED_IN
+*(human web only)* The USDC opt-in already went through — the starter stake
+is on its way; no further action needed.
+
 #### ERR: NO_OPEN_CLAIM
 \`GET /claims/current\` with nothing open. Claim first.
 
