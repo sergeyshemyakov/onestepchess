@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ApiClient } from "../api/client.js";
+import { type ApiClient, ApiError } from "../api/client.js";
 import type { Meta, PlayerView } from "../api/schemas.js";
 import { useToasts } from "../components/Toasts.jsx";
 import { useDialogFocusTrap } from "../components/useDialogFocusTrap.js";
@@ -39,8 +39,17 @@ export function ConnectSheet(props: {
   /** Lute connected, sign-in not yet started — see the pause in pick(). */
   const [luteWallet, setLuteWallet] = useState<ConnectedWallet | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
-  const { client, meta, onSignedIn, onClose } = props;
+  const { client, meta, onSignedIn } = props;
   const { push } = useToasts();
+  /** Set when the user backs out of the sheet. An in-flight login cannot be
+   * aborted mid-wallet, so its late outcome is discarded instead — backing
+   * out must never turn into a surprise sign-in. */
+  const closedRef = useRef(false);
+  const { onClose: closeProp } = props;
+  const onClose = useCallback(() => {
+    closedRef.current = true;
+    closeProp();
+  }, [closeProp]);
   useDialogFocusTrap(dialogRef, onClose);
 
   useEffect(() => {
@@ -67,6 +76,7 @@ export function ConnectSheet(props: {
         wallet,
         ...(ref === null ? {} : { ref }),
       });
+      if (closedRef.current) return;
       switch (outcome.kind) {
         case "signed-in":
           onSignedIn(outcome.player, outcome.linkedGuestClaims);
@@ -88,6 +98,7 @@ export function ConnectSheet(props: {
 
   const failLogin = useCallback(
     async (cause: unknown, module: WalletModule | null) => {
+      if (closedRef.current) return;
       if (cause instanceof Error && cause.name === "AbortError") {
         onClose();
         return;
@@ -95,8 +106,12 @@ export function ConnectSheet(props: {
       await module?.disconnect().catch(() => undefined);
       setLuteWallet(null);
       setWalletConnected(false);
+      // A server rejection (rate limit, invalid address, …) carries its own
+      // hint — blaming the wallet for it sends the user down the wrong path.
       setError(
-        "wallet sign-in failed — check your wallet connection, then try again",
+        cause instanceof ApiError
+          ? cause.envelope.hint
+          : "wallet sign-in failed — check your wallet connection, then try again",
       );
     },
     [onClose],
@@ -161,8 +176,6 @@ export function ConnectSheet(props: {
     );
   }
 
-  if (walletConnected) return null;
-
   return (
     <div className="modalback">
       <div
@@ -173,7 +186,15 @@ export function ConnectSheet(props: {
         aria-modal="true"
         aria-label="connect wallet"
       >
-        {luteWallet !== null ? (
+        {walletConnected ? (
+          <>
+            <h3>CONNECT</h3>
+            <p className="console">
+              &gt; approve the sign-in request in your wallet
+              {"\n"}&gt; nothing is broadcast — this can take a moment
+            </p>
+          </>
+        ) : luteWallet !== null ? (
           <>
             <h3>{props.lutePrompt === true ? "QUICK SETUP" : "CONNECT"}</h3>
             <p className="console">

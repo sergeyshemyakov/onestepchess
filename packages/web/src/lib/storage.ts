@@ -27,6 +27,7 @@ const CHAMP_KEY = "osc.champNotice";
 const TOWER_TEASER_KEY = "osc.towerTeaserDismissedAt";
 const LAST_SEEN_FINISHED_KEY = "osc.lastSeenFinishedAt";
 const BONUS_DONE_KEY = "osc.bonusDone";
+const BONUS_OPTIN_PENDING_KEY = "osc.bonusOptInPending";
 const CUSTOM_BANNER_KEY = "osc.customBanner";
 export const TOWER_TEASER_COOLDOWN_MS = 24 * 60 * 60 * 1_000;
 
@@ -161,4 +162,24 @@ export function starterStakeAcknowledged(): boolean {
 
 export function acknowledgeStarterStake(): void {
   safeSet(localStorage, BONUS_DONE_KEY, "acked");
+}
+
+/** A signed USDC opt-in survives a page reload only through this marker — it
+ * keeps the banner waiting/polling instead of re-arming a second signature
+ * while the chain and the server watcher catch up. */
+export function starterStakeOptInPendingAt(address: string): number | null {
+  const raw = safeGet(localStorage, BONUS_OPTIN_PENDING_KEY);
+  if (raw === null) return null;
+  const separator = raw.lastIndexOf("|");
+  if (separator === -1 || raw.slice(0, separator) !== address) return null;
+  const at = Number(raw.slice(separator + 1));
+  return Number.isFinite(at) ? at : null;
+}
+
+export function markStarterStakeOptInPending(address: string): void {
+  safeSet(localStorage, BONUS_OPTIN_PENDING_KEY, `${address}|${Date.now()}`);
+}
+
+export function clearStarterStakeOptInPending(): void {
+  safeSet(localStorage, BONUS_OPTIN_PENDING_KEY, null);
 }

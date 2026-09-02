@@ -15,6 +15,7 @@ import {
   runFundingExecutor,
 } from "./bonuses/funding.js";
 import { registerBonusCommands } from "./bonuses/lifecycle.js";
+import { createOptInWatchLauncher } from "./bonuses/optin.js";
 import { registerBonusRoutes } from "./bonuses/routes.js";
 import { runBonusWatcher } from "./bonuses/watcher.js";
 import { currentMode, initializeSystemState } from "./boot.js";
@@ -638,10 +639,29 @@ export async function main(): Promise<void> {
   // Replay JSON is the one API response served compressed (server spec §6.6).
   app.use("/api/v1/games/:id/replay", jsonCompression());
   registerHumanRoutes(app, humanDeps);
+  const launchOptInWatch = createOptInWatchLauncher(
+    {
+      coordinator,
+      rail,
+      onFundingWork: () => {
+        void fundingScheduler.kick();
+      },
+    },
+    {
+      attempts: 15,
+      intervalMs: 2_000,
+      onError: (error, player) => {
+        logger.warn({ err: error, player }, "opt-in fast-path watch failed");
+      },
+    },
+  );
   registerBonusRoutes(app, {
     ...humanDeps,
     onFundingWork: () => {
       void fundingScheduler.kick();
+    },
+    onOptInRelayed: (input) => {
+      void launchOptInWatch(input);
     },
   });
   registerEventRoutes(app, { ...authDeps, events });

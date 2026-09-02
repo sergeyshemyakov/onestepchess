@@ -1,13 +1,19 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
   screen,
   waitFor,
 } from "@testing-library/react";
+import algosdk from "algosdk";
 import { afterEach, expect, it, vi } from "vitest";
 import { ApiError } from "../api/http.js";
 import type { BonusStatus, ProfileView } from "../api/schemas.js";
+import {
+  markStarterStakeOptInPending,
+  starterStakeOptInPendingAt,
+} from "../lib/storage.js";
 import { metaFixture, mockClient, profileFixture } from "../test/fixtures.jsx";
 import type { ConnectedWallet } from "../wallet/provider.js";
 import { StarterStakeBanner } from "./StarterStakeBanner.jsx";
@@ -231,6 +237,187 @@ it("starter_stake_flow_recovers_after_reload_app_switch_stream_reset_and_wallet_
     expect(screen.getByLabelText("starter stake")).not.toBeNull();
   }
   expect(localStorage.getItem("osc.bonusDone")).toBeNull();
+});
+
+it("starter_stake_optin_marker_restores_waiting_and_polling_after_reload", () => {
+  vi.useFakeTimers();
+  try {
+    const address = profileFixture().address;
+    markStarterStakeOptInPending(address);
+    const onRefresh = vi.fn();
+    banner({
+      profile: profileFixture({
+        bonus: { status: "claimed", algoTxid: "ALGO_CONFIRMATION_TX" },
+      }),
+      onRefresh,
+    });
+    const enable = screen.getByRole("button", {
+      name: "ENABLE USDC ▸",
+    }) as HTMLButtonElement;
+    expect(enable.disabled).toBe(true);
+    expect(screen.getByText(/confirming on chain/)).not.toBeNull();
+    vi.advanceTimersByTime(12_000);
+    expect(onRefresh).toHaveBeenCalled();
+
+    // A signed opt-in that never lands must not strand the flow: the marker
+    // goes stale and the button re-arms for another try.
+    act(() => {
+      vi.advanceTimersByTime(6 * 60_000);
+    });
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "ENABLE USDC ▸",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
+    expect(starterStakeOptInPendingAt(address)).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("starter_stake_optin_stale_marker_rearms_the_button_at_mount", () => {
+  const address = profileFixture().address;
+  localStorage.setItem(
+    "osc.bonusOptInPending",
+    `${address}|${Date.now() - 6 * 60_000}`,
+  );
+  banner({ status: "claimed" });
+  expect(
+    (screen.getByRole("button", { name: "ENABLE USDC ▸" }) as HTMLButtonElement)
+      .disabled,
+  ).toBe(false);
+});
+
+it("starter_stake_optin_success_persists_the_waiting_marker", async () => {
+  const account = algosdk.generateAccount();
+  const address = account.addr.toString();
+  const optInTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+    sender: account.addr,
+    receiver: account.addr,
+    amount: 0,
+    assetIndex: 31_566_704,
+    suggestedParams: {
+      flatFee: true,
+      fee: 1_000,
+      minFee: 1_000,
+      firstValid: 1,
+      lastValid: 100,
+      genesisID: "mainnet-v1.0",
+      genesisHash: new Uint8Array(32),
+    },
+  });
+  const client = mockClient({
+    getBonusOptInTxn: vi.fn(async () =>
+      Buffer.from(algosdk.encodeUnsignedTransaction(optInTxn)).toString(
+        "base64",
+      ),
+    ),
+    submitBonusOptIn: vi.fn(async () => ({ status: "watching" as const })),
+  } as never);
+  const getWallet = vi.fn(async () => ({
+    address,
+    walletName: "fixture",
+    signTransactions: vi.fn(async () => new Uint8Array([1])),
+  }));
+  const onRefresh = vi.fn();
+  banner({
+    profile: profileFixture({ address, bonus: { status: "claimed" } }),
+    client,
+    getWallet,
+    onRefresh,
+  });
+  fireEvent.click(screen.getByRole("button", { name: "ENABLE USDC ▸" }));
+  await waitFor(() => expect(onRefresh).toHaveBeenCalled());
+  expect(starterStakeOptInPendingAt(address)).not.toBeNull();
+  expect(screen.getByText(/confirming on chain/)).not.toBeNull();
+});
+
+it("starter_stake_optin_timeout_rearms_the_button_after_a_same_page_submit", async () => {
+  vi.useFakeTimers();
+  try {
+    const account = algosdk.generateAccount();
+    const address = account.addr.toString();
+    const optInTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+      sender: account.addr,
+      receiver: account.addr,
+      amount: 0,
+      assetIndex: 31_566_704,
+      suggestedParams: {
+        flatFee: true,
+        fee: 1_000,
+        minFee: 1_000,
+        firstValid: 1,
+        lastValid: 100,
+        genesisID: "mainnet-v1.0",
+        genesisHash: new Uint8Array(32),
+      },
+    });
+    const client = mockClient({
+      getBonusOptInTxn: vi.fn(async () =>
+        Buffer.from(algosdk.encodeUnsignedTransaction(optInTxn)).toString(
+          "base64",
+        ),
+      ),
+      submitBonusOptIn: vi.fn(async () => ({ status: "watching" as const })),
+    } as never);
+    const getWallet = vi.fn(async () => ({
+      address,
+      walletName: "fixture",
+      signTransactions: vi.fn(async () => new Uint8Array([1])),
+    }));
+    banner({
+      profile: profileFixture({ address, bonus: { status: "claimed" } }),
+      client,
+      getWallet,
+    });
+    fireEvent.click(screen.getByRole("button", { name: "ENABLE USDC ▸" }));
+    await vi.waitFor(() =>
+      expect(starterStakeOptInPendingAt(address)).not.toBeNull(),
+    );
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "ENABLE USDC ▸",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+
+    // Same-page recovery: once the marker goes stale the button must re-arm
+    // without a reload, even though this submit set the waiting state itself.
+    act(() => {
+      vi.advanceTimersByTime(6 * 60_000);
+    });
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "ENABLE USDC ▸",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("starter_stake_optin_already_opted_in_reads_as_progress_not_an_error", async () => {
+  const address = profileFixture().address;
+  const client = mockClient({
+    getBonusOptInTxn: vi.fn(async () => {
+      throw apiError(
+        "BONUS_ALREADY_OPTED_IN",
+        "USDC is already enabled — your starter stake is on the way",
+        409,
+      );
+    }),
+  } as never);
+  const onRefresh = vi.fn();
+  banner({ status: "claimed", client, onRefresh });
+  fireEvent.click(screen.getByRole("button", { name: "ENABLE USDC ▸" }));
+  await waitFor(() => expect(onRefresh).toHaveBeenCalled());
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(starterStakeOptInPendingAt(address)).not.toBeNull();
 });
 
 it("starter_stake_ui_is_absent_for_agents_guests_ineligible_humans_and_server_omission", () => {
