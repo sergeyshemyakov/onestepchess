@@ -64,6 +64,13 @@
       "when": 1787788800003,
       "tag": "0008_executor_status_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1787788800004,
+      "tag": "0009_direct_stakes",
+      "breakpoints": true
     }
   ]
 }

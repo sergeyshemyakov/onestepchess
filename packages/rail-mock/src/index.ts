@@ -1,5 +1,6 @@
 export type {
   AccountInfo,
+  AssetTransferInput,
   Balances,
   MockControl,
   NoteResult,

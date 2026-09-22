@@ -16,6 +16,7 @@ import { type ServerConfig, serverConfigSchema } from "../../config.js";
 import { ChessAdapterRegistry } from "../../coordinator/chess-registry.js";
 import {
   type ClaimRecord,
+  directStakeNote,
   registerClaimCommands,
 } from "../../coordinator/claims.js";
 import { registerLifecycle } from "../../coordinator/lifecycle.js";
@@ -25,6 +26,7 @@ import { TimerService } from "../../coordinator/timers.js";
 import { CoordinatorViews } from "../../coordinator/views.js";
 import { type OpenedDatabase, openDatabase, schema } from "../../db/open.js";
 import { createLogger } from "../../logger.js";
+import { pruneSettledPaymentIntents } from "../../operations/retention.js";
 import { recoverSettlingIntents } from "../../recovery.js";
 import { createApp } from "../app.js";
 import { registerClaimRoutes } from "./claims.js";
@@ -32,6 +34,7 @@ import { registerClaimRoutes } from "./claims.js";
 const BASE_URL = "https://osc.example";
 const JWT_SECRET = "claims-test-secret-that-is-long-enough";
 const databases: OpenedDatabase[] = [];
+const stacks: { timers: TimerService; coordinator: Coordinator }[] = [];
 
 function setup(
   overrides: Record<string, unknown> = {},
@@ -107,6 +110,7 @@ function setup(
     mode: deps.mode,
   });
   registerClaimRoutes(app, deps);
+  stacks.push({ timers, coordinator });
   return {
     app,
     database,
@@ -209,8 +213,14 @@ function decodeChallenge(response: Response): {
   return JSON.parse(Buffer.from(header, "base64").toString("utf8"));
 }
 
-afterEach(() => {
+afterEach(async () => {
   vi.restoreAllMocks();
+  // An open agent claim arms an immediately-due reveal timer whose command
+  // would otherwise run against a closed database after the test returns.
+  for (const stack of stacks.splice(0)) {
+    stack.timers.disarmAll();
+    await stack.coordinator.onIdle();
+  }
   for (const database of databases.splice(0)) database.sqlite.close();
 });
 
@@ -723,5 +733,676 @@ describe("claim request priority (F3/F5)", () => {
     expect(agent.status).toBe(204);
     expect(agent.headers.get("Retry-After")).toBe("1");
     expect(human.status).toBe(201);
+  });
+});
+
+const USDC_ASSET = "31566704";
+
+/** A wire-valid Algorand txid (52 base32 chars) that is unique per label. */
+function stakeTxid(label: string): string {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  let out = "";
+  for (let index = 0; index < 52; index += 1) {
+    const code = label.charCodeAt(index % label.length) + index;
+    out += alphabet[code % alphabet.length];
+  }
+  return out;
+}
+
+function confirmStake(
+  stack: ReturnType<typeof setup>,
+  claim: ClaimRecord,
+  sender: string,
+  label: string,
+  overrides: {
+    amount?: number;
+    note?: string;
+    receiver?: string;
+    asset?: string;
+    closeTo?: string | null;
+  } = {},
+): string {
+  return stack.rail.control.confirmAssetTransfer({
+    txid: stakeTxid(label),
+    sender,
+    receiver: overrides.receiver ?? stack.rail.treasuryAddress,
+    asset: overrides.asset ?? USDC_ASSET,
+    amount: overrides.amount ?? claim.stakeMicrousdc,
+    note:
+      overrides.note ?? Buffer.from(directStakeNote(claim.id)).toString("utf8"),
+    closeTo: overrides.closeTo ?? null,
+  }).txid;
+}
+
+function directMoveRequest(
+  stack: ReturnType<typeof setup>,
+  claim: ClaimRecord,
+  address: string,
+  txid: string,
+  options: { move?: string; header?: string; kind?: "human" | "agent" } = {},
+): Promise<Response> {
+  return stack.app.request("/api/v1/moves", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${session(stack, address, options.kind ?? "agent")}`,
+      "Content-Type": "application/json",
+      ...(options.header === undefined
+        ? {}
+        : { "PAYMENT-SIGNATURE": options.header }),
+    },
+    body: JSON.stringify({
+      claimId: claim.id,
+      move: options.move ?? "e2e4",
+      stakeTxid: txid,
+    }),
+  });
+}
+
+function balance(stack: ReturnType<typeof setup>, account: string): number {
+  return (
+    stack.database.db
+      .select()
+      .from(schema.ledgerBalances)
+      .where(eq(schema.ledgerBalances.account, account))
+      .get()?.balanceMicrousdc ?? 0
+  );
+}
+
+function directStakeRows(stack: ReturnType<typeof setup>) {
+  return stack.database.db.select().from(schema.directStakes).all();
+}
+
+function claimRow(stack: ReturnType<typeof setup>, id: string): ClaimRecord {
+  const row = stack.database.db
+    .select()
+    .from(schema.claims)
+    .where(eq(schema.claims.id, id))
+    .get();
+  if (row === undefined) throw new Error("claim missing");
+  return row;
+}
+
+async function expireClaim(
+  stack: ReturnType<typeof setup>,
+  claim: ClaimRecord,
+): Promise<void> {
+  stack.setNow(claim.deadline + 1);
+  await stack.coordinator.dispatch({
+    type: "ExpireClaim",
+    payload: { claimId: claim.id },
+  });
+}
+
+async function statusOf(
+  stack: ReturnType<typeof setup>,
+  claim: ClaimRecord,
+  address: string,
+  kind: "human" | "agent" = "agent",
+) {
+  const response = await stack.app.request(
+    `/api/v1/claims/${claim.id}/status`,
+    { headers: { Authorization: `Bearer ${session(stack, address, kind)}` } },
+  );
+  return (await response.json()) as {
+    status: string;
+    receipt?: { txid: string | null };
+    paymentState?: unknown;
+  };
+}
+
+describe("direct on-chain stake payments (spec 2026-09-21)", () => {
+  it("direct_stake_move_settles_without_facilitator", async () => {
+    const metrics = {
+      recordClaimCreated: vi.fn(),
+      recordMoveSettled: vi.fn(),
+      recordFacilitatorError: vi.fn(),
+    };
+    const stack = setup({}, metrics);
+    await addPlayer(stack, "bot", "agent");
+    const claim = await openClaim(stack, "bot", false, "agent");
+    const verify = vi.spyOn(stack.rail, "verify");
+    const settle = vi.spyOn(stack.rail, "settle");
+    const txid = confirmStake(stack, claim, "bot", "settles");
+
+    const response = await directMoveRequest(stack, claim, "bot", txid);
+    const receipt = moveReceiptSchema.parse(await response.json());
+
+    expect(response.status).toBe(200);
+    expect(receipt.txid).toBe(txid);
+    expect(receipt.explorerUrl).toBe(
+      `https://explorer.perawallet.app/tx/${txid}`,
+    );
+    expect(receipt.debitMicroUsdc).toBe(claim.stakeMicrousdc);
+    expect(response.headers.get("PAYMENT-RESPONSE")).toBeNull();
+    expect(
+      stack.database.db.select().from(schema.stakeEntries).get()?.payTxid,
+    ).toBe(txid);
+    expect(balance(stack, "treasury")).toBe(claim.stakeMicrousdc);
+    expect(directStakeRows(stack)).toMatchObject([
+      { txid, player: "bot", claimId: claim.id, outcome: "moved" },
+    ]);
+    expect(
+      stack.database.db.select().from(schema.paymentIntents).all(),
+    ).toHaveLength(0);
+    expect(verify).not.toHaveBeenCalled();
+    expect(settle).not.toHaveBeenCalled();
+    expect(metrics.recordMoveSettled).toHaveBeenCalledTimes(1);
+    expect(claimRow(stack, claim.id).status).toBe("moved");
+  });
+
+  it("direct_stake_replay_is_byte_identical", async () => {
+    const stack = setup();
+    await addPlayer(stack, "bot", "agent");
+    const claim = await openClaim(stack, "bot", false, "agent");
+    const txid = confirmStake(stack, claim, "bot", "replay");
+    const first = await directMoveRequest(stack, claim, "bot", txid);
+    const firstBody = await first.text();
+    const lookups = vi.spyOn(stack.rail, "getAssetTransfer");
+
+    const replay = await directMoveRequest(stack, claim, "bot", txid);
+
+    expect(first.status).toBe(200);
+    expect(replay.status).toBe(200);
+    expect(await replay.text()).toBe(firstBody);
+    expect(replay.headers.get("PAYMENT-RESPONSE")).toBeNull();
+    expect(lookups).not.toHaveBeenCalled();
+    expect(directStakeRows(stack)).toHaveLength(1);
+  });
+
+  it("direct_stake_txid_cannot_migrate_claims", async () => {
+    const stack = setup({
+      GAME_POOL_TARGET: 4,
+      HUMAN_BOARD_RESERVE_PERCENT: 0,
+    });
+    await addPlayer(stack, "bot", "agent");
+    await addPlayer(stack, "other", "agent");
+    const first = await openClaim(stack, "bot", false, "agent");
+    const txid = confirmStake(stack, first, "bot", "migrate");
+    expect((await directMoveRequest(stack, first, "bot", txid)).status).toBe(
+      200,
+    );
+    const treasuryBefore = balance(stack, "treasury");
+    const protocolBefore = balance(stack, "protocol");
+
+    const second = await openClaim(stack, "bot", false, "agent");
+    const sameBot = await directMoveRequest(stack, second, "bot", txid);
+    const otherClaim = await openClaim(stack, "other", false, "agent");
+    const otherPlayer = await directMoveRequest(
+      stack,
+      otherClaim,
+      "other",
+      txid,
+    );
+
+    expect(sameBot.status).toBe(402);
+    expect(await sameBot.json()).toMatchObject({ error: "PAYMENT_INVALID" });
+    expect(sameBot.headers.get("PAYMENT-REQUIRED")).toBeNull();
+    expect(otherPlayer.status).toBe(402);
+    expect(await otherPlayer.json()).toMatchObject({
+      error: "PAYMENT_INVALID",
+    });
+    expect(balance(stack, "treasury")).toBe(treasuryBefore);
+    expect(balance(stack, "protocol")).toBe(protocolBefore);
+    expect(directStakeRows(stack)).toHaveLength(1);
+    expect(claimRow(stack, second.id).status).toBe("open");
+    expect(claimRow(stack, otherClaim.id).status).toBe("open");
+  });
+
+  it("direct_stake_pending_is_202_and_writes_nothing", async () => {
+    const stack = setup();
+    await addPlayer(stack, "bot", "agent");
+    const claim = await openClaim(stack, "bot", false, "agent");
+    const txid = stakeTxid("pending");
+    stack.rail.control.setAssetTransfer(txid, { status: "pending" });
+
+    const response = await directMoveRequest(stack, claim, "bot", txid);
+
+    expect(response.status).toBe(202);
+    expect(response.headers.get("Retry-After")).toBe("2");
+    expect(await response.json()).toEqual({
+      status: "payment_pending",
+      claimId: claim.id,
+      retryAfterSeconds: 2,
+    });
+    expect(claimRow(stack, claim.id).status).toBe("open");
+    expect(directStakeRows(stack)).toHaveLength(0);
+    expect(stack.database.db.select().from(schema.ledger).all()).toHaveLength(
+      0,
+    );
+  });
+
+  it("direct_stake_unknown_or_foreign_transfer_is_invalid", async () => {
+    const stack = setup();
+    await addPlayer(stack, "bot", "agent");
+    const claim = await openClaim(stack, "bot", false, "agent");
+    const good = {
+      sender: "bot",
+      receiver: stack.rail.treasuryAddress,
+      asset: USDC_ASSET,
+      amount: claim.stakeMicrousdc,
+      closeTo: null,
+      note: directStakeNote(claim.id),
+    };
+    const cases: [
+      string,
+      Parameters<typeof stack.rail.control.setAssetTransfer>[1],
+    ][] = [
+      ["not_found", { status: "not_found", currentRound: 1 }],
+      ["not_axfer", { status: "confirmed", confirmedRound: 1, transfer: null }],
+      [
+        "wrong_receiver",
+        {
+          status: "confirmed",
+          confirmedRound: 1,
+          transfer: { ...good, receiver: "SOMEONE_ELSE" },
+        },
+      ],
+      [
+        "wrong_asset",
+        {
+          status: "confirmed",
+          confirmedRound: 1,
+          transfer: { ...good, asset: "10458941" },
+        },
+      ],
+      [
+        "wrong_sender",
+        {
+          status: "confirmed",
+          confirmedRound: 1,
+          transfer: { ...good, sender: "other" },
+        },
+      ],
+      [
+        "close_to",
+        {
+          status: "confirmed",
+          confirmedRound: 1,
+          transfer: { ...good, closeTo: stack.rail.treasuryAddress },
+        },
+      ],
+      [
+        "no_prefix",
+        {
+          status: "confirmed",
+          confirmedRound: 1,
+          transfer: {
+            ...good,
+            note: new TextEncoder().encode("x402-payment-v2-abc"),
+          },
+        },
+      ],
+    ];
+    for (const [label, lookup] of cases) {
+      const txid = stakeTxid(label);
+      stack.rail.control.setAssetTransfer(txid, lookup);
+      const response = await directMoveRequest(stack, claim, "bot", txid);
+      expect(response.status, label).toBe(402);
+      expect(await response.json(), label).toMatchObject({
+        error: "PAYMENT_INVALID",
+      });
+      expect(response.headers.get("PAYMENT-REQUIRED"), label).toBeNull();
+    }
+    expect(directStakeRows(stack)).toHaveLength(0);
+    expect(stack.database.db.select().from(schema.ledger).all()).toHaveLength(
+      0,
+    );
+    expect(claimRow(stack, claim.id).status).toBe("open");
+  });
+
+  it("direct_stake_wrong_amount_is_pocketed", async () => {
+    const stack = setup();
+    await addPlayer(stack, "bot", "agent");
+    const claim = await openClaim(stack, "bot", false, "agent");
+    const txid = confirmStake(stack, claim, "bot", "short", {
+      amount: claim.stakeMicrousdc - 1,
+    });
+
+    const response = await directMoveRequest(stack, claim, "bot", txid);
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error: "STAKE_RETAINED",
+      stakeTxid: txid,
+      retainedMicroUsdc: claim.stakeMicrousdc - 1,
+      claimStatus: "open",
+    });
+    expect(directStakeRows(stack)).toMatchObject([
+      { txid, claimId: claim.id, outcome: "orphaned" },
+    ]);
+    expect(stack.database.db.select().from(schema.ledger).all()).toMatchObject([
+      {
+        account: "protocol",
+        deltaMicrousdc: claim.stakeMicrousdc - 1,
+        refType: "direct_orphan",
+        refId: txid,
+        txid,
+      },
+    ]);
+    expect(balance(stack, "protocol")).toBe(claim.stakeMicrousdc - 1);
+    expect(balance(stack, "treasury")).toBe(0);
+    expect(claimRow(stack, claim.id).status).toBe("open");
+    expect(
+      stack.database.db
+        .select()
+        .from(schema.events)
+        .where(eq(schema.events.type, "direct_stake_orphaned"))
+        .all()
+        .map((row) => JSON.parse(row.payloadJson)),
+    ).toEqual([
+      { claimId: claim.id, txid, amountMicroUsdc: claim.stakeMicrousdc - 1 },
+    ]);
+  });
+
+  it("direct_stake_after_expiry_is_pocketed_once", async () => {
+    const stack = setup();
+    await addPlayer(stack, "bot", "agent");
+    const claim = await openClaim(stack, "bot", false, "agent");
+    const txid = confirmStake(stack, claim, "bot", "late");
+    await expireClaim(stack, claim);
+    const lookups = vi.spyOn(stack.rail, "getAssetTransfer");
+
+    const first = await directMoveRequest(stack, claim, "bot", txid, {
+      move: "not-a-move",
+    });
+    const again = await directMoveRequest(stack, claim, "bot", txid, {
+      move: "not-a-move",
+    });
+
+    expect(first.status).toBe(409);
+    expect(await first.json()).toMatchObject({
+      error: "STAKE_RETAINED",
+      stakeTxid: txid,
+      retainedMicroUsdc: claim.stakeMicrousdc,
+      claimStatus: "expired",
+    });
+    expect(again.status).toBe(409);
+    expect(await again.json()).toMatchObject({
+      error: "STAKE_RETAINED",
+      claimStatus: "expired",
+    });
+    expect(lookups).toHaveBeenCalledTimes(1);
+    expect(directStakeRows(stack)).toHaveLength(1);
+    expect(
+      stack.database.db
+        .select()
+        .from(schema.ledger)
+        .where(eq(schema.ledger.refType, "direct_orphan"))
+        .all(),
+    ).toHaveLength(1);
+    expect(balance(stack, "protocol")).toBe(claim.stakeMicrousdc);
+  });
+
+  it("direct_stake_note_for_other_claim_is_pocketed", async () => {
+    const stack = setup();
+    await addPlayer(stack, "bot", "agent");
+    const claim = await openClaim(stack, "bot", false, "agent");
+    const txid = confirmStake(stack, claim, "bot", "othernote", {
+      note: "osc:stake:clm_someone_else",
+    });
+
+    const response = await directMoveRequest(stack, claim, "bot", txid);
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error: "STAKE_RETAINED",
+      stakeTxid: txid,
+      retainedMicroUsdc: claim.stakeMicrousdc,
+      claimStatus: "open",
+    });
+    expect(directStakeRows(stack)).toMatchObject([
+      { txid, outcome: "orphaned" },
+    ]);
+    expect(balance(stack, "protocol")).toBe(claim.stakeMicrousdc);
+    expect(claimRow(stack, claim.id).status).toBe("open");
+  });
+
+  it("x402_settlement_txid_is_not_a_direct_stake", async () => {
+    const stack = setup({
+      GAME_POOL_TARGET: 4,
+      HUMAN_BOARD_RESERVE_PERCENT: 0,
+    });
+    await addPlayer(stack, "bot", "agent");
+    const paid = await openClaim(stack, "bot", false, "agent");
+    const header = paymentHeader(stack.rail, paid, "bot", "x402-first");
+    const settled = await stack.app.request("/api/v1/moves", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session(stack, "bot", "agent")}`,
+        "Content-Type": "application/json",
+        "PAYMENT-SIGNATURE": header,
+      },
+      body: JSON.stringify({ claimId: paid.id, move: "e2e4" }),
+    });
+    expect(settled.status).toBe(200);
+    // The mock settles under a `mocktx_` id; a real settlement is a chain
+    // txid, so rewrite the booked row to a wire-valid one and expose the same
+    // transfer on the mock chain.
+    const settleTxid = stakeTxid("x402settle");
+    stack.database.db
+      .update(schema.stakeEntries)
+      .set({ payTxid: settleTxid })
+      .where(eq(schema.stakeEntries.claimId, paid.id))
+      .run();
+    const next = await openClaim(stack, "bot", false, "agent");
+    const ledgerBefore = stack.database.db.select().from(schema.ledger).all();
+
+    stack.rail.control.setAssetTransfer(settleTxid, {
+      status: "confirmed",
+      confirmedRound: 5,
+      transfer: {
+        sender: "bot",
+        receiver: stack.rail.treasuryAddress,
+        asset: USDC_ASSET,
+        amount: next.stakeMicrousdc,
+        closeTo: null,
+        note: new TextEncoder().encode("x402-payment-v2-nonce"),
+      },
+    });
+    const realistic = await directMoveRequest(stack, next, "bot", settleTxid);
+    stack.rail.control.setAssetTransfer(settleTxid, {
+      status: "confirmed",
+      confirmedRound: 5,
+      transfer: {
+        sender: "bot",
+        receiver: stack.rail.treasuryAddress,
+        asset: USDC_ASSET,
+        amount: next.stakeMicrousdc,
+        closeTo: null,
+        note: directStakeNote(next.id),
+      },
+    });
+    const beltAndBraces = await directMoveRequest(
+      stack,
+      next,
+      "bot",
+      settleTxid,
+    );
+
+    expect(realistic.status).toBe(402);
+    expect(await realistic.json()).toMatchObject({ error: "PAYMENT_INVALID" });
+    expect(beltAndBraces.status).toBe(402);
+    expect(await beltAndBraces.json()).toMatchObject({
+      error: "PAYMENT_INVALID",
+    });
+    expect(stack.database.db.select().from(schema.ledger).all()).toEqual(
+      ledgerBefore,
+    );
+    expect(directStakeRows(stack)).toHaveLength(0);
+    expect(claimRow(stack, next.id).status).toBe("open");
+  });
+
+  it("illegal_move_with_direct_stake_costs_nothing", async () => {
+    const stack = setup();
+    await addPlayer(stack, "bot", "agent");
+    const claim = await openClaim(stack, "bot", false, "agent");
+    const txid = confirmStake(stack, claim, "bot", "illegal");
+    const lookups = vi.spyOn(stack.rail, "getAssetTransfer");
+
+    const illegal = await directMoveRequest(stack, claim, "bot", txid, {
+      move: "e2e5",
+    });
+    const illegalBody = (await illegal.json()) as {
+      error: string;
+      legalMoves?: unknown[];
+    };
+    expect(illegal.status).toBe(400);
+    expect(illegalBody.error).toBe("ILLEGAL_MOVE");
+    expect(illegalBody.legalMoves?.length).toBeGreaterThan(0);
+    expect(lookups).not.toHaveBeenCalled();
+    expect(directStakeRows(stack)).toHaveLength(0);
+    expect(stack.database.db.select().from(schema.ledger).all()).toHaveLength(
+      0,
+    );
+
+    const legal = await directMoveRequest(stack, claim, "bot", txid);
+    expect(legal.status).toBe(200);
+    expect(moveReceiptSchema.parse(await legal.json()).txid).toBe(txid);
+    expect(lookups).toHaveBeenCalledTimes(1);
+  });
+
+  it("direct_stake_rejects_mixed_payment_and_demo", async () => {
+    const stack = setup();
+    await addPlayer(stack, "bot", "agent");
+    await addPlayer(stack, "alice");
+    const claim = await openClaim(stack, "bot", false, "agent");
+    const txid = confirmStake(stack, claim, "bot", "mixed");
+    const lookups = vi.spyOn(stack.rail, "getAssetTransfer");
+
+    const mixed = await directMoveRequest(stack, claim, "bot", txid, {
+      header: paymentHeader(stack.rail, claim, "bot", "mixed"),
+    });
+    expect(mixed.status).toBe(400);
+    expect(await mixed.json()).toMatchObject({ error: "INVALID_REQUEST" });
+
+    const demo = await openClaim(stack, "alice", true);
+    const onDemo = await directMoveRequest(stack, demo, "alice", txid, {
+      kind: "human",
+    });
+    expect(onDemo.status).toBe(400);
+    expect(await onDemo.json()).toMatchObject({ error: "INVALID_REQUEST" });
+
+    const malformed = await directMoveRequest(stack, claim, "bot", "mocktx_1");
+    expect(malformed.status).toBe(400);
+    expect(await malformed.json()).toMatchObject({ error: "INVALID_REQUEST" });
+
+    expect(lookups).not.toHaveBeenCalled();
+    expect(directStakeRows(stack)).toHaveLength(0);
+    expect(claimRow(stack, claim.id).status).toBe("open");
+    expect(claimRow(stack, demo.id).status).toBe("open");
+  });
+
+  it("direct_stake_race_with_expiry_is_serialized", async () => {
+    const stack = setup();
+    await addPlayer(stack, "bot", "agent");
+    const claim = await openClaim(stack, "bot", false, "agent");
+    const txid = confirmStake(stack, claim, "bot", "race");
+    const lookup = stack.rail.getAssetTransfer.bind(stack.rail);
+    // The route has already accepted the move as legal when the chain lookup
+    // runs; the deadline passes (and the expiry timer fires) before the
+    // coordinator command gets its turn.
+    vi.spyOn(stack.rail, "getAssetTransfer").mockImplementation(
+      async (id: string) => {
+        await expireClaim(stack, claim);
+        return lookup(id);
+      },
+    );
+
+    const response = await directMoveRequest(stack, claim, "bot", txid);
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error: "STAKE_RETAINED",
+      stakeTxid: txid,
+      retainedMicroUsdc: claim.stakeMicrousdc,
+      claimStatus: "expired",
+    });
+    expect(claimRow(stack, claim.id).status).toBe("expired");
+    expect(directStakeRows(stack)).toMatchObject([
+      { txid, outcome: "orphaned" },
+    ]);
+    expect(
+      stack.database.db.select().from(schema.stakeEntries).all(),
+    ).toHaveLength(0);
+    expect(balance(stack, "protocol")).toBe(claim.stakeMicrousdc);
+  });
+
+  it("receipt_survives_intent_pruning", async () => {
+    const stack = setup({
+      GAME_POOL_TARGET: 4,
+      HUMAN_BOARD_RESERVE_PERCENT: 0,
+    });
+    await addPlayer(stack, "bot", "agent");
+    const paid = await openClaim(stack, "bot", false, "agent");
+    const settled = await stack.app.request("/api/v1/moves", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session(stack, "bot", "agent")}`,
+        "Content-Type": "application/json",
+        "PAYMENT-SIGNATURE": paymentHeader(stack.rail, paid, "bot", "prune"),
+      },
+      body: JSON.stringify({ claimId: paid.id, move: "e2e4" }),
+    });
+    const x402Txid = moveReceiptSchema.parse(await settled.json()).txid;
+    const direct = await openClaim(stack, "bot", false, "agent");
+    const directTxid = confirmStake(stack, direct, "bot", "prune-direct");
+    expect(
+      (await directMoveRequest(stack, direct, "bot", directTxid)).status,
+    ).toBe(200);
+
+    stack.setNow(stack.now() + 1);
+    expect(pruneSettledPaymentIntents(stack.database.db, stack.now(), 0)).toBe(
+      1,
+    );
+    expect(
+      stack.database.db.select().from(schema.paymentIntents).all(),
+    ).toHaveLength(0);
+
+    const paidStatus = await statusOf(stack, paid, "bot");
+    const directStatus = await statusOf(stack, direct, "bot");
+    expect(paidStatus).toMatchObject({
+      status: "moved",
+      receipt: { txid: x402Txid },
+    });
+    expect(directStatus).toMatchObject({
+      status: "moved",
+      receipt: { txid: directTxid },
+    });
+  });
+
+  it("direct_stake_after_concurrent_x402_move_is_pocketed", async () => {
+    const stack = setup();
+    await addPlayer(stack, "bot", "agent");
+    const claim = await openClaim(stack, "bot", false, "agent");
+    const settled = await stack.app.request("/api/v1/moves", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session(stack, "bot", "agent")}`,
+        "Content-Type": "application/json",
+        "PAYMENT-SIGNATURE": paymentHeader(stack.rail, claim, "bot", "won"),
+      },
+      body: JSON.stringify({ claimId: claim.id, move: "e2e4" }),
+    });
+    const x402Txid = moveReceiptSchema.parse(await settled.json()).txid;
+    const directTxid = confirmStake(stack, claim, "bot", "lost-race");
+
+    const response = await directMoveRequest(stack, claim, "bot", directTxid);
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error: "STAKE_RETAINED",
+      stakeTxid: directTxid,
+      retainedMicroUsdc: claim.stakeMicrousdc,
+      claimStatus: "moved",
+    });
+    expect(directStakeRows(stack)).toMatchObject([
+      { txid: directTxid, outcome: "orphaned" },
+    ]);
+    expect(balance(stack, "protocol")).toBe(claim.stakeMicrousdc);
+    expect(balance(stack, "treasury")).toBe(claim.stakeMicrousdc);
+    expect(await statusOf(stack, claim, "bot")).toMatchObject({
+      status: "moved",
+      receipt: { txid: x402Txid },
+    });
   });
 });

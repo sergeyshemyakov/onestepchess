@@ -51,7 +51,17 @@ export const claimBodySchema = z
   .strict();
 
 export const moveBodySchema = z
-  .object({ claimId: z.string().min(1), move: z.string().min(1).max(32) })
+  .object({
+    claimId: z.string().min(1),
+    move: z.string().min(1).max(32),
+    stakeTxid: z
+      .string()
+      .regex(/^[A-Z2-7]{52}$/)
+      .optional()
+      .describe(
+        "Algorand txid of a confirmed direct USDC stake transfer; operator bots only, see spec 2026-09-21.",
+      ),
+  })
   .strict();
 
 export const renameBodySchema = z.object({ nickname: z.string() }).strict();
@@ -87,6 +97,9 @@ const errorEnvelope = z
       .array(z.object({ uci: z.string(), san: z.string() }))
       .optional(),
     requestId: z.string().optional(),
+    stakeTxid: z.string().optional(),
+    retainedMicroUsdc: z.number().int().nonnegative().optional(),
+    claimStatus: z.enum(["open", "moved", "expired"]).optional(),
   })
   .meta({ id: "ErrorEnvelope" });
 
@@ -669,7 +682,7 @@ export const publicApiRoutes = [
       400: json("Illegal, ambiguous, or invalid move", errorEnvelope),
       402: json("x402 payment required or rejected", errorEnvelope),
       404: json("Claim not found", errorEnvelope),
-      409: json("Payment already in flight", errorEnvelope),
+      409: json("Payment already in flight or stake retained", errorEnvelope),
       410: json("Claim expired", errorEnvelope),
       503: json("Payment or service unavailable", errorEnvelope),
     },

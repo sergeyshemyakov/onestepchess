@@ -280,7 +280,7 @@ describe("Release 3 reconciliation and recovery", () => {
   });
 
   it("reconciliation_tolerates_only_settling_inbound_and_submitted_outbound_work", async () => {
-    const stack = setup();
+    const stack = setup({ RECONCILE_INBOUND_SLACK_MICROUSDC: 0 });
     await runReconciliation(stack.reconciliation, "boot");
     const gameId = seedGame(stack);
     stack.database.db
@@ -343,7 +343,7 @@ describe("Release 3 reconciliation and recovery", () => {
       refId: "pi_recent",
     });
     // The chain snapshot (still 1_000_000) has not caught up with the
-    // just-confirmed settlement; 5s later is inside the 30s skew window.
+    // just-confirmed settlement; 5s later is inside the 120s skew window.
     stack.setNow(1_065_000);
 
     const report = await runReconciliation(stack.reconciliation, "scheduled");
@@ -373,8 +373,8 @@ describe("Release 3 reconciliation and recovery", () => {
       refType: "stake",
       refId: "pi_stale",
     });
-    // 31s later the chain still lacks the funds: a real discrepancy, not skew.
-    stack.setNow(1_091_000);
+    // 121s later the chain still lacks the funds: a real discrepancy, not skew.
+    stack.setNow(1_181_000);
 
     const report = await runReconciliation(stack.reconciliation, "scheduled");
 
@@ -400,6 +400,71 @@ describe("Release 3 reconciliation and recovery", () => {
     expect(readPauseState(stack.database.db)).toMatchObject({
       mode: "running",
     });
+  });
+
+  it("reconciliation_tolerates_direct_stakes_in_transit", async () => {
+    const stack = setup();
+    await runReconciliation(stack.reconciliation, "boot");
+    stack.database.db
+      .insert(schema.players)
+      .values({
+        address: "bot",
+        kind: "agent",
+        nickname: "bot",
+        createdAt: stack.now(),
+      })
+      .run();
+    const gameId = seedGame(stack);
+    stack.database.db
+      .insert(schema.claims)
+      .values({
+        id: "clm_bot",
+        gameId,
+        player: "bot",
+        side: "white",
+        stakeMicrousdc: 1_000,
+        status: "open",
+        createdAt: stack.now(),
+        deadline: stack.now() + 90_000,
+      })
+      .run();
+    // The bot paid on chain but has not posted yet: chain leads the book by
+    // exactly one stake.
+    stack.rail.control.setBalances(stack.rail.treasuryAddress, {
+      usdcMicroUsdc: 1_001_000,
+    });
+    const inTransit = await runReconciliation(
+      stack.reconciliation,
+      "scheduled",
+    );
+    expect(inTransit).toMatchObject({
+      driftMicroUsdc: -1_000,
+      inboundToleranceMicroUsdc:
+        1_000 + stack.config().RECONCILE_INBOUND_SLACK_MICROUSDC,
+      ok: true,
+    });
+
+    stack.rail.control.setBalances(stack.rail.treasuryAddress, {
+      usdcMicroUsdc:
+        1_001_000 + stack.config().RECONCILE_INBOUND_SLACK_MICROUSDC + 1,
+    });
+    const beyond = await runReconciliation(stack.reconciliation, "scheduled");
+    expect(beyond.ok).toBe(false);
+
+    const response = await stack.app.request("/api/v1/admin/config", {
+      headers: tokenHeaders(),
+    });
+    const body = (await response.json()) as {
+      items: { key: string; effectiveValue: unknown; effect: string }[];
+    };
+    expect(
+      body.items.find((item) => item.key === "RECONCILE_SKEW_SECONDS"),
+    ).toMatchObject({ effectiveValue: 120, effect: "immediate" });
+    expect(
+      body.items.find(
+        (item) => item.key === "RECONCILE_INBOUND_SLACK_MICROUSDC",
+      ),
+    ).toMatchObject({ effectiveValue: 100_000 });
   });
 
   it("reconciliation_drift_alerts_once_without_pausing", async () => {

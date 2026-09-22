@@ -13,6 +13,7 @@ export {
   type OscClientOptions,
   retryAfterSecondsFrom,
 } from "./client.js";
+export { directStakeNote } from "./direct-stake.js";
 export { loadEnv, type OscEnv } from "./env.js";
 export {
   OSC_SERVER_ERROR_CODES,

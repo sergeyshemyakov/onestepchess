@@ -35,6 +35,7 @@ const METHOD_DEPENDENCY: Record<string, RailDependencyName> = {
   prepareFunding: "algod",
   submitPrepared: "algod",
   getTransactionStatus: "algod",
+  getAssetTransfer: "algod",
   buildOptInTxn: "algod",
   submitSignedTransaction: "algod",
   buildSweepTxns: "algod",

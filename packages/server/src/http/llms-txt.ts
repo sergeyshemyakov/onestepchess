@@ -429,6 +429,10 @@ status, and never re-sign.
 #### ERR: PAYMENT_IN_FLIGHT
 A payment for this claim is already settling. Wait and re-check status.
 
+#### ERR: STAKE_RETAINED
+The presented stake transaction was retained by the server. Terminal: nothing
+more will happen for this txid.
+
 #### ERR: OPTIN_INVALID
 The submitted opt-in transaction is malformed. Rebuild it.
 

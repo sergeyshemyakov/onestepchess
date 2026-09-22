@@ -150,6 +150,23 @@ export type TxStatus =
       readonly currentRound: number;
     };
 
+export type AssetTransferLookup =
+  | { readonly status: "pending" }
+  | { readonly status: "not_found"; readonly currentRound: number }
+  | {
+      readonly status: "confirmed";
+      readonly confirmedRound: number;
+      /** null when the transaction is not an asset transfer. */
+      readonly transfer: {
+        readonly sender: string;
+        readonly receiver: string;
+        readonly asset: string; // ASA id, stringified
+        readonly amount: number; // atomic units
+        readonly closeTo: string | null;
+        readonly note: Uint8Array; // empty when absent
+      } | null;
+    };
+
 export interface PaymentRail {
   /** Stakes in, payouts out. Never funds welcome bonuses. */
   readonly treasuryAddress: string;
@@ -181,6 +198,10 @@ export interface PaymentRail {
   submitPrepared(prepared: PreparedSubmission): Promise<SendResult>;
 
   getTransactionStatus(txid: string): Promise<TxStatus>;
+  /** (2026-09-21, direct stake payments) Full contents of one transaction by
+   * id, for payments the server did not broadcast itself. Pure read; never
+   * throws for chain outcomes — RailError('UNAVAILABLE') only. */
+  getAssetTransfer(txid: string): Promise<AssetTransferLookup>;
   findPayoutByNote(jobId: string): Promise<{
     readonly txid: string;
     readonly confirmedRound: number;

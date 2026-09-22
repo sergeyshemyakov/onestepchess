@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import type {
+  AssetTransferLookup,
   FundingInstruction,
   PaymentChallenge,
   PaymentRail,
@@ -119,6 +120,24 @@ const indexedStatusSchema = z.object({
   transaction: z.object({
     id: z.string().min(1),
     "confirmed-round": z.number().int().positive().safe(),
+  }),
+});
+
+const indexedTransactionSchema = z.object({
+  transaction: z.object({
+    id: z.string().min(1),
+    sender: z.string(),
+    "tx-type": z.string(),
+    "confirmed-round": z.number().int().positive().safe(),
+    note: z.string().optional(),
+    "asset-transfer-transaction": z
+      .object({
+        receiver: z.string(),
+        "asset-id": z.number().int().nonnegative().safe(),
+        amount: z.number().int().nonnegative().safe(),
+        "close-to": z.string().optional(),
+      })
+      .optional(),
   }),
 });
 
@@ -859,8 +878,12 @@ export function createAvmRail(
   }
 
   async function getJsonResponse(url: string): Promise<Response> {
+    return getResponse(url, "application/json");
+  }
+
+  async function getResponse(url: string, accept: string): Promise<Response> {
     try {
-      return await request(url, { headers: { accept: "application/json" } });
+      return await request(url, { headers: { accept } });
     } catch {
       // Tag which upstream actually failed so the server's per-dependency
       // circuit breaker can attribute mixed-upstream methods correctly
@@ -917,7 +940,10 @@ export function createAvmRail(
     if (indexed.status !== 404) {
       throw unavailable("Indexer transaction query failed", "indexer");
     }
+    return { status: "not_found", currentRound: await currentRound() };
+  }
 
+  async function currentRound(): Promise<number> {
     const status = await getJsonResponse(
       endpoint(config.algodUrl, "/v2/status"),
     );
@@ -925,7 +951,101 @@ export function createAvmRail(
     const result = await parseJson(status, statusSchema);
     if (result === null)
       throw unavailable("Algod status response malformed", "algod");
-    return { status: "not_found", currentRound: result["last-round"] };
+    return result["last-round"];
+  }
+
+  function transferFromTransaction(
+    transaction: algosdk.Transaction,
+  ): Extract<AssetTransferLookup, { status: "confirmed" }>["transfer"] {
+    const transfer = transaction.assetTransfer;
+    if (transaction.type !== "axfer" || transfer === undefined) return null;
+    return {
+      sender: transaction.sender.toString(),
+      receiver: transfer.receiver.toString(),
+      asset: transfer.assetIndex.toString(),
+      amount: Number(transfer.amount),
+      closeTo: transfer.closeRemainderTo?.toString() ?? null,
+      note: transaction.note,
+    };
+  }
+
+  async function getAssetTransfer(txid: string): Promise<AssetTransferLookup> {
+    // Algod keeps confirmed transactions in the pending endpoint for ~1000
+    // rounds, so a bot posting seconds after confirmation never reaches the
+    // indexer. Msgpack is the only encoding that preserves the raw note bytes
+    // and the full signed transaction (spec 2026-09-21 §4.2).
+    const pendingUrl = endpoint(
+      config.algodUrl,
+      `/v2/transactions/pending/${encodeURIComponent(txid)}?format=msgpack`,
+    );
+    const pending = await getResponse(pendingUrl, "application/msgpack");
+    if (pending.ok) {
+      let decoded: algosdk.modelsv2.PendingTransactionResponse;
+      try {
+        decoded = algosdk.decodeMsgpack(
+          new Uint8Array(await pending.arrayBuffer()),
+          algosdk.modelsv2.PendingTransactionResponse,
+        );
+      } catch (error) {
+        dependencies.onDiagnostic?.({
+          kind: "malformed_response",
+          url: pending.url,
+          status: pending.status,
+          bodyPrefix: "",
+          issue:
+            error instanceof Error ? `msgpack: ${error.message}` : "msgpack",
+        });
+        throw unavailable("Algod pending response malformed", "algod");
+      }
+      if (decoded.poolError.length > 0) {
+        return { status: "not_found", currentRound: await currentRound() };
+      }
+      const confirmedRound = Number(decoded.confirmedRound ?? 0n);
+      if (confirmedRound <= 0) return { status: "pending" };
+      return {
+        status: "confirmed",
+        confirmedRound,
+        transfer: transferFromTransaction(decoded.txn.txn),
+      };
+    }
+    if (pending.status !== 404)
+      throw unavailable("Algod pending query failed", "algod");
+
+    const indexed = await getJsonResponse(
+      endpoint(
+        config.indexerUrl,
+        `/v2/transactions/${encodeURIComponent(txid)}`,
+      ),
+    );
+    if (indexed.ok) {
+      const result = await parseJson(indexed, indexedTransactionSchema);
+      if (result === null) {
+        throw unavailable("Indexer transaction response malformed", "indexer");
+      }
+      const transaction = result.transaction;
+      const transfer = transaction["asset-transfer-transaction"];
+      return {
+        status: "confirmed",
+        confirmedRound: transaction["confirmed-round"],
+        transfer:
+          transaction["tx-type"] === "axfer" && transfer !== undefined
+            ? {
+                sender: transaction.sender,
+                receiver: transfer.receiver,
+                asset: String(transfer["asset-id"]),
+                amount: transfer.amount,
+                closeTo: transfer["close-to"] ?? null,
+                note: new Uint8Array(
+                  Buffer.from(transaction.note ?? "", "base64"),
+                ),
+              }
+            : null,
+      };
+    }
+    if (indexed.status !== 404) {
+      throw unavailable("Indexer transaction query failed", "indexer");
+    }
+    return { status: "not_found", currentRound: await currentRound() };
   }
 
   async function findByNote(
@@ -1175,6 +1295,7 @@ export function createAvmRail(
     prepareFunding,
     submitPrepared,
     getTransactionStatus,
+    getAssetTransfer,
     findPayoutByNote,
     findFundingByNote,
     buildOptInTxn,

@@ -709,6 +709,7 @@ describe("rail-avm Release 4 prepared treasury and opt-in adapter", () => {
         "prepareFunding",
         "submitPrepared",
         "getTransactionStatus",
+        "getAssetTransfer",
         "findPayoutByNote",
         "findFundingByNote",
         "buildOptInTxn",

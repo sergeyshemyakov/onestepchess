@@ -90,6 +90,7 @@ describe("drizzle schema and migrations", () => {
       "audit_log",
       "error_log",
       "system_state",
+      "direct_stakes",
     ]) {
       expect(tables).toContain(table);
     }
@@ -555,6 +556,25 @@ function databaseThroughMigration(maxIdx: number): string {
   sqlite.close();
   return path;
 }
+
+describe("direct stakes (0009_direct_stakes)", () => {
+  it("migration_creates_direct_stakes_table_and_pay_txid_index", () => {
+    const database = open();
+    const names = indexNames(database.sqlite);
+    expect(names).toContain("direct_stakes_claim");
+    expect(names).toContain("stake_entries_pay_txid");
+    insertPlayer(database, "bot");
+    insertGame(database, "gm_1");
+    insertClaim(database, "clm_1", "gm_1", "bot", "moved");
+    const insert = database.sqlite.prepare(
+      `INSERT INTO direct_stakes (txid, player, claim_id, amount, outcome, confirmed_round, created_at)
+       VALUES (?, 'bot', 'clm_1', 1000, 'moved', 1, 0)`,
+    );
+    insert.run("TX1");
+    // One row per txid, ever: the replay guard is enforced at the SQL level.
+    expect(() => insert.run("TX1")).toThrowError(/UNIQUE|PRIMARY/);
+  });
+});
 
 describe("executor status indexes (0008_executor_status_indexes)", () => {
   it("migration_creates_executor_status_indexes", () => {

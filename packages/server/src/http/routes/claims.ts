@@ -5,9 +5,14 @@ import type { TurnstileVerifier } from "../../auth/turnstile.js";
 import type {
   ClaimDeps,
   ClaimRecord,
+  DirectStakeOutcome,
   MoveReceipt,
 } from "../../coordinator/claims.js";
-import { legalMove, receiptFor } from "../../coordinator/claims.js";
+import {
+  DIRECT_STAKE_NOTE_PREFIX,
+  legalMove,
+  receiptFor,
+} from "../../coordinator/claims.js";
 import type { DispatchResult } from "../../coordinator/queue.js";
 import { parseGameRules } from "../../coordinator/timers.js";
 import { schema } from "../../db/open.js";
@@ -157,7 +162,14 @@ type PaidMoveResult =
       readonly receipt: MoveReceipt;
       readonly paymentResponse: string | null;
     }
-  | { readonly kind: "pending"; readonly claimId: string };
+  | {
+      readonly kind: "pending";
+      readonly claimId: string;
+      readonly retryAfterSeconds: number;
+    };
+
+const X402_PENDING_RETRY_SECONDS = 5;
+const DIRECT_STAKE_PENDING_RETRY_SECONDS = 2;
 
 function unwrapInternal<R>(result: DispatchResult<R>): R {
   if (result.kind === "deprioritized") {
@@ -242,7 +254,11 @@ async function submitPaidMove(
   }
   if (existing?.status === "verified" || existing?.status === "settling") {
     deps.scheduleRecovery?.(deps.now());
-    return { kind: "pending", claimId: claim.id };
+    return {
+      kind: "pending",
+      claimId: claim.id,
+      retryAfterSeconds: X402_PENDING_RETRY_SECONDS,
+    };
   }
   if (existing?.status === "failed") {
     throw paymentError(
@@ -357,7 +373,11 @@ async function submitPaidMove(
   }
   if (!opened.created) {
     deps.scheduleRecovery?.(deps.now());
-    return { kind: "pending", claimId: claim.id };
+    return {
+      kind: "pending",
+      claimId: claim.id,
+      retryAfterSeconds: X402_PENDING_RETRY_SECONDS,
+    };
   }
 
   const settlementStartedAt = deps.now();
@@ -397,7 +417,11 @@ async function submitPaidMove(
     deps.metrics?.recordFacilitatorError();
     if (settled.reason === "unavailable") {
       deps.scheduleRecovery?.(deps.now());
-      return { kind: "pending", claimId: claim.id };
+      return {
+        kind: "pending",
+        claimId: claim.id,
+        retryAfterSeconds: X402_PENDING_RETRY_SECONDS,
+      };
     }
     await deps.coordinator.dispatch({
       type: "IntentFailed",
@@ -425,6 +449,167 @@ async function submitPaidMove(
     receipt: committed,
     paymentResponse: settled.paymentResponseHeader,
   };
+}
+
+function directPaymentInvalid(): AppError {
+  // No PAYMENT-REQUIRED header on this route: there is no challenge to satisfy.
+  return new AppError("PAYMENT_INVALID", {
+    hint: "stake transaction does not apply to this claim",
+  });
+}
+
+function stakeRetained(
+  stakeTxid: string,
+  retainedMicroUsdc: number,
+  claimStatus: "open" | "moved" | "expired",
+): AppError {
+  return new AppError("STAKE_RETAINED", {
+    hint: "stake transfer did not match an open claim; payment retained",
+    stakeTxid,
+    retainedMicroUsdc,
+    claimStatus,
+  });
+}
+
+function currentClaimStatus(
+  deps: ClaimRouteDeps,
+  claimId: string,
+): "open" | "moved" | "expired" {
+  const claim = deps.db
+    .select({ status: schema.claims.status, deadline: schema.claims.deadline })
+    .from(schema.claims)
+    .where(eq(schema.claims.id, claimId))
+    .get();
+  if (claim === undefined) throw new Error("claim vanished");
+  return claim.status === "open" && claim.deadline <= deps.now()
+    ? "expired"
+    : claim.status;
+}
+
+/** Answers a direct-stake request from its `direct_stakes` row, when one
+ * exists (spec 2026-09-21 §4.5 step 2). No I/O, no booking. */
+function replayDirectStake(
+  deps: ClaimRouteDeps,
+  claim: ClaimRecord,
+  player: string,
+  stakeTxid: string,
+): PaidMoveResult | null {
+  const row = deps.db
+    .select()
+    .from(schema.directStakes)
+    .where(eq(schema.directStakes.txid, stakeTxid))
+    .get();
+  if (row === undefined) return null;
+  if (row.player !== player) throw directPaymentInvalid();
+  if (row.outcome === "orphaned") {
+    throw stakeRetained(
+      stakeTxid,
+      row.amount,
+      currentClaimStatus(deps, claim.id),
+    );
+  }
+  if (row.claimId !== claim.id) throw directPaymentInvalid();
+  const moved = deps.db
+    .select()
+    .from(schema.claims)
+    .where(eq(schema.claims.id, claim.id))
+    .get();
+  if (moved === undefined || moved.status !== "moved") {
+    throw new Error("direct stake row without a moved claim");
+  }
+  return {
+    kind: "moved",
+    receipt: receipt(deps, moved),
+    paymentResponse: null,
+  };
+}
+
+async function submitDirectStakeMove(
+  deps: ClaimRouteDeps,
+  claim: ClaimRecord,
+  player: string,
+  signature: string | undefined,
+  requestedMove: string,
+  stakeTxid: string,
+): Promise<PaidMoveResult> {
+  if (signature !== undefined)
+    throw new AppError("INVALID_REQUEST", {
+      hint: "send either stakeTxid or PAYMENT-SIGNATURE, not both",
+    });
+  const replayed = replayDirectStake(deps, claim, player, stakeTxid);
+  if (replayed !== null) return replayed;
+
+  // Legality only while the claim can still be moved: for a terminal claim
+  // the move text is irrelevant and the transfer is looked up regardless so
+  // it gets booked (§4.5 step 3).
+  const movable = claim.status === "open" && claim.deadline > deps.now();
+  const move = movable
+    ? normalizeRequestedMove(deps, claim, requestedMove)
+    : null;
+
+  const lookup = await deps.rail.getAssetTransfer(stakeTxid);
+  if (lookup.status === "pending") {
+    return {
+      kind: "pending",
+      claimId: claim.id,
+      retryAfterSeconds: DIRECT_STAKE_PENDING_RETRY_SECONDS,
+    };
+  }
+  if (lookup.status === "not_found" || lookup.transfer === null)
+    throw directPaymentInvalid();
+  const transfer = lookup.transfer;
+  if (
+    transfer.sender !== player ||
+    transfer.receiver !== deps.rail.treasuryAddress ||
+    transfer.asset !== deps.config().USDC_ASA ||
+    transfer.closeTo !== null
+  ) {
+    throw directPaymentInvalid();
+  }
+  // Only money that announces itself as a stake is ever booked here; other
+  // inbound USDC (top-ups, bounced refunds, x402 settlements) must never turn
+  // into protocol income through this path (§4.5 step 4).
+  const prefix = Buffer.from(DIRECT_STAKE_NOTE_PREFIX, "utf8");
+  if (
+    transfer.note.length < prefix.length ||
+    !Buffer.from(transfer.note.subarray(0, prefix.length)).equals(prefix)
+  ) {
+    throw directPaymentInvalid();
+  }
+  const bookedAsStake = deps.db
+    .select({ id: schema.stakeEntries.id })
+    .from(schema.stakeEntries)
+    .where(eq(schema.stakeEntries.payTxid, stakeTxid))
+    .get();
+  if (bookedAsStake !== undefined) throw directPaymentInvalid();
+
+  const startedAt = deps.now();
+  const outcome = unwrapInternal(
+    await deps.coordinator.dispatch<unknown, DirectStakeOutcome>({
+      type: "DirectStakePresented",
+      payload: {
+        claimId: claim.id,
+        player,
+        move,
+        txid: stakeTxid,
+        confirmedRound: lookup.confirmedRound,
+        transfer: { amount: transfer.amount, note: transfer.note },
+      },
+      refIds: [claim.id, stakeTxid],
+    }),
+  );
+  if (outcome.kind === "moved") {
+    deps.metrics?.recordMoveSettled(deps.now() - startedAt);
+    return { kind: "moved", receipt: outcome.receipt, paymentResponse: null };
+  }
+  if (outcome.kind === "orphaned") {
+    throw stakeRetained(stakeTxid, outcome.amount, outcome.claimStatus);
+  }
+  if (outcome.kind === "duplicate") {
+    const replayedAfterRace = replayDirectStake(deps, claim, player, stakeTxid);
+    if (replayedAfterRace !== null) return replayedAfterRace;
+  }
+  throw directPaymentInvalid();
 }
 
 export function registerClaimRoutes(
@@ -614,26 +799,40 @@ export function registerClaimRoutes(
     );
     const claim = claimed(deps, body.claimId, session.address);
     if (claim.demo) {
+      if (body.stakeTxid !== undefined)
+        throw new AppError("INVALID_REQUEST", {
+          hint: "demo claims take no stake transaction",
+        });
       return c.json(
         await submitDemoMove(deps, claim, session.address, body.move),
       );
     }
-    const result = await submitPaidMove(
-      deps,
-      claim,
-      session.address,
-      c.req.header("PAYMENT-SIGNATURE"),
-      body.move,
-    );
+    const result =
+      body.stakeTxid === undefined
+        ? await submitPaidMove(
+            deps,
+            claim,
+            session.address,
+            c.req.header("PAYMENT-SIGNATURE"),
+            body.move,
+          )
+        : await submitDirectStakeMove(
+            deps,
+            claim,
+            session.address,
+            c.req.header("PAYMENT-SIGNATURE"),
+            body.move,
+            body.stakeTxid,
+          );
     if (result.kind === "pending") {
       return c.json(
         {
           status: "payment_pending",
           claimId: result.claimId,
-          retryAfterSeconds: 5,
+          retryAfterSeconds: result.retryAfterSeconds,
         },
         202,
-        { "Retry-After": "5" },
+        { "Retry-After": String(result.retryAfterSeconds) },
       );
     }
     return result.paymentResponse === null
@@ -645,21 +844,33 @@ export function registerClaimRoutes(
 }
 
 function receipt(deps: ClaimRouteDeps, claim: ClaimRecord): MoveReceipt {
-  const intent = claim.demo
-    ? undefined
-    : deps.db
-        .select()
-        .from(schema.paymentIntents)
-        .where(
-          and(
-            eq(schema.paymentIntents.claimId, claim.id),
-            eq(schema.paymentIntents.status, "settled"),
-          ),
-        )
-        .get();
+  if (claim.demo) {
+    return receiptFor(claim, null, deps.config().EXPLORER_BASE_URL);
+  }
+  const intent = deps.db
+    .select({ settleTxid: schema.paymentIntents.settleTxid })
+    .from(schema.paymentIntents)
+    .where(
+      and(
+        eq(schema.paymentIntents.claimId, claim.id),
+        eq(schema.paymentIntents.status, "settled"),
+      ),
+    )
+    .get();
+  // Direct stakes have no intent row, and settled intents are pruned after
+  // PAYMENT_INTENT_RETENTION_DAYS (ADR 0005); stake_entries is never pruned,
+  // so it is the durable source of the txid for both routes.
+  const stakeEntry =
+    intent?.settleTxid === undefined || intent.settleTxid === null
+      ? deps.db
+          .select({ payTxid: schema.stakeEntries.payTxid })
+          .from(schema.stakeEntries)
+          .where(eq(schema.stakeEntries.claimId, claim.id))
+          .get()
+      : undefined;
   return receiptFor(
     claim,
-    intent?.settleTxid ?? null,
+    intent?.settleTxid ?? stakeEntry?.payTxid ?? null,
     deps.config().EXPLORER_BASE_URL,
   );
 }

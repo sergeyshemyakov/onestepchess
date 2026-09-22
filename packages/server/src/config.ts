@@ -81,6 +81,8 @@ export const serverConfigSchema = coreConfigSchema
     PAYOUT_BATCH_MAX: positiveInt.default(16),
     PAYOUT_MAX_ATTEMPTS: positiveInt.default(10),
     RECONCILE_INTERVAL_MINUTES: positiveInt.default(60),
+    RECONCILE_SKEW_SECONDS: positiveInt.default(120),
+    RECONCILE_INBOUND_SLACK_MICROUSDC: nonnegativeInt.default(100_000),
     BACKUP_HOUR_UTC: z.number().int().min(0).max(23).default(3),
     BACKUP_RETENTION_DAYS: positiveInt.default(7),
     TREASURY_CAP_MICROUSDC: positiveInt.default(50_000_000),

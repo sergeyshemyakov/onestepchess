@@ -36,6 +36,7 @@ export const OSC_SERVER_ERROR_CODES = [
   "PAYMENT_UNAVAILABLE",
   "PAYMENT_PENDING",
   "PAYMENT_IN_FLIGHT",
+  "STAKE_RETAINED",
   "OPTIN_INVALID",
   "SWEEP_INVALID",
   "DEPENDENCY_UNAVAILABLE",
@@ -62,6 +63,10 @@ export class OscApiError extends Error {
   readonly legalMoves?: Move[];
   readonly suggestion?: string;
   readonly requestId?: string;
+  /** STAKE_RETAINED only: the presented direct stake transaction. */
+  readonly stakeTxid?: string;
+  readonly retainedMicroUsdc?: number;
+  readonly claimStatus?: "open" | "moved" | "expired";
 
   constructor(input: {
     code: OscServerErrorCode | (string & {});
@@ -72,6 +77,9 @@ export class OscApiError extends Error {
     legalMoves?: Move[];
     suggestion?: string;
     requestId?: string;
+    stakeTxid?: string;
+    retainedMicroUsdc?: number;
+    claimStatus?: "open" | "moved" | "expired";
   }) {
     super(`${input.code}: ${input.hint}`);
     this.name = "OscApiError";
@@ -85,6 +93,11 @@ export class OscApiError extends Error {
     if (input.legalMoves !== undefined) this.legalMoves = input.legalMoves;
     if (input.suggestion !== undefined) this.suggestion = input.suggestion;
     if (input.requestId !== undefined) this.requestId = input.requestId;
+    if (input.stakeTxid !== undefined) this.stakeTxid = input.stakeTxid;
+    if (input.retainedMicroUsdc !== undefined) {
+      this.retainedMicroUsdc = input.retainedMicroUsdc;
+    }
+    if (input.claimStatus !== undefined) this.claimStatus = input.claimStatus;
   }
 }
 
