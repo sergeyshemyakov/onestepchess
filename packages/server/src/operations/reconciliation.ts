@@ -41,13 +41,6 @@ export class OperationalState {
  * still activates on the first failure (F6, spec 2026-08-26). */
 export const FACILITATOR_ALERT_AFTER_FAILURES = 3;
 
-/** The chain balance is read before the book, and balance queries can trail a
- * facilitator-confirmed transaction by a few rounds — so ledger entries booked
- * inside this window may legitimately be absent from the chain figure. Without
- * it every reconciliation that races an in-flight settlement raises a false
- * drift alarm and pauses gameplay. */
-export const CHAIN_BALANCE_SKEW_MS = 30_000;
-
 export type ReconciliationDeps = {
   readonly coordinator: Coordinator;
   readonly db: Db;
@@ -138,6 +131,7 @@ export function registerOperationalCommands(deps: ReconciliationDeps): void {
         });
       }
 
+      const cfg = deps.config();
       const inboundTolerance = scalar(
         deps.db
           .select({
@@ -145,6 +139,28 @@ export function registerOperationalCommands(deps: ReconciliationDeps): void {
           })
           .from(schema.paymentIntents)
           .where(eq(schema.paymentIntents.status, "settling"))
+          .get()?.amount,
+      );
+      // Direct stakes (spec 2026-09-21 §4.8) land on chain before the bot
+      // posts them, so every open agent claim may already be paid but not yet
+      // booked; the slack covers orphans that were never presented at all.
+      const openAgentStakes = scalar(
+        deps.db
+          .select({
+            amount: sql<number>`coalesce(sum(${schema.claims.stakeMicrousdc}), 0)`,
+          })
+          .from(schema.claims)
+          .innerJoin(
+            schema.players,
+            eq(schema.players.address, schema.claims.player),
+          )
+          .where(
+            and(
+              eq(schema.claims.status, "open"),
+              eq(schema.claims.demo, false),
+              eq(schema.players.kind, "agent"),
+            ),
+          )
           .get()?.amount,
       );
       const outboundTolerance = scalar(
@@ -156,7 +172,11 @@ export function registerOperationalCommands(deps: ReconciliationDeps): void {
           .where(eq(schema.payoutJobs.status, "submitted"))
           .get()?.amount,
       );
-      const skewCutoff = ctx.now - CHAIN_BALANCE_SKEW_MS;
+      // The chain balance is read before the book, and balance queries can
+      // trail a confirmed transaction by a few rounds — so entries booked
+      // inside the skew window may legitimately be absent from the chain
+      // figure. Without it every reconciliation racing a settlement alarms.
+      const skewCutoff = ctx.now - cfg.RECONCILE_SKEW_SECONDS * 1_000;
       const recentInboundBook = scalar(
         deps.db
           .select({
@@ -185,7 +205,11 @@ export function registerOperationalCommands(deps: ReconciliationDeps): void {
           )
           .get()?.amount,
       );
-      const totalInboundTolerance = inboundTolerance + recentOutboundBook;
+      const totalInboundTolerance =
+        inboundTolerance +
+        recentOutboundBook +
+        openAgentStakes +
+        cfg.RECONCILE_INBOUND_SLACK_MICROUSDC;
       const totalOutboundTolerance = outboundTolerance + recentInboundBook;
       const book =
         accountBalance(deps.db, "treasury") +
@@ -196,7 +220,6 @@ export function registerOperationalCommands(deps: ReconciliationDeps): void {
       const requiredRefundCoverage = refundCoverageRequiredMicroUsdc(deps.db);
       const belowRefundCoverage =
         payload.usdcMicroUsdc < requiredRefundCoverage;
-      const cfg = deps.config();
       const bonusLow =
         payload.bonusAlgoMicroAlgo < cfg.BONUS_MIN_ALGO_MICRO ||
         payload.bonusUsdcMicroUsdc < cfg.BONUS_USDC_MICRO;

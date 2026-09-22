@@ -74,7 +74,14 @@ export interface OscClient {
   claim(): Promise<ClaimResult>;
   currentClaim(): Promise<ClaimView | null>;
   claimStatus(claimId: string): Promise<ClaimStatusView>;
-  move(claimId: string, move: string): Promise<MoveReceipt>;
+  /** With `stakeTxid` the move is paid by a direct on-chain USDC transfer the
+   * caller already confirmed (spec 2026-09-21): no x402 challenge, signer,
+   * payment cache, or budget is involved. */
+  move(
+    claimId: string,
+    move: string,
+    options?: { readonly stakeTxid?: string },
+  ): Promise<MoveReceipt>;
   myGames(query: {
     status: "ongoing" | "finished";
     page?: number;
@@ -119,6 +126,15 @@ export async function decodeOscApiError(
     ...(envelope.requestId === undefined
       ? {}
       : { requestId: envelope.requestId }),
+    ...(envelope.stakeTxid === undefined
+      ? {}
+      : { stakeTxid: envelope.stakeTxid }),
+    ...(envelope.retainedMicroUsdc === undefined
+      ? {}
+      : { retainedMicroUsdc: envelope.retainedMicroUsdc }),
+    ...(envelope.claimStatus === undefined
+      ? {}
+      : { claimStatus: envelope.claimStatus }),
   });
 }
 
@@ -418,7 +434,47 @@ export function createOscClient(options: OscClientOptions): OscClient {
     });
   }
 
-  async function move(claimId: string, moveText: string): Promise<MoveReceipt> {
+  async function moveWithDirectStake(
+    claimId: string,
+    moveText: string,
+    stakeTxid: string,
+  ): Promise<MoveReceipt> {
+    const response = await request("/moves", {
+      method: "POST",
+      body: { claimId, move: moveText, stakeTxid },
+      timeoutMs: moveTimeoutMs,
+    });
+    if (response.status === 200) {
+      const receipt = await parse(response, moveReceiptSchema, "POST /moves");
+      if (receipt.txid !== stakeTxid) {
+        throw new OscClientError(
+          "NETWORK_MISMATCH",
+          "move receipt does not name the presented stake transaction",
+        );
+      }
+      claims.delete(claimId);
+      return receipt;
+    }
+    if (response.status === 202) {
+      throw new OscApiError({
+        code: "PAYMENT_PENDING",
+        hint: "stake transaction is not yet confirmed; retry after Retry-After with the same stakeTxid",
+        docs: "",
+        status: 202,
+        retryAfterSeconds: retryAfterSecondsFrom(response.headers) ?? 2,
+      });
+    }
+    throw await decodeOscApiError(response);
+  }
+
+  async function move(
+    claimId: string,
+    moveText: string,
+    options: { readonly stakeTxid?: string } = {},
+  ): Promise<MoveReceipt> {
+    if (options.stakeTxid !== undefined) {
+      return moveWithDirectStake(claimId, moveText, options.stakeTxid);
+    }
     let claim = claims.get(claimId);
     if (claim === undefined) {
       const status = await statusForRecovery(claimId);

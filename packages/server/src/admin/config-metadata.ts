@@ -46,6 +46,10 @@ const CONFIG_DESCRIPTIONS = {
   PAYOUT_BATCH_MAX: "Maximum payout transfers in one batch.",
   PAYOUT_MAX_ATTEMPTS: "Maximum attempts before a payout remains failed.",
   RECONCILE_INTERVAL_MINUTES: "Minutes between treasury reconciliations.",
+  RECONCILE_SKEW_SECONDS:
+    "Seconds a booked stake or payout may trail the chain snapshot before it counts as drift.",
+  RECONCILE_INBOUND_SLACK_MICROUSDC:
+    "Extra inbound drift tolerated for direct stake transfers not yet presented, in micro-USDC.",
   BACKUP_HOUR_UTC: "UTC hour when the daily database backup runs.",
   BACKUP_RETENTION_DAYS: "Days completed database backups are retained.",
   TREASURY_CAP_MICROUSDC: "Maximum treasury exposure, in micro-USDC.",

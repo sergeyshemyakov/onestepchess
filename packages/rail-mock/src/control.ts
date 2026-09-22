@@ -1,4 +1,9 @@
-import type { MicroUsdc, TxStatus, VerifyResult } from "@onestepchess/core";
+import type {
+  AssetTransferLookup,
+  MicroUsdc,
+  TxStatus,
+  VerifyResult,
+} from "@onestepchess/core";
 
 export type Scripted<T> = T | { readonly latencyMs: number; readonly then: T };
 
@@ -48,6 +53,17 @@ export type Balances = {
   readonly usdcMicroUsdc: MicroUsdc;
   readonly algoMicroAlgo: number;
 };
+export type AssetTransferInput = {
+  /** Defaults to an allocated `mocktx_…` id; tests that must pass a real
+   * 52-character base32 txid through wire validation supply their own. */
+  readonly txid?: string;
+  readonly sender: string;
+  readonly receiver: string;
+  readonly asset: string;
+  readonly amount: number;
+  readonly note?: string;
+  readonly closeTo?: string | null;
+};
 
 export interface MockControl {
   queueVerify(...outcomes: Scripted<VerifyResult>[]): void;
@@ -62,6 +78,13 @@ export interface MockControl {
   setBalances(address: string, balances: Partial<Balances>): void;
   setAccountInfo(address: string, info: Partial<AccountInfo>): void;
   setTxStatus(txid: string, status: TxStatus): void;
+  /** Records a confirmed inbound asset transfer the rail did not broadcast
+   * (a bot's direct stake payment) and returns its txid. */
+  confirmAssetTransfer(input: AssetTransferInput): {
+    txid: string;
+    confirmedRound: number;
+  };
+  setAssetTransfer(txid: string, lookup: AssetTransferLookup): void;
   setNoteResult(jobId: string, result: NoteResult): void;
   setFundingNoteResult(
     player: string,
@@ -82,6 +105,7 @@ export class MockControlState implements MockControl {
   readonly balanceOverrides = new Map<string, Partial<Balances>>();
   readonly accountOverrides = new Map<string, Partial<AccountInfo>>();
   readonly statusOverrides = new Map<string, TxStatus>();
+  readonly transferOverrides = new Map<string, AssetTransferLookup>();
   readonly noteOverrides = new Map<string, NoteResult>();
   readonly fundingNoteOverrides = new Map<string, NoteResult>();
   readonly failedQueries = new Set<QueryCode>();
@@ -92,6 +116,10 @@ export class MockControlState implements MockControl {
   constructor(
     private readonly setRoundValue: (round: number) => void,
     private readonly resetState: () => void,
+    private readonly recordTransfer: (input: AssetTransferInput) => {
+      txid: string;
+      confirmedRound: number;
+    },
   ) {}
 
   queueVerify(...outcomes: Scripted<VerifyResult>[]): void {
@@ -134,6 +162,17 @@ export class MockControlState implements MockControl {
     this.statusOverrides.set(txid, status);
   }
 
+  confirmAssetTransfer(input: AssetTransferInput): {
+    txid: string;
+    confirmedRound: number;
+  } {
+    return this.recordTransfer(input);
+  }
+
+  setAssetTransfer(txid: string, lookup: AssetTransferLookup): void {
+    this.transferOverrides.set(txid, lookup);
+  }
+
   setNoteResult(jobId: string, result: NoteResult): void {
     this.noteOverrides.set(jobId, result);
   }
@@ -168,6 +207,7 @@ export class MockControlState implements MockControl {
     this.balanceOverrides.clear();
     this.accountOverrides.clear();
     this.statusOverrides.clear();
+    this.transferOverrides.clear();
     this.noteOverrides.clear();
     this.fundingNoteOverrides.clear();
     this.failedQueries.clear();

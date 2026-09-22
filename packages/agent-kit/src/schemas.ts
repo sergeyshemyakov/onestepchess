@@ -15,6 +15,9 @@ export const errorEnvelopeSchema = z.object({
   suggestion: z.string().optional(),
   legalMoves: z.array(moveSchema).optional(),
   requestId: z.string().optional(),
+  stakeTxid: z.string().optional(),
+  retainedMicroUsdc: nonNegativeIntegerSchema.optional(),
+  claimStatus: z.enum(["open", "moved", "expired"]).optional(),
 });
 export type ErrorEnvelope = z.infer<typeof errorEnvelopeSchema>;
 

@@ -39,6 +39,7 @@ export const ERROR_STATUS = {
   NOT_OPTED_IN: 402,
   PAYMENT_UNAVAILABLE: 503,
   PAYMENT_IN_FLIGHT: 409,
+  STAKE_RETAINED: 409,
   OPTIN_INVALID: 400,
   SWEEP_INVALID: 400,
   DEPENDENCY_UNAVAILABLE: 503,
@@ -56,6 +57,10 @@ export type AppErrorOptions = {
   readonly legalMoves?: readonly Move[];
   readonly retryAfterSeconds?: number;
   readonly headers?: Readonly<Record<string, string>>;
+  /** STAKE_RETAINED only (spec 2026-09-21 §3.4). */
+  readonly stakeTxid?: string;
+  readonly retainedMicroUsdc?: number;
+  readonly claimStatus?: "open" | "moved" | "expired";
 };
 
 export class AppError extends Error {
@@ -135,8 +140,16 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.onError((error, c) => {
     if (error instanceof AppError) {
       deps.onAppError?.(error.code);
-      const { hint, suggestion, legalMoves, retryAfterSeconds, headers } =
-        error.options;
+      const {
+        hint,
+        suggestion,
+        legalMoves,
+        retryAfterSeconds,
+        headers,
+        stakeTxid,
+        retainedMicroUsdc,
+        claimStatus,
+      } = error.options;
       for (const [name, value] of Object.entries(headers ?? {})) {
         c.header(name, value);
       }
@@ -150,6 +163,9 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
           docs: docs(error.code),
           ...(suggestion !== undefined ? { suggestion } : {}),
           ...(legalMoves !== undefined ? { legalMoves } : {}),
+          ...(stakeTxid !== undefined ? { stakeTxid } : {}),
+          ...(retainedMicroUsdc !== undefined ? { retainedMicroUsdc } : {}),
+          ...(claimStatus !== undefined ? { claimStatus } : {}),
         },
         ERROR_STATUS[error.code],
       );

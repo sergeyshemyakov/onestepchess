@@ -1,4 +1,5 @@
 import type {
+  AssetTransferLookup,
   DecodeResult,
   FundingInstruction,
   MicroUsdc,
@@ -28,6 +29,7 @@ import {
 import algosdk from "algosdk";
 import {
   type AccountInfo,
+  type AssetTransferInput,
   type Balances,
   type MockControl,
   MockControlState,
@@ -93,6 +95,10 @@ class MutableMockRailState implements MockRailState {
   readonly appliedPayloads = new Set<string>();
   readonly payoutNotes = new Map<string, Exclude<NoteResult, null>>();
   readonly fundingNotes = new Map<string, Exclude<NoteResult, null>>();
+  readonly transfers = new Map<
+    string,
+    Extract<AssetTransferLookup, { status: "confirmed" }>
+  >();
 
   constructor(
     initial?: MockRailOptions["initialTreasury"],
@@ -122,6 +128,7 @@ class MutableMockRailState implements MockRailState {
     this.appliedPayloads.clear();
     this.payoutNotes.clear();
     this.fundingNotes.clear();
+    this.transfers.clear();
   }
 }
 
@@ -232,6 +239,7 @@ export function createMockRail(options: MockRailOptions = {}): MockRail {
       state.currentRound = round;
     },
     () => state.reset(),
+    (input) => recordAssetTransfer(input),
   );
 
   function allocateTx(): { txid: string; round: number } {
@@ -244,6 +252,44 @@ export function createMockRail(options: MockRailOptions = {}): MockRail {
 
   function confirm(txid: string, round: number): void {
     state.confirmed.set(txid, { status: "confirmed", confirmedRound: round });
+  }
+
+  // Behaves like a chain observer: the treasury balance moves when the
+  // transfer confirms, before the server has booked anything, so
+  // reconciliation tests see the chain lead the book as it does for real
+  // direct stakes.
+  function recordAssetTransfer(input: AssetTransferInput): {
+    txid: string;
+    confirmedRound: number;
+  } {
+    assertFiniteNonNegative(input.amount, "transfer amount");
+    const issued =
+      input.txid === undefined
+        ? allocateTx()
+        : { txid: input.txid, round: state.currentRound };
+    confirm(issued.txid, issued.round);
+    state.transfers.set(issued.txid, {
+      status: "confirmed",
+      confirmedRound: issued.round,
+      transfer: {
+        sender: input.sender,
+        receiver: input.receiver,
+        asset: input.asset,
+        amount: input.amount,
+        closeTo: input.closeTo ?? null,
+        note: new TextEncoder().encode(input.note ?? ""),
+      },
+    });
+    if (
+      input.receiver === treasuryAddress &&
+      input.asset === DEFAULT_USDC_ASSET
+    ) {
+      state.balances = {
+        ...state.balances,
+        usdcMicroUsdc: state.balances.usdcMicroUsdc + input.amount,
+      };
+    }
+    return { txid: issued.txid, confirmedRound: issued.round };
   }
 
   async function delay(ms: number): Promise<void> {
@@ -540,6 +586,17 @@ export function createMockRail(options: MockRailOptions = {}): MockRail {
       return (
         control.statusOverrides.get(txid) ??
         state.confirmed.get(txid) ?? {
+          status: "not_found",
+          currentRound: state.currentRound,
+        }
+      );
+    },
+
+    async getAssetTransfer(txid: string): Promise<AssetTransferLookup> {
+      requireQuery("status");
+      return (
+        control.transferOverrides.get(txid) ??
+        state.transfers.get(txid) ?? {
           status: "not_found",
           currentRound: state.currentRound,
         }

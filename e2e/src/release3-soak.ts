@@ -450,6 +450,9 @@ export async function runRelease3Soak(
       detail: `${degradedMode} -> ${recoveredMode}`,
     };
 
+    // Stakes booked inside the skew window are tolerated as chain lag; the
+    // injected shortfall must be older than that to count as real drift.
+    stack.advance(stack.config.RECONCILE_SKEW_SECONDS * 1_000 + 1);
     const actualTreasuryBalance = await stack.rail.getBalances(
       stack.rail.treasuryAddress,
     );

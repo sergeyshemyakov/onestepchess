@@ -284,3 +284,73 @@ describe("rail-mock control surface", () => {
     });
   });
 });
+
+describe("rail-mock direct stake transfers (spec 2026-09-21)", () => {
+  it("rail_mock_get_asset_transfer_conformance", async () => {
+    const rail = createMockRail({ initialTreasury: { usdcMicroUsdc: 5_000 } });
+    const confirmed = rail.control.confirmAssetTransfer({
+      sender: "BOT",
+      receiver: rail.treasuryAddress,
+      asset: "31566704",
+      amount: 1_000,
+      note: "osc:stake:clm_1",
+    });
+    expect(confirmed).toEqual({ txid: "mocktx_000001", confirmedRound: 1_000 });
+    await expect(rail.getAssetTransfer(confirmed.txid)).resolves.toEqual({
+      status: "confirmed",
+      confirmedRound: 1_000,
+      transfer: {
+        sender: "BOT",
+        receiver: rail.treasuryAddress,
+        asset: "31566704",
+        amount: 1_000,
+        closeTo: null,
+        note: new TextEncoder().encode("osc:stake:clm_1"),
+      },
+    });
+    // The chain moves before the book: the treasury is credited on confirm.
+    await expect(rail.getBalances(rail.treasuryAddress)).resolves.toMatchObject(
+      { usdcMicroUsdc: 6_000 },
+    );
+
+    rail.control.setAssetTransfer("PENDING", { status: "pending" });
+    rail.control.setAssetTransfer("ABSENT", {
+      status: "not_found",
+      currentRound: 42,
+    });
+    rail.control.setAssetTransfer("PAY", {
+      status: "confirmed",
+      confirmedRound: 7,
+      transfer: null,
+    });
+    await expect(rail.getAssetTransfer("PENDING")).resolves.toEqual({
+      status: "pending",
+    });
+    await expect(rail.getAssetTransfer("ABSENT")).resolves.toEqual({
+      status: "not_found",
+      currentRound: 42,
+    });
+    await expect(rail.getAssetTransfer("PAY")).resolves.toEqual({
+      status: "confirmed",
+      confirmedRound: 7,
+      transfer: null,
+    });
+    await expect(rail.getAssetTransfer("never-seen")).resolves.toEqual({
+      status: "not_found",
+      currentRound: 1_001,
+    });
+
+    rail.control.failQueries(["status"]);
+    await expectUnavailable(rail.getAssetTransfer(confirmed.txid));
+    rail.control.restoreQueries();
+    await expect(rail.getAssetTransfer(confirmed.txid)).resolves.toMatchObject({
+      status: "confirmed",
+    });
+
+    rail.control.reset();
+    await expect(rail.getAssetTransfer(confirmed.txid)).resolves.toEqual({
+      status: "not_found",
+      currentRound: 1_000,
+    });
+  });
+});

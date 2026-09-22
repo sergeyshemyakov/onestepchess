@@ -163,7 +163,29 @@ export const stakeEntries = sqliteTable(
     index("stake_entries_game").on(table.gameId),
     index("stake_entries_player").on(table.player),
     index("stake_entries_created_at").on(table.createdAt),
+    index("stake_entries_pay_txid").on(table.payTxid),
   ],
+);
+
+// Permanent record of every direct stake transfer the server has acted on
+// (spec 2026-09-21 §4.4): never pruned, one row per txid, so a transfer is
+// applied or pocketed exactly once, ever. `amount` is what the chain says.
+export const directStakes = sqliteTable(
+  "direct_stakes",
+  {
+    txid: text("txid").primaryKey(),
+    player: text("player")
+      .notNull()
+      .references(() => players.address),
+    claimId: text("claim_id")
+      .notNull()
+      .references(() => claims.id),
+    amount: integer("amount").notNull(),
+    outcome: text("outcome", { enum: ["moved", "orphaned"] }).notNull(),
+    confirmedRound: integer("confirmed_round").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [index("direct_stakes_claim").on(table.claimId)],
 );
 
 export const paymentIntents = sqliteTable(
@@ -314,6 +336,7 @@ export const ledger = sqliteTable(
         "dust",
         "surplus",
         "bonus",
+        "direct_orphan",
       ],
     }).notNull(),
     refId: text("ref_id").notNull(),

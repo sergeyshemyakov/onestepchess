@@ -124,6 +124,24 @@ function loadParticipantSides(
   return sides;
 }
 
+/** The note that binds a direct stake transfer to its claim (spec
+ * 2026-09-21 §3.2, T7). One definition shared by the command and its tests. */
+export const DIRECT_STAKE_NOTE_PREFIX = "osc:stake:";
+
+export function directStakeNote(claimId: string): Uint8Array {
+  return new TextEncoder().encode(`${DIRECT_STAKE_NOTE_PREFIX}${claimId}`);
+}
+
+export type DirectStakeOutcome =
+  | { readonly kind: "duplicate" }
+  | { readonly kind: "foreign" }
+  | { readonly kind: "moved"; readonly receipt: MoveReceipt }
+  | {
+      readonly kind: "orphaned";
+      readonly claimStatus: "open" | "moved" | "expired";
+      readonly amount: number;
+    };
+
 export function receiptFor(
   claim: ClaimRecord,
   txid: string | null,
@@ -313,6 +331,40 @@ function expireClaimIfDue(
     deps.timers.disarm("claimDeadline", claim.id);
   });
   return true;
+}
+
+function afterStakedMove(
+  deps: ClaimDeps,
+  ctx: import("./queue.js").CommandContext,
+  player: string,
+): void {
+  // A referral is credited once, on the referred human's qualifying staked
+  // move (F15 step 4) — after moveClaim has written this move's stake entry,
+  // so the count includes it. Same transaction; never touches payouts (I11).
+  const cfg = deps.config();
+  if (cfg.POINTS_ENABLED) {
+    maybeAwardReferral(
+      deps.db,
+      ctx.now,
+      {
+        referralQualifyMoves: cfg.REFERRAL_QUALIFY_MOVES,
+        referralPoints: cfg.REFERRAL_POINTS,
+      },
+      player,
+    );
+  }
+  if (deps.publicStats !== undefined) {
+    // Public stats (F16): every settled staked move; human ones also count
+    // toward humanMoves. The player-row kind is authoritative.
+    const kind = deps.db
+      .select({ kind: schema.players.kind })
+      .from(schema.players)
+      .where(eq(schema.players.address, player))
+      .get()?.kind;
+    ctx.afterCommit(() =>
+      deps.publicStats?.recordStakedMoveSettled(kind === "human"),
+    );
+  }
 }
 
 export function registerClaimCommands(deps: ClaimDeps): void {
@@ -765,34 +817,92 @@ export function registerClaimCommands(deps: ClaimDeps): void {
         move: payload.move,
         txid: payload.txid,
       });
-      // A referral is credited once, on the referred human's qualifying staked
-      // move (F15 step 4) — after moveClaim has written this move's stake entry,
-      // so the count includes it. Same transaction; never touches payouts (I11).
-      const cfg = deps.config();
-      if (cfg.POINTS_ENABLED) {
-        maybeAwardReferral(
-          deps.db,
-          ctx.now,
-          {
-            referralQualifyMoves: cfg.REFERRAL_QUALIFY_MOVES,
-            referralPoints: cfg.REFERRAL_POINTS,
-          },
-          payload.player,
-        );
-      }
-      if (deps.publicStats !== undefined) {
-        // Public stats (F16): every settled staked move; human ones also count
-        // toward humanMoves. The player-row kind is authoritative.
-        const kind = deps.db
-          .select({ kind: schema.players.kind })
-          .from(schema.players)
-          .where(eq(schema.players.address, payload.player))
-          .get()?.kind;
-        ctx.afterCommit(() =>
-          deps.publicStats?.recordStakedMoveSettled(kind === "human"),
-        );
-      }
+      afterStakedMove(deps, ctx, payload.player);
       return receipt;
+    },
+  );
+  deps.coordinator.register(
+    "DirectStakePresented",
+    (
+      ctx,
+      payload: {
+        claimId: string;
+        player: string;
+        move: Move | null;
+        txid: string;
+        confirmedRound: number;
+        transfer: { amount: number; note: Uint8Array };
+      },
+    ): DirectStakeOutcome => {
+      const existing = deps.db
+        .select({ txid: schema.directStakes.txid })
+        .from(schema.directStakes)
+        .where(eq(schema.directStakes.txid, payload.txid))
+        .get();
+      if (existing !== undefined) return { kind: "duplicate" };
+      const claim = deps.db
+        .select()
+        .from(schema.claims)
+        .where(eq(schema.claims.id, payload.claimId))
+        .get();
+      if (claim === undefined || claim.player !== payload.player)
+        return { kind: "foreign" };
+      // `move` is null only when the route skipped legality because the claim
+      // was already terminal; if the claim were somehow open here the transfer
+      // is orphaned rather than applied with an unvalidated move.
+      const applies =
+        payload.move !== null &&
+        claim.status === "open" &&
+        claim.deadline > ctx.now &&
+        payload.transfer.amount === claim.stakeMicrousdc &&
+        Buffer.from(payload.transfer.note).equals(
+          Buffer.from(directStakeNote(claim.id)),
+        );
+      deps.db
+        .insert(schema.directStakes)
+        .values({
+          txid: payload.txid,
+          player: payload.player,
+          claimId: claim.id,
+          amount: payload.transfer.amount,
+          outcome: applies ? "moved" : "orphaned",
+          confirmedRound: payload.confirmedRound,
+          createdAt: ctx.now,
+        })
+        .run();
+      if (applies && payload.move !== null) {
+        const receipt = moveClaim(deps, ctx, {
+          claim,
+          move: payload.move,
+          txid: payload.txid,
+        });
+        afterStakedMove(deps, ctx, payload.player);
+        return { kind: "moved", receipt };
+      }
+      // Ruling 1: a confirmed transfer that cannot move its claim is operator
+      // income. `protocol` is the take account, so the book still equals the
+      // chain and per-game conservation is untouched (an orphan has no game).
+      appendLedgerEntry(deps.db, {
+        ts: ctx.now,
+        account: "protocol",
+        deltaMicrousdc: payload.transfer.amount,
+        refType: "direct_orphan",
+        refId: payload.txid,
+        txid: payload.txid,
+      });
+      ctx.appendEvent("direct_stake_orphaned", payload.player, {
+        claimId: claim.id,
+        txid: payload.txid,
+        amountMicroUsdc: payload.transfer.amount,
+      });
+      return {
+        kind: "orphaned",
+        claimStatus:
+          claim.status === "open" && claim.deadline <= ctx.now
+            ? "expired"
+            : claim.status,
+        amount: payload.transfer.amount,
+      };
     },
   );
   deps.coordinator.register(

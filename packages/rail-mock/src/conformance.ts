@@ -10,6 +10,14 @@ export type PaymentRailConformanceHarness = {
   readonly buildHeader: (challenge: PaymentChallenge, nonce: string) => string;
   readonly payoutRecipient?: (index: number) => string;
   readonly assertPreparedReplay?: (prepared: PreparedPayouts) => Promise<void>;
+  /** Lands a confirmed inbound USDC transfer to the treasury on the harness's
+   * chain (rail-mock: `control.confirmAssetTransfer`). Rails without a
+   * scriptable chain skip the getAssetTransfer rows. */
+  readonly confirmAssetTransfer?: (input: {
+    readonly sender: string;
+    readonly amount: number;
+    readonly note: string;
+  }) => Promise<string>;
 };
 
 export type PaymentRailConformanceRow = {
@@ -149,6 +157,55 @@ export const paymentRailConformanceRows: readonly PaymentRailConformanceRow[] =
         assert(
           new Set(prepared.txids.map((item) => item.txid)).size === jobs.length,
           "duplicate txids",
+        );
+      },
+    },
+    {
+      name: "getAssetTransfer round-trips a confirmed transfer byte-exact",
+      async run(createHarness) {
+        const harness = createHarness();
+        if (harness.confirmAssetTransfer === undefined) return;
+        const { rail } = harness;
+        const note = "osc:stake:clm_conformance";
+        const txid = await harness.confirmAssetTransfer({
+          sender: "CONFORMANCE_PLAYER",
+          amount: 1_000,
+          note,
+        });
+        const lookup = await rail.getAssetTransfer(txid);
+        assert(lookup.status === "confirmed", "confirmed transfer not found");
+        if (lookup.status !== "confirmed") return;
+        assert(lookup.transfer !== null, "transfer decoded as non-axfer");
+        assert(
+          lookup.transfer?.sender === "CONFORMANCE_PLAYER" &&
+            lookup.transfer.receiver === rail.treasuryAddress &&
+            lookup.transfer.amount === 1_000 &&
+            lookup.transfer.closeTo === null &&
+            Buffer.from(lookup.transfer.note).toString("utf8") === note,
+          "transfer fields changed in transit",
+        );
+        const status = await rail.getTransactionStatus(txid);
+        assert(
+          status.status === "confirmed" &&
+            status.confirmedRound === lookup.confirmedRound,
+          "getTransactionStatus disagrees with getAssetTransfer",
+        );
+      },
+    },
+    {
+      name: "getAssetTransfer reports an unknown txid as not_found",
+      async run(createHarness) {
+        const harness = createHarness();
+        // Only rails with a scriptable chain can answer an unscripted lookup.
+        if (harness.confirmAssetTransfer === undefined) return;
+        const { rail } = harness;
+        const lookup = await rail.getAssetTransfer(
+          "UNKNOWN7UNKNOWN7UNKNOWN7UNKNOWN7UNKNOWN7UNKNOWN7UNKN",
+        );
+        assert(
+          lookup.status === "not_found" &&
+            Number.isSafeInteger(lookup.currentRound),
+          "unknown transfer was not not_found",
         );
       },
     },
